@@ -7,65 +7,69 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/providers/common"
 )
 
-// DashScopeTTSProvider synthesizes speech using Alibaba Cloud's DashScope API
-// (Bailian / 百炼). Uses the Qwen-Audio-TTS models (e.g., qwen3-tts-flash).
+const dashScopeTTSEndpoint = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+
 type DashScopeTTSProvider struct {
 	apiKey     string
 	model      string
 	voice      string
-	language   string
+	workspace  string
 	httpClient *http.Client
 }
 
-type dashScopeTTSResult struct {
-	StatusCode int `json:"status_code"`
-	Output     struct {
+type dashScopeTTSAudioStream struct {
+	io.ReadCloser
+	fileExt     string
+	contentType string
+}
+
+func (s *dashScopeTTSAudioStream) AudioFileMeta() (string, string) {
+	return s.fileExt, s.contentType
+}
+
+type dashScopeTTSRequest struct {
+	Model  string                `json:"model"`
+	Input  dashScopeTTSInput     `json:"input"`
+	Params dashScopeTTSParams    `json:"parameters,omitempty"`
+}
+
+type dashScopeTTSInput struct {
+	Text string `json:"text"`
+}
+
+type dashScopeTTSParams struct {
+	Voice  string `json:"voice,omitempty"`
+	Format string `json:"format,omitempty"`
+}
+
+type dashScopeTTSResponse struct {
+	Output struct {
 		Audio struct {
+			Data      string `json:"data"`
 			URL       string `json:"url"`
-			ID        string `json:"id"`
 			ExpiresAt int64  `json:"expires_at"`
 		} `json:"audio"`
 	} `json:"output"`
-	Usage struct {
-		Characters int `json:"characters"`
-	} `json:"usage"`
+	RequestID string `json:"request_id"`
 }
 
-const (
-	dashScopeTTSEndpoint = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
-	defaultDashScopeTTModel = "qwen3-tts-flash"
-	defaultDashScopeVoice   = "Cherry"
-	defaultDashScopeLang    = "Chinese"
-)
-
-func NewDashScopeTTSProvider(apiKey string, model string, voice string, language string) *DashScopeTTSProvider {
-	model = strings.TrimSpace(model)
-	if model == "" {
-		model = defaultDashScopeTTModel
-	}
-
-	voice = strings.TrimSpace(voice)
-	if voice == "" {
-		voice = defaultDashScopeVoice
-	}
-
-	language = strings.TrimSpace(language)
-	if language == "" {
-		language = defaultDashScopeLang
-	}
+func NewDashScopeTTSProvider(apiKey, workspace, model, voice string) *DashScopeTTSProvider {
+	client := common.NewHTTPClient("")
+	client.Timeout = 60 * time.Second
 
 	return &DashScopeTTSProvider{
 		apiKey:     apiKey,
 		model:      model,
 		voice:      voice,
-		language:   language,
-		httpClient: &http.Client{Timeout: 60 * time.Second},
+		workspace:  workspace,
+		httpClient: client,
 	}
 }
 
@@ -74,74 +78,103 @@ func (t *DashScopeTTSProvider) Name() string {
 }
 
 func (t *DashScopeTTSProvider) Synthesize(ctx context.Context, text string) (io.ReadCloser, error) {
-	logger.DebugCF("voice-tts", "Starting DashScope TTS synthesis",
-		map[string]any{"text_len": len(text), "model": t.model, "voice": t.voice})
-
-	reqBody := map[string]any{
-		"model": t.model,
-		"input": map[string]any{
-			"text":          text,
-			"voice":         t.voice,
-			"language_type": t.language,
-		},
-		"stream": false,
+	// Step 1: Call DashScope TTS API
+	reqBody := dashScopeTTSRequest{
+		Model: t.model,
+		Input: dashScopeTTSInput{Text: text},
+	}
+	if t.voice != "" {
+		reqBody.Params = dashScopeTTSParams{
+			Voice:  t.voice,
+			Format: "wav",
+		}
 	}
 
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, fmt.Errorf("dashscope tts: marshal failed: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", dashScopeTTSEndpoint, bytes.NewReader(jsonData))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("dashscope tts: create request failed: %w", err)
 	}
-
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+t.apiKey)
+	if t.workspace != "" {
+		req.Header.Set("X-DashScope-WorkSpace", t.workspace)
+	}
 
 	resp, err := t.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return nil, fmt.Errorf("dashscope tts: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("DashScope API error (status %d): %s", resp.StatusCode, string(body))
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("dashscope tts: API error %d: %s", resp.StatusCode, string(body))
 	}
 
-	var result dashScopeTTSResult
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	var ttsResp dashScopeTTSResponse
+	if err := json.NewDecoder(resp.Body).Decode(&ttsResp); err != nil {
+		return nil, fmt.Errorf("dashscope tts: parse response failed: %w", err)
 	}
 
-	if result.StatusCode != 200 {
-		return nil, fmt.Errorf("DashScope API error (code %d): %s", result.StatusCode, string(body))
-	}
-
-	audioURL := result.Output.Audio.URL
+	audioURL := strings.TrimSpace(ttsResp.Output.Audio.URL)
 	if audioURL == "" {
-		return nil, fmt.Errorf("DashScope TTS response missing audio URL")
+		return nil, fmt.Errorf("dashscope tts: no audio URL in response")
 	}
 
-	logger.DebugCF("voice-tts", "DashScope TTS audio URL obtained",
-		map[string]any{"audio_url": audioURL, "expires_at": result.Output.Audio.ExpiresAt})
-
-	// Download the audio file from the URL
-	audioResp, err := t.httpClient.Get(audioURL)
+	// Step 2: Download audio from OSS
+	dlReq, err := http.NewRequestWithContext(ctx, "GET", audioURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download audio: %w", err)
+		return nil, fmt.Errorf("dashscope tts: create download request failed: %w", err)
 	}
 
-	if audioResp.StatusCode != http.StatusOK {
-		audioResp.Body.Close()
-		return nil, fmt.Errorf("failed to download audio (status %d)", audioResp.StatusCode)
+	dlResp, err := t.httpClient.Do(dlReq)
+	if err != nil {
+		return nil, fmt.Errorf("dashscope tts: download audio failed: %w", err)
 	}
 
-	return audioResp.Body, nil
+	if dlResp.StatusCode != http.StatusOK {
+		defer dlResp.Body.Close()
+		body, _ := io.ReadAll(dlResp.Body)
+		return nil, fmt.Errorf("dashscope tts: download audio HTTP %d: %s", dlResp.StatusCode, string(body))
+	}
+
+	audioBytes, err := io.ReadAll(dlResp.Body)
+	dlResp.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("dashscope tts: read audio failed: %w", err)
+	}
+
+	if len(audioBytes) == 0 {
+		return nil, fmt.Errorf("dashscope tts: empty audio response")
+	}
+
+	return &dashScopeTTSAudioStream{
+		ReadCloser:  io.NopCloser(bytes.NewReader(audioBytes)),
+		fileExt:     ".wav",
+		contentType: "audio/wav",
+	}, nil
+}
+
+// extractWorkspaceFromBaseURL extracts the workspace ID from a Bailian maas URL.
+// e.g. "https://llm-hubsv5i2n0jjbjb6.cn-beijing.maas.aliyuncs.com/..." → "llm-hubsv5i2n0jjbjb6"
+func extractWorkspaceFromBaseURL(apiBase string) string {
+	if apiBase == "" {
+		return ""
+	}
+	u, err := url.Parse(apiBase)
+	if err != nil {
+		return ""
+	}
+	host := u.Hostname()
+	// Match maas host pattern: <workspace-id>.<region>.maas.aliyuncs.com
+	parts := strings.Split(host, ".")
+	if len(parts) >= 4 && strings.HasSuffix(host, ".maas.aliyuncs.com") {
+		return parts[0]
+	}
+	return ""
 }
