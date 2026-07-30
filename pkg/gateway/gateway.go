@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -859,6 +861,10 @@ func setupCronTool(
 	if cronTool != nil {
 		cronService.SetOnJob(func(job *cron.CronJob) (string, error) {
 			result := cronTool.ExecuteJob(context.Background(), job)
+			if strings.HasPrefix(result, "Error executing scheduled command:") ||
+				strings.HasPrefix(result, "Error:") {
+				return "", errors.New(result)
+			}
 			return result, nil
 		})
 	}
