@@ -74,7 +74,7 @@ func outboundTurnMetadata(
 // after seeing them in seahorse FTS5 / summary contexts.
 func stripToolUseText(content string) string {
 	// Match "[tool_use: name, args: {...}]" variants
-	re := regexp.MustCompile(`\[tool_use:\s*\w+,\s*args:\s*\{[^}]*}\]?\]?\s*`)
+	re := regexp.MustCompile(`\[tool_(?:use|user):\s*\w+,\s*(?:args:\s*)?\{[^}]*}\]?\]?\s*`)
 	return strings.TrimSpace(re.ReplaceAllString(content, ""))
 }
 
