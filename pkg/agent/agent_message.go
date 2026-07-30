@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/constants"
@@ -157,6 +158,15 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	// agent-scoped keys supplied by the caller.
 	scopeKey := resolveScopeKey(allocation.SessionKey, msg.SessionKey)
 	sessionKey := scopeKey
+
+	if err := al.maybeResetDailySession(ctx, agent, sessionKey, msg.Channel, time.Now()); err != nil {
+		logger.WarnCF("agent", "Daily session reset failed", map[string]any{
+			"agent_id":    agent.ID,
+			"channel":     msg.Channel,
+			"session_key": sessionKey,
+			"error":       err.Error(),
+		})
+	}
 
 	// Reset message-tool state for this round so we don't skip publishing due to a previous round.
 	if tool, ok := agent.Tools.Get("message"); ok {
