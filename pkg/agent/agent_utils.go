@@ -70,11 +70,9 @@ func outboundTurnMetadata(
 	return agentID, sessionKey, outboundScopeFromSessionScope(scope)
 }
 
-// stripToolUseText removes [tool_use: ...] patterns that LLMs may regurgitate
-// after seeing them in seahorse FTS5 / summary contexts.
+// stripToolUseText removes mock tool syntax that must never reach chat users.
 func stripToolUseText(content string) string {
-	// Match "[tool_use: name, args: {...}]" variants
-	re := regexp.MustCompile(`\[tool_use:\s*\w+,\s*args:\s*\{[^}]*}\]?\]?\s*`)
+	re := regexp.MustCompile(`\[tool_(?:use|user):\s*\w+,\s*(?:args:\s*)?\{[^}]*}\]?\]?\s*`)
 	return strings.TrimSpace(re.ReplaceAllString(content, ""))
 }
 

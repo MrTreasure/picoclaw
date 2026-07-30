@@ -36,10 +36,6 @@ func providerFromModelConfig(mc *config.ModelConfig) TTSProvider {
 	switch protocol {
 	case "mimo":
 		return NewMimoTTSProvider(mc.APIKey(), providers.ResolveAPIBase(mc), modelID, mc.Proxy)
-	case "dashscope":
-		voice, _ := mc.ExtraBody["voice"].(string)
-		language, _ := mc.ExtraBody["language_type"].(string)
-		return NewDashScopeTTSProvider(mc.APIKey(), modelID, voice, language)
 	default:
 		return NewOpenAITTSProviderWithOptions(
 			mc.APIKey(),

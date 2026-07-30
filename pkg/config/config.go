@@ -451,8 +451,7 @@ type AgentDefaults struct {
 }
 
 // DailySessionResetConfig rolls chat history over on the first message after
-// the configured local hour. Long-term memory is stored separately and is not
-// affected.
+// the configured local hour. Long-term memory is stored separately.
 type DailySessionResetConfig struct {
 	Enabled   bool     `json:"enabled,omitempty"`
 	Channels  []string `json:"channels,omitempty"`
