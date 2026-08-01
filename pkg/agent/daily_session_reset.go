@@ -44,7 +44,11 @@ func (al *AgentLoop) maybeResetDailySession(
 	if lastCreatedAt == nil || sameLocalDay(lastCreatedAt.In(location), localNow) {
 		return nil
 	}
-	return al.trimSessionToRecentTurns(ctx, agent, sessionKey, al.cfg.Agents.Defaults.SessionMaintenance.RetainRecentTurns)
+	window, ok := al.contextManager.(ActiveContextWindowManager)
+	if !ok {
+		return nil
+	}
+	return window.RotateActiveWindow(ctx, sessionKey, al.cfg.Agents.Defaults.SessionMaintenance.RetainRecentTurns)
 }
 
 func dailySessionResetApplies(cfg config.DailySessionResetConfig, channel string) bool {

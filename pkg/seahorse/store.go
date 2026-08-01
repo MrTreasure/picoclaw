@@ -71,9 +71,9 @@ func (s *Store) GetConversationBySessionKey(ctx context.Context, sessionKey stri
 	var conv Conversation
 	var createdAt, updatedAt string
 	err := s.db.QueryRowContext(ctx,
-		"SELECT conversation_id, session_key, created_at, updated_at FROM conversations WHERE session_key = ?",
+		"SELECT conversation_id, session_key, active_generation, active_turn_count, last_summary_turn, created_at, updated_at FROM conversations WHERE session_key = ?",
 		sessionKey,
-	).Scan(&conv.ConversationID, &conv.SessionKey, &createdAt, &updatedAt)
+	).Scan(&conv.ConversationID, &conv.SessionKey, &conv.ActiveGeneration, &conv.ActiveTurnCount, &conv.LastSummaryTurn, &createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -83,6 +83,109 @@ func (s *Store) GetConversationBySessionKey(ctx context.Context, sessionKey stri
 	conv.CreatedAt = parseSQLiteTime(createdAt)
 	conv.UpdatedAt = parseSQLiteTime(updatedAt)
 	return &conv, nil
+}
+
+// IncrementActiveTurnCount records completed user turns in the current window.
+func (s *Store) IncrementActiveTurnCount(ctx context.Context, convID int64, delta int) error {
+	if delta <= 0 {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE conversations
+		SET active_turn_count = active_turn_count + ?, updated_at = datetime('now')
+		WHERE conversation_id = ?`, delta, convID)
+	return err
+}
+
+// MarkActiveWindowSummarized prevents repeated summary attempts at the same turn.
+func (s *Store) MarkActiveWindowSummarized(ctx context.Context, convID int64, turn int) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE conversations SET last_summary_turn = ?
+		WHERE conversation_id = ? AND active_turn_count = ?`, turn, convID, turn)
+	return err
+}
+
+// RotateActiveContext starts a new model-visible generation referencing only
+// the most recent completed user turns. Raw messages, summaries and old context
+// references remain untouched and searchable.
+func (s *Store) RotateActiveContext(ctx context.Context, convID int64, retainTurns int) error {
+	if retainTurns < 0 {
+		retainTurns = 0
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var generation int
+	if err := tx.QueryRowContext(ctx, `SELECT active_generation FROM conversations WHERE conversation_id = ?`, convID).Scan(&generation); err != nil {
+		return err
+	}
+
+	var startID int64
+	if retainTurns > 0 {
+		err = tx.QueryRowContext(ctx, `SELECT message_id FROM messages
+			WHERE conversation_id = ? AND lower(trim(role)) = 'user'
+			ORDER BY message_id DESC LIMIT 1 OFFSET ?`, convID, retainTurns-1).Scan(&startID)
+		if err == sql.ErrNoRows {
+			err = tx.QueryRowContext(ctx, `SELECT COALESCE(MIN(message_id), 0) FROM messages WHERE conversation_id = ?`, convID).Scan(&startID)
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	type retainedMessage struct {
+		id     int64
+		tokens int
+		role   string
+	}
+	var retained []retainedMessage
+	retainedTurns := 0
+	if retainTurns > 0 {
+		rows, err := tx.QueryContext(ctx, `SELECT message_id, token_count, role FROM messages
+			WHERE conversation_id = ? AND message_id >= ? ORDER BY message_id`, convID, startID)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var message retainedMessage
+			if err := rows.Scan(&message.id, &message.tokens, &message.role); err != nil {
+				rows.Close()
+				return err
+			}
+			retained = append(retained, message)
+			if strings.EqualFold(strings.TrimSpace(message.role), "user") {
+				retainedTurns++
+			}
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+	}
+
+	var maxOrdinal sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT MAX(ordinal) FROM context_items WHERE conversation_id = ?`, convID).Scan(&maxOrdinal); err != nil {
+		return err
+	}
+	ordinal := OrdinalStep
+	if maxOrdinal.Valid {
+		ordinal = int(maxOrdinal.Int64) + OrdinalStep
+	}
+	newGeneration := generation + 1
+	for _, message := range retained {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO context_items
+			(conversation_id, generation, ordinal, item_type, message_id, token_count)
+			VALUES (?, ?, ?, 'message', ?, ?)`, convID, newGeneration, ordinal, message.id, message.tokens); err != nil {
+			return err
+		}
+		ordinal += OrdinalStep
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE conversations SET active_generation = ?,
+		active_turn_count = ?, last_summary_turn = 0, updated_at = datetime('now')
+		WHERE conversation_id = ?`, newGeneration, retainedTurns, convID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // GetSessionStatus returns status for a specific session.
@@ -734,7 +837,9 @@ func (s *Store) GetRootSummaries(ctx context.Context, convID int64) ([]Summary, 
 func (s *Store) GetContextItems(ctx context.Context, convID int64) ([]ContextItem, error) {
 	rows, err := s.db.QueryContext(
 		ctx,
-		"SELECT ordinal, item_type, summary_id, message_id, token_count, created_at FROM context_items WHERE conversation_id = ? ORDER BY ordinal",
+		`SELECT ci.generation, ci.ordinal, ci.item_type, ci.summary_id, ci.message_id, ci.token_count, ci.created_at
+		 FROM context_items ci JOIN conversations c ON c.conversation_id = ci.conversation_id
+		 WHERE ci.conversation_id = ? AND ci.generation = c.active_generation ORDER BY ci.ordinal`,
 		convID,
 	)
 	if err != nil {
@@ -749,6 +854,7 @@ func (s *Store) GetContextItems(ctx context.Context, convID int64) ([]ContextIte
 		var messageID sql.NullInt64
 		var createdAt sql.NullString
 		if err := rows.Scan(
+			&item.Generation,
 			&item.Ordinal,
 			&item.ItemType,
 			&summaryID,
@@ -784,16 +890,17 @@ func (s *Store) UpsertContextItems(ctx context.Context, convID int64, items []Co
 	}
 	defer tx.Rollback()
 
-	_, err = tx.ExecContext(ctx, "DELETE FROM context_items WHERE conversation_id = ?", convID)
+	_, err = tx.ExecContext(ctx, `DELETE FROM context_items WHERE conversation_id = ? AND generation =
+		(SELECT active_generation FROM conversations WHERE conversation_id = ?)`, convID, convID)
 	if err != nil {
 		return err
 	}
 
 	for _, item := range items {
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO context_items (conversation_id, ordinal, item_type, summary_id, message_id, token_count)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
-			convID, item.Ordinal, item.ItemType,
+			`INSERT INTO context_items (conversation_id, generation, ordinal, item_type, summary_id, message_id, token_count)
+			 VALUES (?, (SELECT active_generation FROM conversations WHERE conversation_id = ?), ?, ?, ?, ?, ?)`,
+			convID, convID, item.Ordinal, item.ItemType,
 			nullString(item.SummaryID), nullInt64(item.MessageID),
 			item.TokenCount,
 		)
@@ -914,6 +1021,11 @@ func (s *Store) ClearConversation(ctx context.Context, convID int64) error {
 		"DELETE FROM messages WHERE conversation_id = ?", convID); err != nil {
 		return fmt.Errorf("messages: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE conversations SET active_generation = 0,
+		active_turn_count = 0, last_summary_turn = 0, updated_at = datetime('now')
+		WHERE conversation_id = ?`, convID); err != nil {
+		return fmt.Errorf("conversation state: %w", err)
+	}
 
 	return tx.Commit()
 }
@@ -965,9 +1077,9 @@ func (s *Store) appendContextItems(ctx context.Context, convID int64, items []Co
 		}
 
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO context_items (conversation_id, ordinal, item_type, summary_id, message_id, token_count)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
-			convID, ordinal, item.ItemType,
+			`INSERT INTO context_items (conversation_id, generation, ordinal, item_type, summary_id, message_id, token_count)
+			 VALUES (?, (SELECT active_generation FROM conversations WHERE conversation_id = ?), ?, ?, ?, ?, ?)`,
+			convID, convID, ordinal, item.ItemType,
 			nullString(item.SummaryID), nullInt64(item.MessageID),
 			tokenCount,
 		)
@@ -1018,8 +1130,10 @@ func (s *Store) ReplaceContextRangeWithSummary(
 
 	// Delete the range
 	_, err = tx.ExecContext(ctx,
-		"DELETE FROM context_items WHERE conversation_id = ? AND ordinal >= ? AND ordinal <= ?",
-		convID, startOrdinal, endOrdinal,
+		`DELETE FROM context_items WHERE conversation_id = ? AND generation =
+		 (SELECT active_generation FROM conversations WHERE conversation_id = ?)
+		 AND ordinal >= ? AND ordinal <= ?`,
+		convID, convID, startOrdinal, endOrdinal,
 	)
 	if err != nil {
 		return err
@@ -1048,9 +1162,10 @@ func (s *Store) ReplaceContextRangeWithSummary(
 	} else {
 		// Normal insert at midpoint with token_count from summary
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO context_items (conversation_id, ordinal, item_type, summary_id, token_count)
-			 SELECT ?, ?, 'summary', ?, token_count FROM summaries WHERE summary_id = ?`,
-			convID, midpoint, summaryID, summaryID,
+			`INSERT INTO context_items (conversation_id, generation, ordinal, item_type, summary_id, token_count)
+			 SELECT ?, active_generation, ?, 'summary', ?, token_count FROM conversations, summaries
+			 WHERE conversations.conversation_id = ? AND summaries.summary_id = ?`,
+			convID, midpoint, summaryID, convID, summaryID,
 		)
 		if err != nil {
 			return err
@@ -1088,10 +1203,11 @@ func (s *Store) ReplaceContextItemsWithSummary(
 	}
 
 	query := fmt.Sprintf(
-		"SELECT ordinal FROM context_items WHERE conversation_id = ? AND summary_id IN (%s) ORDER BY ordinal",
+		"SELECT ordinal FROM context_items WHERE conversation_id = ? AND generation = (SELECT active_generation FROM conversations WHERE conversation_id = ?) AND summary_id IN (%s) ORDER BY ordinal",
 		strings.Join(placeholders, ","),
 	)
-	rows, err := tx.QueryContext(ctx, query, args...)
+	queryArgs := append([]any{convID, convID}, args[1:]...)
+	rows, err := tx.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return err
 	}
@@ -1117,10 +1233,10 @@ func (s *Store) ReplaceContextItemsWithSummary(
 
 	// Delete the specific items by summary_id
 	deleteQuery := fmt.Sprintf(
-		"DELETE FROM context_items WHERE conversation_id = ? AND summary_id IN (%s)",
+		"DELETE FROM context_items WHERE conversation_id = ? AND generation = (SELECT active_generation FROM conversations WHERE conversation_id = ?) AND summary_id IN (%s)",
 		strings.Join(placeholders, ","),
 	)
-	_, err = tx.ExecContext(ctx, deleteQuery, args...)
+	_, err = tx.ExecContext(ctx, deleteQuery, queryArgs...)
 	if err != nil {
 		return err
 	}
@@ -1145,9 +1261,10 @@ func (s *Store) ReplaceContextItemsWithSummary(
 	} else {
 		// Normal insert at midpoint
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO context_items (conversation_id, ordinal, item_type, summary_id, token_count)
-			 SELECT ?, ?, 'summary', ?, token_count FROM summaries WHERE summary_id = ?`,
-			convID, midpoint, newSummaryID, newSummaryID,
+			`INSERT INTO context_items (conversation_id, generation, ordinal, item_type, summary_id, token_count)
+			 SELECT ?, active_generation, ?, 'summary', ?, token_count FROM conversations, summaries
+			 WHERE conversations.conversation_id = ? AND summaries.summary_id = ?`,
+			convID, midpoint, newSummaryID, convID, newSummaryID,
 		)
 		if err != nil {
 			return err
@@ -1160,11 +1277,16 @@ func (s *Store) ReplaceContextItemsWithSummary(
 // resequenceContextItemsTx renumbers context_items with fresh OrdinalStep gaps.
 // Uses temp negative ordinals to avoid PRIMARY KEY constraint violations (spec lines 1240-1247).
 func (s *Store) resequenceContextItemsTx(ctx context.Context, tx *sql.Tx, convID int64, newSummaryID string) error {
-	// Get all remaining items sorted by current ordinal
+	var generation int
+	if err := tx.QueryRowContext(ctx, `SELECT active_generation FROM conversations WHERE conversation_id = ?`, convID).Scan(&generation); err != nil {
+		return err
+	}
+	// Only renumber the model-visible generation. Archived generations retain
+	// their ordinals and must never re-enter the active context.
 	rows, err := tx.QueryContext(
 		ctx,
-		"SELECT ordinal, item_type, summary_id, message_id, token_count FROM context_items WHERE conversation_id = ? ORDER BY ordinal",
-		convID,
+		"SELECT ordinal, item_type, summary_id, message_id, token_count FROM context_items WHERE conversation_id = ? AND generation = ? ORDER BY ordinal",
+		convID, generation,
 	)
 	if err != nil {
 		return err
@@ -1199,12 +1321,12 @@ func (s *Store) resequenceContextItemsTx(ctx context.Context, tx *sql.Tx, convID
 		return rowsErr
 	}
 
-	// Step 1: Move all items to temp negative ordinals
+	// Step 1: Move active items to temp negative ordinals.
 	tempOrd := -1
 	for _, i := range items {
 		_, execErr := tx.ExecContext(ctx,
-			"UPDATE context_items SET ordinal = ? WHERE conversation_id = ? AND ordinal = ?",
-			tempOrd, convID, i.ordinal,
+			"UPDATE context_items SET ordinal = ? WHERE conversation_id = ? AND generation = ? AND ordinal = ?",
+			tempOrd, convID, generation, i.ordinal,
 		)
 		if execErr != nil {
 			return execErr
@@ -1212,13 +1334,22 @@ func (s *Store) resequenceContextItemsTx(ctx context.Context, tx *sql.Tx, convID
 		tempOrd--
 	}
 
-	// Step 2: Insert new summary at the end with positive ordinal
-	// Include token_count from summaries table
-	newOrd := (len(items) + 1) * OrdinalStep
+	// Archived generations occupy the earlier positive range. Place this
+	// generation after them to preserve the conversation-wide primary key.
+	var archivedMax sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT MAX(ordinal) FROM context_items
+		WHERE conversation_id = ? AND generation <> ?`, convID, generation).Scan(&archivedMax); err != nil {
+		return err
+	}
+	baseOrdinal := 0
+	if archivedMax.Valid {
+		baseOrdinal = int(archivedMax.Int64)
+	}
+	newOrd := baseOrdinal + (len(items)+1)*OrdinalStep
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO context_items (conversation_id, ordinal, item_type, summary_id, token_count)
-		 SELECT ?, ?, 'summary', ?, token_count FROM summaries WHERE summary_id = ?`,
-		convID, newOrd, newSummaryID, newSummaryID,
+		`INSERT INTO context_items (conversation_id, generation, ordinal, item_type, summary_id, token_count)
+		 SELECT ?, ?, ?, 'summary', ?, token_count FROM summaries WHERE summary_id = ?`,
+		convID, generation, newOrd, newSummaryID, newSummaryID,
 	)
 	if err != nil {
 		return err
@@ -1226,12 +1357,12 @@ func (s *Store) resequenceContextItemsTx(ctx context.Context, tx *sql.Tx, convID
 
 	// Step 3: Update each temp item to its final positive ordinal
 	// Use specific temp ordinal matching (not ordinal < 0) to avoid updating all items
-	finalOrd := OrdinalStep
+	finalOrd := baseOrdinal + OrdinalStep
 	tempOrd = -1 // Reset to first temp ordinal (already declared in Step 1)
 	for range items {
 		_, execErr := tx.ExecContext(ctx,
-			"UPDATE context_items SET ordinal = ? WHERE conversation_id = ? AND ordinal = ?",
-			finalOrd, convID, tempOrd,
+			"UPDATE context_items SET ordinal = ? WHERE conversation_id = ? AND generation = ? AND ordinal = ?",
+			finalOrd, convID, generation, tempOrd,
 		)
 		if execErr != nil {
 			return execErr
@@ -1247,8 +1378,9 @@ func (s *Store) resequenceContextItemsTx(ctx context.Context, tx *sql.Tx, convID
 func (s *Store) GetContextTokenCount(ctx context.Context, convID int64) (int, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx,
-		"SELECT COALESCE(SUM(token_count), 0) FROM context_items WHERE conversation_id = ?",
-		convID,
+		`SELECT COALESCE(SUM(ci.token_count), 0) FROM context_items ci
+		 JOIN conversations c ON c.conversation_id = ci.conversation_id
+		 WHERE ci.conversation_id = ? AND ci.generation = c.active_generation`, convID,
 	).Scan(&count)
 	return count, err
 }

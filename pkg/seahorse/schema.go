@@ -37,6 +37,9 @@ func runSchema(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS conversations (
 			conversation_id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_key     TEXT NOT NULL UNIQUE,
+			active_generation INTEGER NOT NULL DEFAULT 0,
+			active_turn_count INTEGER NOT NULL DEFAULT 0,
+			last_summary_turn INTEGER NOT NULL DEFAULT 0,
 			created_at      TEXT NOT NULL DEFAULT (datetime('now')),
 			updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 		)`,
@@ -96,6 +99,7 @@ func runSchema(db *sql.DB) error {
 
 		`CREATE TABLE IF NOT EXISTS context_items (
 			conversation_id INTEGER NOT NULL,
+			generation      INTEGER NOT NULL DEFAULT 0,
 			ordinal         INTEGER NOT NULL,
 			item_type       TEXT NOT NULL,
 			summary_id      TEXT,
@@ -165,6 +169,45 @@ func runSchema(db *sql.DB) error {
 	}
 	if err := ensureMessagesModelNameColumn(db); err != nil {
 		return err
+	}
+	if err := ensureActiveContextColumns(db); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureActiveContextColumns(db *sql.DB) error {
+	columns := []struct {
+		table, name, definition string
+	}{
+		{"conversations", "active_generation", "INTEGER NOT NULL DEFAULT 0"},
+		{"conversations", "active_turn_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"conversations", "last_summary_turn", "INTEGER NOT NULL DEFAULT 0"},
+		{"context_items", "generation", "INTEGER NOT NULL DEFAULT 0"},
+	}
+	for _, column := range columns {
+		hasColumn, err := tableHasColumn(db, column.table, column.name)
+		if err != nil {
+			return fmt.Errorf("check %s.%s: %w", column.table, column.name, err)
+		}
+		if !hasColumn {
+			if _, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", column.table, column.name, column.definition)); err != nil {
+				return fmt.Errorf("add %s.%s: %w", column.table, column.name, err)
+			}
+		}
+	}
+
+	// Existing databases predate active-window counters. Generation zero contains
+	// the current context, so initialize its completed user-turn count once.
+	_, err := db.Exec(`UPDATE conversations
+		SET active_turn_count = (
+			SELECT COUNT(*) FROM messages
+			WHERE messages.conversation_id = conversations.conversation_id
+			  AND lower(trim(messages.role)) = 'user'
+		)
+		WHERE active_generation = 0 AND active_turn_count = 0`)
+	if err != nil {
+		return fmt.Errorf("backfill active turn counts: %w", err)
 	}
 	return nil
 }

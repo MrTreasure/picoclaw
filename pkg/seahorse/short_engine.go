@@ -250,6 +250,7 @@ func (e *Engine) Ingest(ctx context.Context, sessionKey string, messages []Messa
 
 	var totalTokens int
 	var msgIDs []int64
+	userTurns := 0
 	for _, msg := range messages {
 		var added *Message
 		var err error
@@ -281,11 +282,17 @@ func (e *Engine) Ingest(ctx context.Context, sessionKey string, messages []Messa
 		}
 		totalTokens += msg.TokenCount
 		msgIDs = append(msgIDs, added.ID)
+		if strings.EqualFold(strings.TrimSpace(msg.Role), "user") {
+			userTurns++
+		}
 	}
 
 	// Append to context_items using actual inserted IDs
 	if err := e.store.AppendContextMessages(ctx, conv.ConversationID, msgIDs); err != nil {
 		return nil, fmt.Errorf("append context: %w", err)
+	}
+	if err := e.store.IncrementActiveTurnCount(ctx, conv.ConversationID, userTurns); err != nil {
+		return nil, fmt.Errorf("increment active turns: %w", err)
 	}
 
 	logger.InfoCF("seahorse", "ingest", map[string]any{
@@ -297,6 +304,38 @@ func (e *Engine) Ingest(ctx context.Context, sessionKey string, messages []Messa
 		MessageCount: len(messages),
 		TokenCount:   totalTokens,
 	}, nil
+}
+
+// ActiveWindowState returns persisted maintenance state for the model-visible
+// context generation.
+func (e *Engine) ActiveWindowState(ctx context.Context, sessionKey string) (turnCount, lastSummaryTurn int, err error) {
+	conv, err := e.store.GetOrCreateConversation(ctx, sessionKey)
+	if err != nil {
+		return 0, 0, err
+	}
+	return conv.ActiveTurnCount, conv.LastSummaryTurn, nil
+}
+
+// RotateActiveWindow changes only which context references are model-visible.
+// Historical messages, summaries, FTS rows and prior generations are retained.
+func (e *Engine) RotateActiveWindow(ctx context.Context, sessionKey string, retainTurns int) error {
+	mu := e.getSessionMutex(sessionKey)
+	mu.Lock()
+	defer mu.Unlock()
+	conv, err := e.store.GetOrCreateConversation(ctx, sessionKey)
+	if err != nil {
+		return err
+	}
+	return e.store.RotateActiveContext(ctx, conv.ConversationID, retainTurns)
+}
+
+// MarkActiveWindowSummarized persists successful scheduled maintenance.
+func (e *Engine) MarkActiveWindowSummarized(ctx context.Context, sessionKey string, turn int) error {
+	conv, err := e.store.GetOrCreateConversation(ctx, sessionKey)
+	if err != nil {
+		return err
+	}
+	return e.store.MarkActiveWindowSummarized(ctx, conv.ConversationID, turn)
 }
 
 // Close releases resources.

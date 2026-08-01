@@ -158,6 +158,18 @@ func (m *seahorseContextManager) Ingest(ctx context.Context, req *IngestRequest)
 	return err
 }
 
+func (m *seahorseContextManager) ActiveWindowState(ctx context.Context, sessionKey string) (int, int, error) {
+	return m.engine.ActiveWindowState(ctx, sessionKey)
+}
+
+func (m *seahorseContextManager) RotateActiveWindow(ctx context.Context, sessionKey string, retainTurns int) error {
+	return m.engine.RotateActiveWindow(ctx, sessionKey, retainTurns)
+}
+
+func (m *seahorseContextManager) MarkActiveWindowSummarized(ctx context.Context, sessionKey string, turn int) error {
+	return m.engine.MarkActiveWindowSummarized(ctx, sessionKey, turn)
+}
+
 // Clear removes all stored context for a session (seahorse DB + JSONL).
 func (m *seahorseContextManager) Clear(ctx context.Context, sessionKey string) error {
 	if err := m.engine.ClearSession(ctx, sessionKey); err != nil {

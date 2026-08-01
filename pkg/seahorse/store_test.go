@@ -951,6 +951,60 @@ func TestStoreGetContextTokenCount(t *testing.T) {
 	}
 }
 
+func TestStoreRotateActiveContextKeepsDurableHistory(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	conv, _ := s.GetOrCreateConversation(ctx, "agent:active-window")
+
+	var ids []int64
+	for _, message := range []struct{ role, content string }{
+		{"user", "u1"}, {"assistant", "a1"},
+		{"user", "u2"}, {"assistant", "a2"},
+		{"user", "u3"}, {"assistant", "a3"},
+	} {
+		stored, err := s.AddMessage(ctx, conv.ConversationID, message.role, message.content, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, stored.ID)
+		if err := s.AppendContextMessage(ctx, conv.ConversationID, stored.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.IncrementActiveTurnCount(ctx, conv.ConversationID, 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RotateActiveContext(ctx, conv.ConversationID, 2); err != nil {
+		t.Fatal(err)
+	}
+
+	active, err := s.GetContextItems(ctx, conv.ConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 4 || active[0].MessageID != ids[2] || active[3].MessageID != ids[5] {
+		t.Fatalf("unexpected active context: %#v", active)
+	}
+	updated, err := s.GetConversationBySessionKey(ctx, "agent:active-window")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ActiveGeneration != 1 || updated.ActiveTurnCount != 2 {
+		t.Fatalf("unexpected active state: %#v", updated)
+	}
+
+	var messageCount, contextReferenceCount int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM messages WHERE conversation_id = ?`, conv.ConversationID).Scan(&messageCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM context_items WHERE conversation_id = ?`, conv.ConversationID).Scan(&contextReferenceCount); err != nil {
+		t.Fatal(err)
+	}
+	if messageCount != 6 || contextReferenceCount != 10 {
+		t.Fatalf("durable history changed: messages=%d context_refs=%d", messageCount, contextReferenceCount)
+	}
+}
+
 func TestStoreGetMaxOrdinal(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()

@@ -30,6 +30,14 @@ type ContextManager interface {
 	Clear(ctx context.Context, sessionKey string) error
 }
 
+// ActiveContextWindowManager is implemented by context stores that can rotate
+// model-visible history without deleting durable conversation data.
+type ActiveContextWindowManager interface {
+	ActiveWindowState(ctx context.Context, sessionKey string) (turnCount, lastSummaryTurn int, err error)
+	RotateActiveWindow(ctx context.Context, sessionKey string, retainTurns int) error
+	MarkActiveWindowSummarized(ctx context.Context, sessionKey string, turn int) error
+}
+
 // AssembleRequest is the input to Assemble.
 type AssembleRequest struct {
 	SessionKey string // session identifier

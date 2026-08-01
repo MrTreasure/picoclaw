@@ -21,47 +21,28 @@ func (al *AgentLoop) maybeMaintainSession(
 		return nil
 	}
 
-	history := agent.Sessions.GetHistory(sessionKey)
-	turnCount := countUserTurns(history)
-	if maintenance.CleanupAfterTurns > 0 && turnCount >= maintenance.CleanupAfterTurns {
-		return al.trimSessionToRecentTurns(ctx, agent, sessionKey, maintenance.RetainRecentTurns)
+	window, ok := al.contextManager.(ActiveContextWindowManager)
+	if !ok {
+		// A destructive fallback is intentionally forbidden: unsupported context
+		// managers keep their history unchanged.
+		return nil
 	}
-	if shouldSummarizeAtTurnCount(maintenance.SummarizeEveryTurns, turnCount) {
-		return al.contextManager.Compact(ctx, &CompactRequest{
+	turnCount, lastSummaryTurn, err := window.ActiveWindowState(ctx, sessionKey)
+	if err != nil {
+		return err
+	}
+	if maintenance.CleanupAfterTurns > 0 && turnCount >= maintenance.CleanupAfterTurns {
+		return window.RotateActiveWindow(ctx, sessionKey, maintenance.RetainRecentTurns)
+	}
+	if shouldSummarizeAtTurnCount(maintenance.SummarizeEveryTurns, turnCount) && lastSummaryTurn != turnCount {
+		if err := al.contextManager.Compact(ctx, &CompactRequest{
 			SessionKey: sessionKey,
 			Reason:     ContextCompressReasonTurnThreshold,
 			Budget:     agent.ContextWindow,
-		})
-	}
-	return nil
-}
-
-func (al *AgentLoop) trimSessionToRecentTurns(
-	ctx context.Context,
-	agent *AgentInstance,
-	sessionKey string,
-	retainTurns int,
-) error {
-	history := agent.Sessions.GetHistory(sessionKey)
-	recent := recentHistoryByUserTurns(history, retainTurns)
-	if err := al.contextManager.Clear(ctx, sessionKey); err != nil {
-		return err
-	}
-	if len(recent) == 0 {
-		return nil
-	}
-
-	agent.Sessions.SetHistory(sessionKey, recent)
-	if err := agent.Sessions.Save(sessionKey); err != nil {
-		return err
-	}
-	for _, message := range recent {
-		if err := al.contextManager.Ingest(ctx, &IngestRequest{
-			SessionKey: sessionKey,
-			Message:    message,
 		}); err != nil {
 			return err
 		}
+		return window.MarkActiveWindowSummarized(ctx, sessionKey, turnCount)
 	}
 	return nil
 }

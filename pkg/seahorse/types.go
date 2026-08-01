@@ -68,10 +68,13 @@ type SummaryNode struct {
 
 // Conversation represents a session's conversation with metadata.
 type Conversation struct {
-	ConversationID int64     `json:"conversationId"`
-	SessionKey     string    `json:"sessionKey"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	ConversationID   int64     `json:"conversationId"`
+	SessionKey       string    `json:"sessionKey"`
+	ActiveGeneration int       `json:"activeGeneration"`
+	ActiveTurnCount  int       `json:"activeTurnCount"`
+	LastSummaryTurn  int       `json:"lastSummaryTurn"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 }
 
 // SessionStatus contains status information for a session.
@@ -88,6 +91,7 @@ type SessionStatus struct {
 // ContextItem represents one item in the assembled context window.
 type ContextItem struct {
 	ConversationID int64     `json:"conversationId"`
+	Generation     int       `json:"generation"`
 	Ordinal        int       `json:"ordinal"`
 	ItemType       string    `json:"itemType"` // "summary" or "message"
 	SummaryID      string    `json:"summaryId,omitempty"`
