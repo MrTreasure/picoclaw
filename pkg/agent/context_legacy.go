@@ -51,7 +51,7 @@ func (m *legacyContextManager) Compact(_ context.Context, req *CompactRequest) e
 				},
 			)
 		}
-	case ContextCompressReasonSummarize:
+	case ContextCompressReasonSummarize, ContextCompressReasonTurnThreshold:
 		m.maybeSummarize(req.SessionKey)
 	}
 	return nil

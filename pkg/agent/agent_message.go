@@ -167,6 +167,14 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 			"error":       err.Error(),
 		})
 	}
+	if err := al.maybeMaintainSession(ctx, agent, sessionKey, msg.Channel); err != nil {
+		logger.WarnCF("agent", "Session maintenance failed", map[string]any{
+			"agent_id":    agent.ID,
+			"channel":     msg.Channel,
+			"session_key": sessionKey,
+			"error":       err.Error(),
+		})
+	}
 
 	// Reset message-tool state for this round so we don't skip publishing due to a previous round.
 	if tool, ok := agent.Tools.Get("message"); ok {
