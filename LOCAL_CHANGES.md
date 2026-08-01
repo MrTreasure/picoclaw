@@ -77,6 +77,7 @@ in Git. Current notable local settings include:
 - image model alias: `qwen3.7-plus`;
 - declared model context window: 1,000,000 tokens;
 - maximum tool iterations per turn: 50;
+- user-facing tool execution feedback disabled; only final responses are sent;
 - local session maintenance target: summarize every 40 completed user turns,
   rotate after 80, retain 20.
 
