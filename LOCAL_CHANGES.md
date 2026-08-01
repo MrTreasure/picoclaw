@@ -9,6 +9,11 @@ Every local-only code or deployment behavior change must update this document
 in the same commit. Each entry must state the behavior, configuration surface,
 relevant commits, deployment status, upstream status, and rollback path.
 
+Use a configuration-first change policy: inspect and prefer existing config,
+environment variables, and runtime switches before changing source code. Modify
+source only when configuration cannot satisfy the requirement, and document why
+the configuration path was insufficient.
+
 The comparison baseline currently used by this repository is
 `upstream/main` at `49183d7e` (2026-07-23).
 
