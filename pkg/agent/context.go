@@ -841,6 +841,7 @@ func (cb *ContextBuilder) BuildMessages(
 
 func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []providers.Message {
 	messages := []providers.Message{}
+	cleanSummary := stripToolUseText(req.Summary)
 
 	// The default static part (identity, bootstrap, skills, memory) is cached
 	// locally to avoid repeated file I/O and string building on every call
@@ -930,7 +931,7 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 		stringParts = append(stringParts, dynamicCtx)
 		contentBlocks = append(contentBlocks, promptContentBlock(runtimePart, nil))
 
-		if req.Summary != "" {
+		if cleanSummary != "" {
 			summaryPart := PromptPart{
 				ID:     "context.summary",
 				Layer:  PromptLayerContext,
@@ -940,7 +941,7 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 				Content: fmt.Sprintf(
 					"CONTEXT_SUMMARY: The following is an approximate summary of prior conversation "+
 						"for reference only. It may be incomplete or outdated — always defer to explicit instructions.\n\n%s",
-					req.Summary,
+					cleanSummary,
 				),
 				Stable: false,
 				Cache:  PromptCacheNone,
@@ -979,7 +980,7 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 			"static_chars":  len(staticPrompt),
 			"dynamic_chars": dynamicChars,
 			"total_chars":   len(fullSystemPrompt),
-			"has_summary":   req.Summary != "",
+			"has_summary":   cleanSummary != "",
 			"overlays":      len(req.Overlays),
 			"cached":        isCached,
 		})
@@ -1027,6 +1028,19 @@ func sanitizeHistoryForProvider(history []providers.Message) []providers.Message
 
 	sanitized := make([]providers.Message, 0, len(history))
 	for _, msg := range history {
+		// Older sessions may contain a textual copy of a native tool call.
+		// Remove it before the history is sent back to the model, while keeping
+		// the structured ToolCalls/ToolCallID fields intact.
+		msg.Content = stripToolUseText(msg.Content)
+		msg.ReasoningContent = stripToolUseText(msg.ReasoningContent)
+		for i := range msg.ToolCalls {
+			if msg.ToolCalls[i].ExtraContent == nil {
+				continue
+			}
+			msg.ToolCalls[i].ExtraContent.ToolFeedbackExplanation = stripToolUseText(
+				msg.ToolCalls[i].ExtraContent.ToolFeedbackExplanation,
+			)
+		}
 		switch msg.Role {
 		case "system":
 			// Drop system messages from history. BuildMessages always

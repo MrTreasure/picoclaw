@@ -59,6 +59,21 @@ func TestStripToolUseText(t *testing.T) {
 			content: "Use [tool_usage] and JSON {\"result\":\"ok\"}.",
 			want:    "Use [tool_usage] and JSON {\"result\":\"ok\"}.",
 		},
+		{
+			name:    "alternate tool call format",
+			content: "Tool call: exec\nArguments: {\"action\":\"run\",\"command\":\"find /tmp\"}",
+			want:    "",
+		},
+		{
+			name:    "multiple alternate tool calls",
+			content: "Tool call: exec\nArguments: {\"command\":\"pwd\"}\nTool call: read_file\nArguments: {\"path\":\"README.md\"}",
+			want:    "",
+		},
+		{
+			name:    "alternate tool call preserves explanation",
+			content: "Checking now.\nTool call: exec\nArguments: {\"command\":\"id\"}\nDone.",
+			want:    "Checking now.\n\nDone.",
+		},
 	}
 
 	for _, tt := range tests {

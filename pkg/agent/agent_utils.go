@@ -75,6 +75,10 @@ var toolProtocolMarkers = [...]string{
 	"[tool_result",
 }
 
+// toolCallTextMarker is emitted by some OpenAI-compatible models when they
+// duplicate a native call as plain text instead of keeping it in tool_calls.
+const toolCallTextMarker = "tool call:"
+
 // findToolProtocolMarker returns the next internal tool-protocol marker.
 // Providers occasionally duplicate a native tool call in assistant content as
 // text. Searching explicitly keeps ordinary square-bracketed text untouched.
@@ -159,6 +163,98 @@ func stripToolUseText(content string) string {
 			continue
 		}
 		break
+	}
+
+	return stripToolCallText(strings.TrimSpace(cleaned.String()))
+}
+
+// jsonObjectEnd returns the byte offset immediately after a balanced JSON
+// object, while ignoring braces inside quoted strings.
+func jsonObjectEnd(content string, start int) int {
+	if start < 0 || start >= len(content) || content[start] != '{' {
+		return -1
+	}
+
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(content); i++ {
+		ch := content[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			switch ch {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		}
+	}
+	return -1
+}
+
+// stripToolCallText removes the alternate "Tool call: ... Arguments: {...}"
+// representation used by older/provider-specific responses. This is kept
+// separate from bracketed tool protocol parsing because the latter can appear
+// inline, while this form is line-oriented and may contain multiple calls.
+func stripToolCallText(content string) string {
+	var cleaned strings.Builder
+	remaining := content
+
+	for {
+		lower := strings.ToLower(remaining)
+		start := strings.Index(lower, toolCallTextMarker)
+		if start < 0 {
+			cleaned.WriteString(remaining)
+			break
+		}
+		cleaned.WriteString(remaining[:start])
+
+		afterMarker := remaining[start+len(toolCallTextMarker):]
+		newline := strings.IndexByte(afterMarker, '\n')
+		if newline < 0 {
+			break
+		}
+		afterLine := afterMarker[newline+1:]
+		trimmed := strings.TrimLeft(afterLine, " \t")
+		trimmedLower := strings.ToLower(trimmed)
+
+		if strings.HasPrefix(trimmedLower, "arguments:") {
+			value := strings.TrimLeft(trimmed[len("arguments:"):], " \t")
+			if objectStart := strings.IndexByte(value, '{'); objectStart >= 0 {
+				if end := jsonObjectEnd(value, objectStart); end >= 0 {
+					remaining = value[end:]
+					continue
+				}
+			}
+		}
+
+		if strings.HasPrefix(trimmedLower, "<invoke") {
+			if end := strings.Index(strings.ToLower(trimmed), "</invoke>"); end >= 0 {
+				remaining = trimmed[end+len("</invoke>"):]
+				continue
+			}
+		}
+
+		// Truncated or unrecognised form: discard only the marker line and
+		// continue processing any following human-readable text.
+		remaining = afterLine
 	}
 
 	return strings.TrimSpace(cleaned.String())
