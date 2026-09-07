@@ -332,6 +332,29 @@ func (p *Provider) applyCustomHeaders(req *http.Request) {
 	}
 }
 
+func (p *Provider) applyOpenCodeHeaders(req *http.Request) {
+	if !isOpenCodeHost(p.apiBase) {
+		return
+	}
+	metadata, ok := common.RequestMetadataFromContext(req.Context())
+	if !ok || metadata.SessionID == "" {
+		return
+	}
+
+	req.Header.Set("x-opencode-session", metadata.SessionID)
+	if metadata.RequestID != "" {
+		req.Header.Set("x-opencode-request", metadata.RequestID)
+	}
+	if metadata.Client != "" {
+		req.Header.Set("x-opencode-client", metadata.Client)
+	}
+}
+
+func isOpenCodeHost(apiBase string) bool {
+	host := normalizedHostname(apiBase)
+	return host == "opencode.ai" || strings.HasSuffix(host, ".opencode.ai")
+}
+
 func (p *Provider) SetProviderName(providerName string) {
 	p.providerName = strings.ToLower(strings.TrimSpace(providerName))
 }
@@ -487,6 +510,7 @@ func (p *Provider) Chat(
 	if p.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
 	}
+	p.applyOpenCodeHeaders(req)
 	p.applyCustomHeaders(req)
 
 	resp, err := p.httpClient.Do(req)
@@ -559,6 +583,7 @@ func (p *Provider) ChatStreamEvents(
 	if p.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
 	}
+	p.applyOpenCodeHeaders(req)
 	p.applyCustomHeaders(req)
 
 	// Use a client without Timeout for streaming — the http.Client.Timeout covers

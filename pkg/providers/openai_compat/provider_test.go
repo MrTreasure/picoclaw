@@ -1422,6 +1422,46 @@ func TestProviderChat_CustomHeadersInjected(t *testing.T) {
 	}
 }
 
+func TestProviderApplyOpenCodeHeaders(t *testing.T) {
+	p := NewProvider("key", "https://opencode.ai/zen/go/v1", "")
+	ctx := common.WithRequestMetadata(t.Context(), common.RequestMetadata{
+		SessionID: "ses_test",
+		RequestID: "req_test",
+		Client:    "picoclaw",
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://opencode.ai/zen/go/v1/chat/completions", nil)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext() error = %v", err)
+	}
+
+	p.applyOpenCodeHeaders(req)
+
+	if got := req.Header.Get("x-opencode-session"); got != "ses_test" {
+		t.Fatalf("x-opencode-session = %q, want %q", got, "ses_test")
+	}
+	if got := req.Header.Get("x-opencode-request"); got != "req_test" {
+		t.Fatalf("x-opencode-request = %q, want %q", got, "req_test")
+	}
+	if got := req.Header.Get("x-opencode-client"); got != "picoclaw" {
+		t.Fatalf("x-opencode-client = %q, want %q", got, "picoclaw")
+	}
+}
+
+func TestProviderApplyOpenCodeHeadersSkipsOtherHosts(t *testing.T) {
+	p := NewProvider("key", "https://api.openai.com/v1", "")
+	ctx := common.WithRequestMetadata(t.Context(), common.RequestMetadata{SessionID: "ses_test"})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/chat/completions", nil)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext() error = %v", err)
+	}
+
+	p.applyOpenCodeHeaders(req)
+
+	if got := req.Header.Get("x-opencode-session"); got != "" {
+		t.Fatalf("x-opencode-session = %q, want empty", got)
+	}
+}
+
 func TestProviderChatStream_CustomHeadersInjected(t *testing.T) {
 	var gotSource, gotAuth, gotUserAgent string
 

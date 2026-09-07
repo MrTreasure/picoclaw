@@ -27,6 +27,7 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState, pipeline *Pipel
 	// Inject turnState and AgentLoop into context so tools (e.g. spawn) can retrieve them.
 	turnCtx = withTurnState(turnCtx, ts)
 	turnCtx = WithAgentLoop(turnCtx, al)
+	turnCtx = withProviderRequestMetadata(turnCtx, ts)
 
 	al.registerActiveTurn(ts)
 	defer al.clearActiveTurn(ts)
