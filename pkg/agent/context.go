@@ -329,7 +329,14 @@ func (cb *ContextBuilder) buildSystemPromptParts(opts systemPromptBuildOptions) 
 			Source: PromptSource{ID: PromptSourceOutputPolicy, Name: "split_on_marker"},
 			Title:  "multi-message output policy",
 			Content: `# MULTI-MESSAGE OUTPUT
-You MUST frequently use <|[SPLIT]|> to break your responses into multiple short messages. NEVER output a single long wall of text. Actively split distinct concepts or parts. Example: Message part 1<|[SPLIT]|>Message part 2<|[SPLIT]|>Message part 3
+Split your reply into a few short messages, with <|[SPLIT]|> between them, so each part arrives as its own message. Use the marker sparingly — only where the text naturally breaks into distinct parts.
+
+Rules:
+- NEVER emit <|[SPLIT]|> twice in a row.
+- NEVER emit the marker without text before AND after it.
+- Do NOT use the marker when you are replying with a tool call instead of text.
+
+Example: Message part 1<|[SPLIT]|>Message part 2
 
 Each part separated by the marker will be sent as an independent message.`,
 			Stable: true,
@@ -818,6 +825,20 @@ func (cb *ContextBuilder) buildDynamicContext(
 	return sb.String()
 }
 
+// prependDynamicContext places the per-request dynamic context ahead of the
+// user's message, leaving their own words last so recency favours the actual
+// request. Either side may be empty: a media-only turn has no text, and a turn
+// with a suppressed system prompt has no dynamic context.
+func prependDynamicContext(message, dynamicCtx string) string {
+	if dynamicCtx == "" {
+		return message
+	}
+	if strings.TrimSpace(message) == "" {
+		return dynamicCtx
+	}
+	return dynamicCtx + "\n\n---\n\n" + message
+}
+
 func (cb *ContextBuilder) BuildMessages(
 	history []providers.Message,
 	summary string,
@@ -908,28 +929,43 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 		}
 	}
 
+	// Dynamic context (time, runtime, session, sender) changes on essentially
+	// every request: the timestamp has minute granularity and the sender varies
+	// per message. In the common case it deliberately does NOT go into the
+	// system message. The system message sits in front of the history, so any
+	// variable content there truncates the provider's cacheable prefix down to
+	// the static prompt alone. Attaching it to the current user message instead
+	// (see the assembly below) keeps that prefix stable across requests, letting
+	// the provider reuse static + summary + the whole accumulated history.
+	//
+	// Continuation turns (cron, tool follow-ups) carry no user message to attach
+	// to, so there it stays in the system message exactly as before.
 	dynamicChars := 0
+	attachDynamicToUser := strings.TrimSpace(req.CurrentMessage) != "" || len(req.Media) > 0
+	var dynamicCtx string
 	if !req.SuppressDefaultSystemPrompt {
 		// Build short dynamic context (time, runtime, session) — changes per request
-		dynamicCtx := cb.buildDynamicContext(
+		dynamicCtx = cb.buildDynamicContext(
 			req.Channel,
 			req.ChatID,
 			req.SenderID,
 			req.SenderDisplayName,
 		)
 		dynamicChars = len(dynamicCtx)
-		runtimePart := PromptPart{
-			ID:      "context.runtime",
-			Layer:   PromptLayerContext,
-			Slot:    PromptSlotRuntime,
-			Source:  PromptSource{ID: PromptSourceRuntime, Name: "runtime"},
-			Title:   "runtime context",
-			Content: dynamicCtx,
-			Stable:  false,
-			Cache:   PromptCacheNone,
+		if !attachDynamicToUser {
+			runtimePart := PromptPart{
+				ID:      "context.runtime",
+				Layer:   PromptLayerContext,
+				Slot:    PromptSlotRuntime,
+				Source:  PromptSource{ID: PromptSourceRuntime, Name: "runtime"},
+				Title:   "runtime context",
+				Content: dynamicCtx,
+				Stable:  false,
+				Cache:   PromptCacheNone,
+			}
+			stringParts = append(stringParts, dynamicCtx)
+			contentBlocks = append(contentBlocks, promptContentBlock(runtimePart, nil))
 		}
-		stringParts = append(stringParts, dynamicCtx)
-		contentBlocks = append(contentBlocks, promptContentBlock(runtimePart, nil))
 
 		if cleanSummary != "" {
 			summaryPart := PromptPart{
@@ -1011,11 +1047,19 @@ func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []prov
 	// Add current user message. Media-only turns must still be preserved so
 	// multimodal providers receive the uploaded image even when the user sends
 	// no accompanying text.
-	if strings.TrimSpace(req.CurrentMessage) != "" || len(req.Media) > 0 {
-		messages = append(messages, userPromptMessage(req.CurrentMessage, req.Media))
+	//
+	// The dynamic context rides along here, prepended so the user's own words
+	// stay last. A separate trailing message would be equivalent for caching but
+	// is not an option: Anthropic requires strictly alternating roles and two
+	// consecutive user messages are rejected outright.
+	if attachDynamicToUser {
+		messages = append(messages, userPromptMessage(
+			prependDynamicContext(req.CurrentMessage, dynamicCtx),
+			req.Media,
+		))
 	}
 	if len(messages) == 0 {
-		messages = append(messages, userPromptMessage("", nil))
+		messages = append(messages, userPromptMessage(dynamicCtx, nil))
 	}
 
 	return messages

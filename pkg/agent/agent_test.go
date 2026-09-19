@@ -540,13 +540,18 @@ func TestProcessMessage_IncludesCurrentSenderInDynamicContext(t *testing.T) {
 
 	systemPrompt := provider.lastMessages[0].Content
 	wantSender := "## Current Sender\nCurrent sender: Alice (ID: discord:123)"
-	if !strings.Contains(systemPrompt, wantSender) {
-		t.Fatalf("system prompt missing sender context %q:\n%s", wantSender, systemPrompt)
+	if strings.Contains(systemPrompt, "## Current Sender") {
+		t.Fatalf("system prompt must not carry per-request sender context:\n%s", systemPrompt)
 	}
 
+	// The sender varies per message, so it rides on the user message — keeping
+	// the system prefix stable is what lets the provider reuse its KV cache.
 	lastMessage := provider.lastMessages[len(provider.lastMessages)-1]
-	if lastMessage.Role != "user" || lastMessage.Content != "hello" {
-		t.Fatalf("last provider message = %+v, want unchanged user message", lastMessage)
+	if lastMessage.Role != "user" || !strings.HasSuffix(lastMessage.Content, "hello") {
+		t.Fatalf("last provider message = %+v, want user message ending with the original text", lastMessage)
+	}
+	if !strings.Contains(lastMessage.Content, wantSender) {
+		t.Fatalf("user message missing sender context %q:\n%s", wantSender, lastMessage.Content)
 	}
 }
 
@@ -1097,7 +1102,7 @@ func TestProcessMessage_UseCommandLoadsRequestedSkill(t *testing.T) {
 	}
 
 	lastMessage := provider.lastMessages[len(provider.lastMessages)-1]
-	if lastMessage.Role != "user" || lastMessage.Content != "explain how to list files" {
+	if lastMessage.Role != "user" || !strings.HasSuffix(lastMessage.Content, "explain how to list files") {
 		t.Fatalf("last provider message = %+v, want rewritten user message", lastMessage)
 	}
 }
@@ -1168,7 +1173,7 @@ func TestProcessMessage_BtwCommandRunsWithoutPersistingHistory(t *testing.T) {
 	}
 
 	lastMessage := provider.lastMessages[len(provider.lastMessages)-1]
-	if lastMessage.Role != "user" || lastMessage.Content != "explain side effects" {
+	if lastMessage.Role != "user" || !strings.HasSuffix(lastMessage.Content, "explain side effects") {
 		t.Fatalf("last provider message = %+v, want stripped /btw question", lastMessage)
 	}
 
@@ -1216,16 +1221,23 @@ func TestProcessMessage_BtwCommandIncludesRequestContextAndMedia(t *testing.T) {
 		t.Fatal("provider did not receive any messages")
 	}
 
+	// Session and sender are per-request facts and must stay off the system
+	// message; they ride on the current user message so the system prefix —
+	// and therefore the provider's KV cache — stays stable across requests.
 	systemPrompt := provider.lastMessages[0].Content
-	if !strings.Contains(systemPrompt, "## Current Session\nChannel: discord\nChat ID: group-1") {
-		t.Fatalf("system prompt missing current session context:\n%s", systemPrompt)
+	if strings.Contains(systemPrompt, "## Current Session") || strings.Contains(systemPrompt, "## Current Sender") {
+		t.Fatalf("system prompt must not carry per-request session/sender context:\n%s", systemPrompt)
 	}
-	if !strings.Contains(systemPrompt, "## Current Sender\nCurrent sender: Alice (ID: discord:123)") {
-		t.Fatalf("system prompt missing current sender context:\n%s", systemPrompt)
+	lastMessage := provider.lastMessages[len(provider.lastMessages)-1]
+	if !strings.Contains(lastMessage.Content, "## Current Session\nChannel: discord\nChat ID: group-1") {
+		t.Fatalf("user message missing current session context:\n%s", lastMessage.Content)
+	}
+	if !strings.Contains(lastMessage.Content, "## Current Sender\nCurrent sender: Alice (ID: discord:123)") {
+		t.Fatalf("user message missing current sender context:\n%s", lastMessage.Content)
 	}
 
-	lastMessage := provider.lastMessages[len(provider.lastMessages)-1]
-	if lastMessage.Role != "user" || lastMessage.Content != "describe this image" {
+	lastMessage = provider.lastMessages[len(provider.lastMessages)-1]
+	if lastMessage.Role != "user" || !strings.HasSuffix(lastMessage.Content, "describe this image") {
 		t.Fatalf("last provider message = %+v, want stripped /btw question", lastMessage)
 	}
 	if !reflect.DeepEqual(lastMessage.Media, []string{"media://image-1"}) {
@@ -1291,7 +1303,7 @@ func TestProcessMessage_BtwCommandUsesIsolatedProvider(t *testing.T) {
 
 	// Verify the question was stripped of /btw prefix
 	lastMessage := provider.lastMessages[len(provider.lastMessages)-1]
-	if lastMessage.Role != "user" || lastMessage.Content != "explain isolation" {
+	if lastMessage.Role != "user" || !strings.HasSuffix(lastMessage.Content, "explain isolation") {
 		t.Fatalf("last provider message = %+v, want stripped /btw question", lastMessage)
 	}
 
@@ -1524,7 +1536,7 @@ func TestProcessMessage_UseCommandArmsSkillForNextMessage(t *testing.T) {
 		t.Fatalf("system prompt missing pending skill content:\n%s", systemPrompt)
 	}
 	lastMessage := provider.lastMessages[len(provider.lastMessages)-1]
-	if lastMessage.Role != "user" || lastMessage.Content != "explain how to list files" {
+	if lastMessage.Role != "user" || !strings.HasSuffix(lastMessage.Content, "explain how to list files") {
 		t.Fatalf("last provider message = %+v, want unchanged follow-up user message", lastMessage)
 	}
 }

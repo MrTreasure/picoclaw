@@ -103,7 +103,7 @@ func TestBuildMessagesFromPrompt_IncludesSystemPromptOverlay(t *testing.T) {
 	if !strings.Contains(messages[0].Content, "Use child-only system instructions.") {
 		t.Fatalf("system prompt missing overlay: %q", messages[0].Content)
 	}
-	if messages[1].Role != "user" || messages[1].Content != "do child task" {
+	if messages[1].Role != "user" || !strings.HasSuffix(messages[1].Content, "do child task") {
 		t.Fatalf("messages[1] = %#v, want user task", messages[1])
 	}
 }
@@ -121,8 +121,8 @@ func TestBuildMessagesFromPrompt_AttachesInternalPromptMetadata(t *testing.T) {
 	}
 
 	system := messages[0]
-	if len(system.SystemParts) < 3 {
-		t.Fatalf("system parts len = %d, want at least 3", len(system.SystemParts))
+	if len(system.SystemParts) < 2 {
+		t.Fatalf("system parts len = %d, want at least 2", len(system.SystemParts))
 	}
 	if system.SystemParts[0].PromptLayer != string(PromptLayerKernel) ||
 		system.SystemParts[0].PromptSlot != string(PromptSlotIdentity) ||
@@ -145,8 +145,13 @@ func TestBuildMessagesFromPrompt_AttachesInternalPromptMetadata(t *testing.T) {
 			}
 		}
 	}
-	if !hasRuntime {
-		t.Fatal("system parts missing runtime prompt metadata")
+	// The runtime block carries a minute-granularity timestamp. It must stay
+	// out of the system parts whenever there is a user message to carry it —
+	// sitting inside the system message would put a value that changes every
+	// minute in front of the history, truncating the provider's cacheable
+	// prefix to the static prompt alone.
+	if hasRuntime {
+		t.Fatal("system parts must not carry runtime metadata when a user message exists")
 	}
 	if !hasSummary {
 		t.Fatal("system parts missing summary prompt metadata")
@@ -158,6 +163,9 @@ func TestBuildMessagesFromPrompt_AttachesInternalPromptMetadata(t *testing.T) {
 		user.PromptSource != string(PromptSourceUserMessage) {
 		t.Fatalf("user message metadata = %#v, want turn message", user)
 	}
+	if !strings.Contains(user.Content, "## Current Time") {
+		t.Fatalf("user message missing runtime context:\n%s", user.Content)
+	}
 
 	data, err := json.Marshal(messages)
 	if err != nil {
@@ -167,6 +175,31 @@ func TestBuildMessagesFromPrompt_AttachesInternalPromptMetadata(t *testing.T) {
 		strings.Contains(string(data), "PromptLayer") ||
 		strings.Contains(string(data), "PromptSlot") {
 		t.Fatalf("internal prompt metadata leaked into JSON: %s", data)
+	}
+}
+
+// TestBuildMessagesFromPrompt_ContinuationKeepsDynamicContextInSystem covers
+// the fallback path. A continuation turn (cron, tool follow-up) carries no
+// current user message, so there is nothing to attach the dynamic context to;
+// it must stay in the system message rather than being silently dropped.
+func TestBuildMessagesFromPrompt_ContinuationKeepsDynamicContextInSystem(t *testing.T) {
+	t.Setenv("PICOCLAW_BUILTIN_SKILLS", t.TempDir())
+	cb := NewContextBuilder(t.TempDir())
+
+	messages := cb.BuildMessagesFromPrompt(PromptBuildRequest{
+		Channel: "pico",
+		ChatID:  "chat-1",
+	})
+	if len(messages) == 0 {
+		t.Fatal("BuildMessagesFromPrompt() returned no messages")
+	}
+
+	system := messages[0].Content
+	if !strings.Contains(system, "## Current Time") {
+		t.Fatalf("system prompt missing dynamic context on a continuation turn:\n%s", system)
+	}
+	if !strings.Contains(system, "Channel: pico") {
+		t.Fatalf("system prompt missing session context on a continuation turn:\n%s", system)
 	}
 }
 

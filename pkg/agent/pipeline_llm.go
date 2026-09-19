@@ -592,6 +592,7 @@ func (p *Pipeline) CallLLM(
 	if exec.response.Usage != nil {
 		responsePayload.PromptTokens = exec.response.Usage.PromptTokens
 		responsePayload.CompletionTokens = exec.response.Usage.CompletionTokens
+		responsePayload.CachedTokens = exec.response.Usage.CachedPromptTokens()
 	}
 	al.emitEvent(
 		runtimeevents.KindAgentLLMResponse,

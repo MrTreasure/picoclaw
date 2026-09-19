@@ -72,6 +72,12 @@ type LLMResponsePayload struct {
 	HasReasoning     bool
 	PromptTokens     int
 	CompletionTokens int
+
+	// CachedTokens is the subset of PromptTokens the provider served from its
+	// prefix cache. The observer and the downstream ingest API read this key
+	// by name (alongside cached_tokens / cacheReadTokens), so it must stay
+	// spelled exactly like this.
+	CachedTokens int
 }
 
 // LLMDeltaPayload describes a streamed LLM delta.

@@ -53,6 +53,30 @@ type UsageInfo struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+
+	// PromptTokensDetails carries the provider's prompt-cache accounting.
+	// OpenAI-compatible endpoints report it as
+	// {"prompt_tokens_details": {"cached_tokens": N}} — without this field the
+	// cache hit rate is invisible to every downstream consumer, and a
+	// hard-to-diagnose "0%" reads as fact. Endpoints that do not cache simply
+	// omit it, leaving the pointer nil.
+	PromptTokensDetails *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+}
+
+// PromptTokensDetails reports how much of the prompt the provider served from
+// its prefix cache rather than recomputing.
+type PromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
+// CachedPromptTokens returns the number of prompt tokens served from the
+// provider's prefix cache, or 0 when the provider does not report cache
+// accounting. Nil-safe so callers need not guard the pointer themselves.
+func (u *UsageInfo) CachedPromptTokens() int {
+	if u == nil || u.PromptTokensDetails == nil {
+		return 0
+	}
+	return u.PromptTokensDetails.CachedTokens
 }
 
 // CacheControl marks a content block for LLM-side prefix caching.
