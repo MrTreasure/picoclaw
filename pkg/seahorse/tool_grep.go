@@ -9,13 +9,17 @@ import (
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
 
-// GrepTool searches summaries and messages for matching content.
+// GrepTool searches summaries, messages, and workspace memory notes for
+// matching content.
 type GrepTool struct {
 	engine *RetrievalEngine
+	// workspace is the agent workspace root; its memory/ directory holds the
+	// daily notes, which are searched alongside the database.
+	workspace string
 }
 
-func NewGrepTool(engine *RetrievalEngine) *GrepTool {
-	return &GrepTool{engine: engine}
+func NewGrepTool(engine *RetrievalEngine, workspace string) *GrepTool {
+	return &GrepTool{engine: engine, workspace: workspace}
 }
 
 func (t *GrepTool) Name() string {
@@ -23,7 +27,10 @@ func (t *GrepTool) Name() string {
 }
 
 func (t *GrepTool) Description() string {
-	return `Search summaries and messages for matching content.
+	return `Search summaries, messages, and past daily notes for matching content.
+
+This is the ONLY way to reach daily notes older than the 3 most recent days —
+those older notes are not in the injected context and not in the database.
 
 Pattern syntax:
 - Words: "authentication" - matches content containing this word
@@ -51,10 +58,15 @@ Returns:
   "success": true,
   "summaries": [{"id": "sum_abc", "content": "...", "depth": 0, "kind": "leaf", "conversationId": 1, "rank": -0.5}],
   "messages": [{"id": "10", "snippet": "...matched...", "role": "user", "conversationId": 1, "rank": -1.2}],
+  "documents": [{"date": "2026-08-13", "path": "memory/202608/20260813.md", "snippet": "...matched..."}],
   "totalSummaries": 5,
   "totalMessages": 10,
   "hint": "No matches. Try: %keyword% for fuzzy search"
 }
+
+"documents" are past daily notes (one per day, going back months). When the
+user refers to something from a previous day and the recent context does not
+cover it, search here before saying you don't know.
 
 Rank field (FTS5 mode only): bm25 relevance score, negative value where more negative = higher relevance.
 Examples: -5=excellent, -2=good, -0.5=partial. LIKE mode (%pattern%) has no rank.
@@ -155,15 +167,27 @@ func (t *GrepTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 		return tools.ErrorResult("Grep failed: " + err.Error())
 	}
 
+	// Daily notes live on disk rather than in the database, so they need a
+	// separate scan. Bound it by the same limit the caller asked for.
+	limit := input.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	documents := searchMemoryDocs(t.workspace, pattern, limit)
+
 	// Build response
 	output := map[string]any{
 		"success":   result.Success,
 		"summaries": result.Summaries,
 		"messages":  result.Messages,
 	}
+	if len(documents) > 0 {
+		output["documents"] = documents
+	}
 
-	// Add hint if provided
-	if result.Hint != "" {
+	// The engine's "no matches" hint is wrong once a daily note hit — don't
+	// tell the caller to give up when there is something to show them.
+	if result.Hint != "" && len(documents) == 0 {
 		output["hint"] = result.Hint
 	}
 

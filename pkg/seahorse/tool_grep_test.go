@@ -61,7 +61,7 @@ func TestGrepMissingPattern(t *testing.T) {
 
 func TestGrepToolSupportsAllConversations(t *testing.T) {
 	s := openTestStore(t)
-	tool := NewGrepTool(&RetrievalEngine{store: s})
+	tool := NewGrepTool(&RetrievalEngine{store: s}, "")
 	params := tool.Parameters()
 	props := params["properties"].(map[string]any)
 

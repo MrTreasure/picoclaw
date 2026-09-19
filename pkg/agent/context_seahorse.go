@@ -53,7 +53,9 @@ func newSeahorseContextManager(_ json.RawMessage, al *AgentLoop) (ContextManager
 
 	// Register seahorse tools with the agent's tool registry
 	retrieval := mgr.engine.GetRetrieval()
-	al.RegisterTool(seahorse.NewGrepTool(retrieval))
+	// Pass the workspace so short_grep can also reach the daily notes on disk —
+	// they are not in the database, so the engine alone cannot see them.
+	al.RegisterTool(seahorse.NewGrepTool(retrieval, agent.Workspace))
 	al.RegisterTool(seahorse.NewExpandTool(retrieval))
 
 	// Bootstrap all existing sessions at startup
