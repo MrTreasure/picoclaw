@@ -66,9 +66,12 @@ type LLMRequestPayload struct {
 
 // LLMResponsePayload describes an inbound LLM response.
 type LLMResponsePayload struct {
-	ContentLen   int
-	ToolCalls    int
-	HasReasoning bool
+	Model            string
+	ContentLen       int
+	ToolCalls        int
+	HasReasoning     bool
+	PromptTokens     int
+	CompletionTokens int
 }
 
 // LLMDeltaPayload describes a streamed LLM delta.
