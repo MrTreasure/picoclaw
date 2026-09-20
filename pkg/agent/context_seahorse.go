@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	runtimeevents "github.com/sipeed/picoclaw/pkg/events"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/providers/protocoltypes"
@@ -133,19 +134,72 @@ func (m *seahorseContextManager) Compact(ctx context.Context, req *CompactReques
 		return nil
 	}
 
+	var (
+		result  *seahorse.CompactResult
+		compact error
+	)
+
 	// For retry (LLM overflow), use aggressive CompactUntilUnder to guarantee
 	// context shrinks below budget (spec lines ~1410).
 	if req.Reason == ContextCompressReasonRetry && req.Budget > 0 {
-		_, err := m.engine.CompactUntilUnder(ctx, req.SessionKey, req.Budget)
-		return err
+		result, compact = m.engine.CompactUntilUnder(ctx, req.SessionKey, req.Budget)
+	} else {
+		result, compact = m.engine.Compact(ctx, req.SessionKey, seahorse.CompactInput{
+			Force: req.Reason == ContextCompressReasonRetry ||
+				req.Reason == ContextCompressReasonTurnThreshold,
+			Budget: &req.Budget,
+		})
 	}
 
-	_, err := m.engine.Compact(ctx, req.SessionKey, seahorse.CompactInput{
-		Force: req.Reason == ContextCompressReasonRetry ||
-			req.Reason == ContextCompressReasonTurnThreshold,
-		Budget: &req.Budget,
-	})
-	return err
+	m.emitCompactionEvents(req.SessionKey, req.Reason, result, compact)
+	return compact
+}
+
+// emitCompactionEvents reports a compaction to the event bus.
+//
+// These events used to be emitted only by the legacy context manager. seahorse
+// replaced it without taking the reporting with it, so every downstream
+// consumer — the observer, and the dashboard built on it — counted zero
+// compressions and zero summaries forever while compaction ran constantly.
+// The counts read as "nothing is being compacted", which is the opposite of
+// the truth and hides exactly the signal needed to tell whether context
+// management is healthy.
+func (m *seahorseContextManager) emitCompactionEvents(
+	sessionKey string,
+	reason ContextCompressReason,
+	result *seahorse.CompactResult,
+	compactErr error,
+) {
+	if m.al == nil {
+		return
+	}
+	scope := m.al.newTurnEventScope("", sessionKey, nil)
+
+	payload := ContextCompressPayload{Reason: reason}
+	if result != nil {
+		payload.SummaryCount = len(result.SummariesCreated)
+		payload.TokensSaved = result.TokensSaved
+		payload.LeafSummaries = result.LeafSummaries
+		payload.CondensedSummaries = result.CondensedSummaries
+	}
+	if compactErr != nil {
+		payload.Error = compactErr.Error()
+	}
+	m.al.emitEvent(
+		runtimeevents.KindAgentContextCompress,
+		scope.meta(0, "compact", "turn.context.compress"),
+		payload,
+	)
+
+	// Only report a summarisation when summaries were actually produced;
+	// emitting one per compaction attempt would inflate the count.
+	if result != nil && len(result.SummariesCreated) > 0 {
+		m.al.emitEvent(
+			runtimeevents.KindAgentSessionSummarize,
+			scope.meta(0, "compact", "turn.session.summarize"),
+			SessionSummarizePayload{SummariesCreated: len(result.SummariesCreated)},
+		)
+	}
 }
 
 // Ingest records a message into seahorse SQLite.

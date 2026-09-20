@@ -114,6 +114,16 @@ type ContextCompressPayload struct {
 	Reason            ContextCompressReason
 	DroppedMessages   int
 	RemainingMessages int
+
+	// The seahorse engine reports its work as summary counts and reclaimed
+	// tokens rather than message counts, so the two halves of the struct are
+	// filled by different context managers. Whichever fields a manager cannot
+	// report stay zero rather than being guessed at.
+	SummaryCount       int
+	TokensSaved        int
+	LeafSummaries      int
+	CondensedSummaries int
+	Error              string
 }
 
 // SessionSummarizePayload describes a completed async session summarization.
@@ -122,6 +132,9 @@ type SessionSummarizePayload struct {
 	KeptMessages       int
 	SummaryLen         int
 	OmittedOversized   bool
+
+	// seahorse creates summaries in batches and reports the count directly.
+	SummariesCreated int
 }
 
 // ToolExecStartPayload describes a tool execution request.
