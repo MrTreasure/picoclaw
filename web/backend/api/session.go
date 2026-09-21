@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/memory"
 	"github.com/sipeed/picoclaw/pkg/providers"
@@ -486,6 +487,31 @@ func sessionChatMessagePreview(msg sessionChatMessage) string {
 	return ""
 }
 
+func splitAssistantSessionMessage(msg sessionChatMessage) []sessionChatMessage {
+	if msg.Role != "assistant" || !strings.Contains(msg.Content, channels.MessageSplitMarker) {
+		return []sessionChatMessage{msg}
+	}
+
+	parts := channels.SplitByMarker(msg.Content)
+	if len(parts) == 0 {
+		return []sessionChatMessage{msg}
+	}
+
+	result := make([]sessionChatMessage, 0, len(parts))
+	for index, part := range parts {
+		segment := msg
+		segment.Content = part
+		// Durable media belongs to the completed response. Keep it only on the
+		// final segment so reconnecting does not duplicate the same attachment.
+		if index < len(parts)-1 {
+			segment.Media = nil
+			segment.Attachments = nil
+		}
+		result = append(result, segment)
+	}
+	return result
+}
+
 func visibleSessionMessages(messages []providers.Message, toolFeedbackMaxArgsLength int) []sessionChatMessage {
 	return sessionTranscriptMessages(messages, toolFeedbackMaxArgsLength, false)
 }
@@ -527,7 +553,7 @@ func sessionTranscriptMessages(
 			}
 			if includeThoughts {
 				if thoughtMsg, ok := assistantThoughtMessage(msg); ok {
-					transcript = append(transcript, thoughtMsg)
+					transcript = append(transcript, splitAssistantSessionMessage(thoughtMsg)...)
 				}
 			}
 
@@ -577,7 +603,7 @@ func sessionTranscriptMessages(
 				continue
 			}
 
-			transcript = append(transcript, chatMsg)
+			transcript = append(transcript, splitAssistantSessionMessage(chatMsg)...)
 			if hasToolCallsMsg {
 				transcript = append(transcript, toolCallsMsg)
 			}

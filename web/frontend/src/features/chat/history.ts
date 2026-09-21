@@ -6,6 +6,8 @@ import {
 } from "@/features/chat/tool-calls"
 import type { ChatAttachment, ChatMessage } from "@/store/chat"
 
+const MESSAGE_SPLIT_MARKER = "<|[SPLIT]|>"
+
 function toChatAttachments({
   media,
   attachments,
@@ -43,22 +45,51 @@ export async function loadSessionMessages(
   sessionId: string,
 ): Promise<ChatMessage[]> {
   const detail = await getSessionHistory(sessionId)
-  return detail.messages.map((message, index) => ({
-    id: `hist-${index}-${Date.now()}`,
-    role: message.role,
-    content: message.content,
-    kind: message.role === "assistant" ? (message.kind ?? "normal") : undefined,
-    modelName: message.model_name,
-    toolCalls:
-      message.role === "assistant"
-        ? parseToolCallsValue(message.tool_calls)
-        : undefined,
-    attachments: toChatAttachments({
-      media: message.media,
-      attachments: message.attachments,
-    }),
-    timestamp: message.created_at ?? detail.updated,
-  }))
+  return splitMarkedAssistantMessages(
+    detail.messages.map((message, index) => ({
+      id: `hist-${index}-${Date.now()}`,
+      role: message.role,
+      content: message.content,
+      kind:
+        message.role === "assistant" ? (message.kind ?? "normal") : undefined,
+      modelName: message.model_name,
+      toolCalls:
+        message.role === "assistant"
+          ? parseToolCallsValue(message.tool_calls)
+          : undefined,
+      attachments: toChatAttachments({
+        media: message.media,
+        attachments: message.attachments,
+      }),
+      timestamp: message.created_at ?? detail.updated,
+    })),
+  )
+}
+
+function splitMarkedAssistantMessages(messages: ChatMessage[]): ChatMessage[] {
+  return messages.flatMap((message) => {
+    if (
+      message.role !== "assistant" ||
+      !message.content.includes(MESSAGE_SPLIT_MARKER)
+    ) {
+      return [message]
+    }
+
+    const parts = message.content
+      .split(MESSAGE_SPLIT_MARKER)
+      .map((part) => part.trim())
+      .filter(Boolean)
+    if (parts.length === 0) {
+      return [{ ...message, content: "" }]
+    }
+
+    return parts.map((content, index) => ({
+      ...message,
+      id: `${message.id}-part-${index}`,
+      content,
+      attachments: index === parts.length - 1 ? message.attachments : undefined,
+    }))
+  })
 }
 
 function normalizeMessageTimestamp(timestamp: number | string): string {
@@ -98,6 +129,8 @@ export function mergeHistoryMessages(
   historyMessages: ChatMessage[],
   currentMessages: ChatMessage[],
 ): ChatMessage[] {
+  historyMessages = splitMarkedAssistantMessages(historyMessages)
+  currentMessages = splitMarkedAssistantMessages(currentMessages)
   const currentIds = new Set(currentMessages.map((message) => message.id))
   const unmatchedCurrentSignatures = new Map<string, number>()
   for (const message of currentMessages) {

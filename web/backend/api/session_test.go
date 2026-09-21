@@ -296,6 +296,38 @@ func TestHandleGetSession_JSONLStorage(t *testing.T) {
 	}
 }
 
+func TestDetailSessionMessages_SplitsInternalMessageMarker(t *testing.T) {
+	now := time.Now().UTC()
+	messages := detailSessionMessages([]providers.Message{{
+		Role:      "assistant",
+		Content:   "first<|[SPLIT]|>second<|[SPLIT]|>third",
+		ModelName: "test-model",
+		CreatedAt: &now,
+		Attachments: []providers.Attachment{{
+			Type: "file",
+			URL:  "https://example.com/result.txt",
+		}},
+	}}, defaultToolFeedbackMaxArgsLength())
+
+	if len(messages) != 3 {
+		t.Fatalf("len(messages) = %d, want 3", len(messages))
+	}
+	for index, want := range []string{"first", "second", "third"} {
+		if messages[index].Content != want {
+			t.Fatalf("messages[%d].Content = %q, want %q", index, messages[index].Content, want)
+		}
+		if strings.Contains(messages[index].Content, "<|[SPLIT]|>") {
+			t.Fatalf("messages[%d] leaked internal split marker", index)
+		}
+	}
+	if len(messages[0].Attachments) != 0 || len(messages[1].Attachments) != 0 {
+		t.Fatal("attachments should not be duplicated across split segments")
+	}
+	if len(messages[2].Attachments) != 1 {
+		t.Fatal("final split segment should retain the attachment")
+	}
+}
+
 func TestHandleGetSession_HidesHandledToolAttachmentsBackedByMediaRefs(t *testing.T) {
 	configPath, cleanup := setupOAuthTestEnv(t)
 	defer cleanup()
