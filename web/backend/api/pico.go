@@ -26,6 +26,9 @@ func (h *Handler) registerPicoRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /pico/ws", h.handleWebSocketProxy())
 	mux.HandleFunc("GET /pico/media/{id}", h.handlePicoMediaProxy())
 	mux.HandleFunc("HEAD /pico/media/{id}", h.handlePicoMediaProxy())
+	mux.HandleFunc("GET /pico/push/config", h.handlePicoHTTPProxy())
+	mux.HandleFunc("POST /pico/push/subscriptions", h.handlePicoHTTPProxy())
+	mux.HandleFunc("DELETE /pico/push/subscriptions", h.handlePicoHTTPProxy())
 }
 
 // createWsProxy creates a reverse proxy to the current gateway WebSocket endpoint.
@@ -173,6 +176,10 @@ func (h *Handler) handleWebSocketProxy() http.HandlerFunc {
 }
 
 func (h *Handler) handlePicoMediaProxy() http.HandlerFunc {
+	return h.handlePicoHTTPProxy()
+}
+
+func (h *Handler) handlePicoHTTPProxy() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !h.gatewayAvailableForProxy() {
 			logger.Warnf("Gateway not available for Pico media proxy")

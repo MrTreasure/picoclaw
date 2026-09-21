@@ -663,7 +663,7 @@ func (s *picoStreamer) updateLocked(
 		}
 	}
 
-	return s.sendLocked(ctx, content, contextUsage)
+	return s.sendLockedWithFinal(ctx, content, contextUsage, force)
 }
 
 func (s *picoStreamer) updateReasoningLocked(ctx context.Context, content string, force bool) error {
@@ -686,7 +686,20 @@ func (s *picoStreamer) updateReasoningLocked(ctx context.Context, content string
 	return s.sendReasoningLocked(ctx, content)
 }
 
-func (s *picoStreamer) sendLocked(ctx context.Context, content string, contextUsage *bus.ContextUsage) error {
+func (s *picoStreamer) sendLocked(
+	ctx context.Context,
+	content string,
+	contextUsage *bus.ContextUsage,
+) error {
+	return s.sendLockedWithFinal(ctx, content, contextUsage, false)
+}
+
+func (s *picoStreamer) sendLockedWithFinal(
+	ctx context.Context,
+	content string,
+	contextUsage *bus.ContextUsage,
+	final bool,
+) error {
 	now := time.Now()
 	contentLen := len([]rune(content))
 
@@ -699,6 +712,7 @@ func (s *picoStreamer) sendLocked(ctx context.Context, content string, contextUs
 		if s.modelName != "" {
 			payload[PayloadKeyModelName] = s.modelName
 		}
+		payload[PayloadKeyFinal] = final
 		setContextUsagePayload(payload, contextUsage)
 		setTurnUsagePayload(payload, s.turnInputTokens, s.turnOutputTokens)
 		outMsg := newMessage(TypeMessageCreate, payload)
@@ -713,6 +727,7 @@ func (s *picoStreamer) sendLocked(ctx context.Context, content string, contextUs
 		if s.modelName != "" {
 			payload[PayloadKeyModelName] = s.modelName
 		}
+		payload[PayloadKeyFinal] = final
 		setTurnUsagePayload(payload, s.turnInputTokens, s.turnOutputTokens)
 		if err := s.channel.editMessagePayload(ctx, s.chatID, s.messageID, payload, contextUsage); err != nil {
 			return err

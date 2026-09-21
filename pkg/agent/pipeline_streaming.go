@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
+	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
@@ -370,24 +371,41 @@ func streamingConfigFromDecodedSettings(decoded any) (config.StreamingConfig, bo
 }
 
 type streamingChunkPublisher struct {
-	streamer           bus.Streamer
-	channel            string
-	chatID             string
-	modelName          string
-	published          bool
-	reasoningPublished bool
-	err                error
-	ts                 *turnState
+	streamer            bus.Streamer
+	channel             string
+	chatID              string
+	modelName           string
+	published           bool
+	reasoningPublished  bool
+	deliveryUnavailable bool
+	err                 error
+	ts                  *turnState
 }
 
 func (p *streamingChunkPublisher) Update(ctx context.Context, accumulated string) {
 	if p == nil || p.streamer == nil || strings.TrimSpace(accumulated) == "" {
 		return
 	}
+	// Delivery errors are sticky for the lifetime of a stream. In particular,
+	// a suspended Pico client has no WebSocket target; retrying every provider
+	// chunk only repeats the same failed broadcast and floods the logs. The
+	// final response is still persisted by the normal completion path, so live
+	// delivery can remain paused until a client reconnects.
+	if p.err != nil || p.deliveryUnavailable {
+		return
+	}
 	if setter, ok := p.streamer.(interface{ SetModelName(modelName string) }); ok {
 		setter.SetModelName(p.modelName)
 	}
 	if err := p.streamer.Update(ctx, accumulated); err != nil {
+		if errors.Is(err, channels.ErrSendFailed) {
+			p.deliveryUnavailable = true
+			logger.DebugCF("agent", "stream paused without an active delivery target", map[string]any{
+				"channel": p.channel,
+				"chat_id": p.chatID,
+			})
+			return
+		}
 		p.err = err
 		logger.WarnCF("agent", "stream update failed", map[string]any{
 			"channel": p.channel,
@@ -403,6 +421,9 @@ func (p *streamingChunkPublisher) UpdateReasoning(ctx context.Context, accumulat
 	if p == nil || p.streamer == nil || strings.TrimSpace(accumulated) == "" {
 		return
 	}
+	if p.err != nil || p.deliveryUnavailable {
+		return
+	}
 	if setter, ok := p.streamer.(interface{ SetModelName(modelName string) }); ok {
 		setter.SetModelName(p.modelName)
 	}
@@ -411,6 +432,14 @@ func (p *streamingChunkPublisher) UpdateReasoning(ctx context.Context, accumulat
 		return
 	}
 	if err := reasoningStreamer.UpdateReasoning(ctx, accumulated); err != nil {
+		if errors.Is(err, channels.ErrSendFailed) {
+			p.deliveryUnavailable = true
+			logger.DebugCF("agent", "reasoning stream paused without an active delivery target", map[string]any{
+				"channel": p.channel,
+				"chat_id": p.chatID,
+			})
+			return
+		}
 		p.err = err
 		logger.WarnCF("agent", "stream reasoning update failed", map[string]any{
 			"channel": p.channel,
@@ -459,6 +488,13 @@ func (p *streamingChunkPublisher) Finalize(ctx context.Context, content string, 
 		err = p.streamer.Finalize(ctx, content)
 	}
 	if err != nil {
+		// Pico persists the final assistant message before this flush. With no
+		// WebSocket client and no push subscription there is simply no live
+		// delivery target; that should not turn a completed model response into
+		// a failed turn or trigger a second, duplicate LLM request.
+		if p.deliveryUnavailable && errors.Is(err, channels.ErrSendFailed) {
+			return nil
+		}
 		return fmt.Errorf("stream finalize: %w", err)
 	}
 	p.published = true

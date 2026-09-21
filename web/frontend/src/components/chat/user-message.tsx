@@ -1,6 +1,8 @@
 import { IconCheck, IconCopy } from "@tabler/icons-react"
+import { memo } from "react"
 import { useTranslation } from "react-i18next"
 
+import { MessageActions } from "@/components/chat/message-actions"
 import { Button } from "@/components/ui/button"
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard"
 import { formatMessageTime } from "@/hooks/use-pico-chat"
@@ -13,7 +15,7 @@ interface UserMessageProps {
   timestamp?: string | number
 }
 
-export function UserMessage({
+export const UserMessage = memo(function UserMessage({
   content,
   attachments = [],
   timestamp = "",
@@ -32,7 +34,10 @@ export function UserMessage({
     timestamp !== "" ? formatMessageTime(timestamp) : ""
 
   return (
-    <div className="group flex w-full flex-col items-end gap-1.5">
+    <MessageActions
+      content={content}
+      className="group flex w-full flex-col items-end gap-1.5"
+    >
       {imageAttachments.length > 0 && (
         <div className="flex max-w-[70%] flex-wrap justify-end gap-2">
           {imageAttachments.map((attachment, index) => (
@@ -95,6 +100,6 @@ export function UserMessage({
           {formattedTimestamp}
         </span>
       )}
-    </div>
+    </MessageActions>
   )
-}
+})

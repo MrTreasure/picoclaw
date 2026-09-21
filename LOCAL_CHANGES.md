@@ -19,6 +19,27 @@ The comparison baseline currently used by this repository is
 
 ## Active local features
 
+### MuseC137 Web/PWA experience
+
+- **Behavior:** The launcher ships the MuseC137-branded installable PWA,
+  including the mobile chat control popover, accessible 44 px touch targets,
+  audio-message bubbles, confirmed mobile session deletion, Service Worker and
+  Web Push controls, and long-press/right-click message actions that preserve a
+  text-selection path.
+- **Performance:** Initial gateway status and session history load in parallel;
+  the initial chat state is neutral instead of falsely disconnected. Streaming
+  updates are batched by animation frame, render as plain text until finalized,
+  and finalized messages retain full Markdown rendering.
+- **Delivery behavior:** A Pico stream stops attempting interim delivery after
+  the session loses every live delivery target. The final response remains in
+  durable history and one final delivery attempt is allowed; an offline client
+  no longer causes per-chunk error logs or a duplicate LLM fallback request.
+- **Configuration surface:** Existing Pico streaming and Web Push settings.
+- **Commit:** The local Web/PWA repair commit containing this entry.
+- **Upstream status:** Not merged; MuseC137 branding is deployment-specific.
+- **Rollback:** Restore the retained gateway and launcher binaries, then revert
+  this feature commit. No session or configuration migration is required.
+
 ### Session lifecycle and context maintenance
 
 - **Behavior:** WeChat sessions can roll over daily. A configurable turn-based

@@ -5,7 +5,11 @@ import {
   loadSessionMessages,
   mergeHistoryMessages,
 } from "@/features/chat/history"
-import { type PicoMessage, handlePicoMessage } from "@/features/chat/protocol"
+import {
+  type PicoMessage,
+  cancelQueuedPicoMessages,
+  queuePicoMessage,
+} from "@/features/chat/protocol"
 import {
   clearStoredSessionId,
   generateSessionId,
@@ -19,6 +23,7 @@ import {
   updateChatStore,
 } from "@/store/chat"
 import { type GatewayState, gatewayAtom } from "@/store/gateway"
+import { refreshGatewayState } from "@/store/gateway"
 
 const store = getDefaultStore()
 
@@ -101,17 +106,6 @@ async function reconcileSessionAfterConnect({
   }
 }
 
-function needsActiveSessionHydration(): boolean {
-  const state = getChatState()
-  const storedSessionId = readStoredSessionId()
-
-  return Boolean(
-    storedSessionId &&
-    storedSessionId === state.activeSessionId &&
-    !state.hasHydratedActiveSession,
-  )
-}
-
 function setActiveSessionId(sessionId: string) {
   activeSessionIdRef = sessionId
   updateChatStore({ activeSessionId: sessionId })
@@ -142,10 +136,7 @@ function disconnectChatInternal({
 }
 
 export async function connectChat() {
-  if (
-    store.get(gatewayAtom).status !== "running" ||
-    needsActiveSessionHydration()
-  ) {
+  if (store.get(gatewayAtom).status !== "running") {
     return
   }
 
@@ -218,7 +209,7 @@ export async function connectChat() {
 
       try {
         const message = JSON.parse(event.data) as PicoMessage
-        handlePicoMessage(message, sessionId)
+        queuePicoMessage(message, sessionId)
       } catch {
         console.warn("Non-JSON message from pico:", event.data)
       }
@@ -481,9 +472,6 @@ export function initializeChatStore() {
 
     if (gatewayStatus === "running") {
       shouldMaintainConnection = true
-      if (needsActiveSessionHydration()) {
-        return
-      }
       void connectChat()
       return
     }
@@ -495,23 +483,28 @@ export function initializeChatStore() {
 
   unsubscribeGateway = store.sub(gatewayAtom, syncConnectionWithGateway)
 
+  // Start the status request and history hydration together. The active
+  // session ID is known before either request begins, and hydrateActiveSession
+  // merges any messages that arrive over the live socket in the meantime.
+  void refreshGatewayState({ force: true }).then(() => {
+    if (initialized) {
+      syncConnectionWithGateway(true)
+    }
+  })
+
   if (!readStoredSessionId()) {
     updateChatStore({ hasHydratedActiveSession: true })
     syncConnectionWithGateway(true)
     return
   }
 
-  void hydrateActiveSession().finally(() => {
-    if (!initialized) {
-      return
-    }
-    syncConnectionWithGateway(true)
-  })
+  void hydrateActiveSession()
 }
 
 export function teardownChatStore() {
   unsubscribeGateway?.()
   unsubscribeGateway = null
   initialized = false
+  cancelQueuedPicoMessages()
   disconnectChat()
 }

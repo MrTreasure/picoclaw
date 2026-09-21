@@ -125,6 +125,16 @@
 
   body {
     @apply bg-background text-foreground;
+    min-height: 100dvh;
+    overscroll-behavior: none;
+  }
+
+  button,
+  a,
+  input,
+  textarea,
+  select {
+    touch-action: manipulation;
   }
 
   /* WebKit Custom Scrollbar */
@@ -149,12 +159,56 @@
 
 /* Offset sidebar below the full-width header */
 [data-slot="sidebar-container"] {
-  top: 3.5rem !important;
-  height: calc(100svh - 3.5rem) !important;
+  top: calc(3.5rem + env(safe-area-inset-top)) !important;
+  height: calc(100svh - 3.5rem - env(safe-area-inset-top)) !important;
 }
 
 [data-slot="sidebar-gap"] {
-  height: calc(100svh - 3.5rem);
+  height: calc(100svh - 3.5rem - env(safe-area-inset-top));
+}
+
+@media (display-mode: standalone) {
+  header {
+    padding-top: env(safe-area-inset-top);
+    height: calc(3.5rem + env(safe-area-inset-top));
+  }
+
+  body {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+@media (pointer: coarse) {
+  button,
+  [role="button"],
+  [data-slot="button"] {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  button[data-slot="switch"] {
+    min-width: 48px;
+    min-height: 28px;
+  }
+}
+
+@media (max-width: 640px) {
+  textarea,
+  input,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Typing indicator animations */

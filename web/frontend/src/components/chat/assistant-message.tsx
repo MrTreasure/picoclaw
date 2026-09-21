@@ -8,7 +8,7 @@ import {
   IconLoader2,
   IconTool,
 } from "@tabler/icons-react"
-import { useState } from "react"
+import { memo, useState } from "react"
 import { useTranslation } from "react-i18next"
 import ReactMarkdown from "react-markdown"
 import rehypeHighlight from "rehype-highlight"
@@ -16,6 +16,8 @@ import rehypeRaw from "rehype-raw"
 import rehypeSanitize from "rehype-sanitize"
 import remarkGfm from "remark-gfm"
 
+import { AudioMessage } from "@/components/chat/audio-message"
+import { MessageActions } from "@/components/chat/message-actions"
 import {
   MarkdownCodeBlock,
   MessageCodeBlock,
@@ -37,15 +39,17 @@ interface AssistantMessageProps {
   modelName?: string
   toolCalls?: ChatToolCall[]
   timestamp?: string | number
+  isStreaming?: boolean
 }
 
-export function AssistantMessage({
+export const AssistantMessage = memo(function AssistantMessage({
   content,
   attachments = [],
   kind = "normal",
   modelName,
   toolCalls = [],
   timestamp = "",
+  isStreaming = false,
 }: AssistantMessageProps) {
   const { t } = useTranslation()
   const { copy, isCopied } = useCopyToClipboard()
@@ -58,8 +62,11 @@ export function AssistantMessage({
   const imageAttachments = attachments.filter(
     (attachment) => attachment.type === "image",
   )
+  const audioAttachments = attachments.filter(
+    (attachment) => attachment.type === "audio",
+  )
   const fileAttachments = attachments.filter(
-    (attachment) => attachment.type !== "image",
+    (attachment) => attachment.type !== "image" && attachment.type !== "audio",
   )
   const [isExpanded, setIsExpanded] = useState(true)
   const formattedTimestamp =
@@ -71,22 +78,39 @@ export function AssistantMessage({
     ? t("chat.copiedLabel")
     : t("chat.copyMessage")
   const trimmedModelName = modelName?.trim() ?? ""
+  const actionContent =
+    content.trim() ||
+    toolCalls
+      .map((toolCall) => {
+        const name = toolCall.function?.name?.trim() ?? ""
+        const args = toolCall.function?.arguments?.trim() ?? ""
+        const explanation =
+          toolCall.extraContent?.toolFeedbackExplanation?.trim() ?? ""
+        return [name, args, explanation].filter(Boolean).join("\n")
+      })
+      .filter(Boolean)
+      .join("\n\n")
 
   if (isToolFeedback) {
     return (
-      <div
-        className="text-muted-foreground flex items-start gap-2 px-1 py-1 text-[13px] leading-relaxed"
-        role="status"
-        aria-live="polite"
-      >
-        <IconLoader2 className="mt-0.5 size-3.5 shrink-0 animate-spin opacity-60" />
-        <span className="whitespace-pre-wrap opacity-75">{content}</span>
-      </div>
+      <MessageActions content={actionContent} className="w-full">
+        <div
+          className="text-muted-foreground flex items-start gap-2 px-1 py-1 text-[13px] leading-relaxed"
+          role="status"
+          aria-live="polite"
+        >
+          <IconLoader2 className="mt-0.5 size-3.5 shrink-0 animate-spin opacity-60" />
+          <span className="whitespace-pre-wrap opacity-75">{content}</span>
+        </div>
+      </MessageActions>
     )
   }
 
   return (
-    <div className="group flex w-full flex-col gap-1.5">
+    <MessageActions
+      content={actionContent}
+      className="group flex w-full flex-col gap-1.5"
+    >
       {!isCollapsedBlock && (
         <div className="text-muted-foreground/60 flex items-center justify-between gap-2 px-1 text-xs opacity-70">
           <div className="flex items-center gap-2">
@@ -235,15 +259,19 @@ export function AssistantMessage({
                   : "prose-p:my-2 prose-p:whitespace-pre-wrap p-4 text-[15px] leading-relaxed",
               )}
             >
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeRaw, rehypeSanitize, rehypeHighlight]}
-                components={{
-                  pre: MarkdownCodeBlock,
-                }}
-              >
-                {content}
-              </ReactMarkdown>
+              {isStreaming ? (
+                <div className="whitespace-pre-wrap">{content}</div>
+              ) : (
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeRaw, rehypeSanitize, rehypeHighlight]}
+                  components={{
+                    pre: MarkdownCodeBlock,
+                  }}
+                >
+                  {content}
+                </ReactMarkdown>
+              )}
             </div>
           )}
 
@@ -289,6 +317,17 @@ export function AssistantMessage({
         </div>
       )}
 
+      {audioAttachments.length > 0 && (
+        <div className="mt-1 flex flex-col gap-2">
+          {audioAttachments.map((attachment, index) => (
+            <AudioMessage
+              key={`${attachment.url}-${index}`}
+              attachment={attachment}
+            />
+          ))}
+        </div>
+      )}
+
       {fileAttachments.length > 0 && (
         <div className="mt-1 flex flex-wrap gap-3">
           {fileAttachments.map((attachment, index) => (
@@ -317,6 +356,6 @@ export function AssistantMessage({
           ))}
         </div>
       )}
-    </div>
+    </MessageActions>
   )
-}
+})

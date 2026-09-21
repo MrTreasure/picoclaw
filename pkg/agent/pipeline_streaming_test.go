@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
+	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
@@ -157,6 +158,50 @@ type recordingStreamer struct {
 	reasoningFinalized []string
 	events             []string
 	canceled           int
+}
+
+type unavailableStreamer struct {
+	updates   int
+	finalizes int
+}
+
+func (s *unavailableStreamer) Update(context.Context, string) error {
+	s.updates++
+	return channels.ErrSendFailed
+}
+
+func (s *unavailableStreamer) Finalize(context.Context, string) error {
+	s.finalizes++
+	return channels.ErrSendFailed
+}
+
+func (s *unavailableStreamer) Cancel(context.Context) {}
+
+func TestStreamingChunkPublisherStopsAfterDeliveryTargetDisappears(t *testing.T) {
+	streamer := &unavailableStreamer{}
+	publisher := &streamingChunkPublisher{
+		streamer: streamer,
+		channel:  "pico",
+		chatID:   "pico:offline-session",
+		ts:       &turnState{},
+	}
+
+	publisher.Update(context.Background(), "first")
+	publisher.Update(context.Background(), "second")
+	publisher.UpdateReasoning(context.Background(), "reasoning")
+
+	if streamer.updates != 1 {
+		t.Fatalf("Update calls = %d, want 1", streamer.updates)
+	}
+	if publisher.Err() != nil {
+		t.Fatalf("delivery unavailability should not fail the model turn: %v", publisher.Err())
+	}
+	if err := publisher.Finalize(context.Background(), "final", nil); err != nil {
+		t.Fatalf("Finalize() error = %v, want nil", err)
+	}
+	if streamer.finalizes != 1 {
+		t.Fatalf("Finalize calls = %d, want 1", streamer.finalizes)
+	}
 }
 
 func (s *recordingStreamer) Update(ctx context.Context, content string) error {

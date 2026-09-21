@@ -37,7 +37,10 @@ export interface ChatToolCall {
 }
 
 export type AssistantMessageKind =
-  "normal" | "thought" | "tool_calls" | "tool_feedback"
+  | "normal"
+  | "thought"
+  | "tool_calls"
+  | "tool_feedback"
 
 export interface ChatMessage {
   id: string
@@ -48,6 +51,7 @@ export interface ChatMessage {
   modelName?: string
   attachments?: ChatAttachment[]
   toolCalls?: ChatToolCall[]
+  streaming?: boolean
 }
 
 export interface ContextUsage {
@@ -60,7 +64,11 @@ export interface ContextUsage {
 }
 
 export type ConnectionState =
-  "disconnected" | "connecting" | "connected" | "error"
+  | "idle"
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "error"
 
 export interface ChatStoreState {
   messages: ChatMessage[]
@@ -75,7 +83,7 @@ type ChatStorePatch = Partial<ChatStoreState>
 
 const DEFAULT_CHAT_STATE: ChatStoreState = {
   messages: [],
-  connectionState: "disconnected",
+  connectionState: "idle",
   isTyping: false,
   activeSessionId: getInitialActiveSessionId(),
   hasHydratedActiveSession: false,

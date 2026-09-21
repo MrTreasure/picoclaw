@@ -19,6 +19,55 @@ export interface PicoMessage {
   payload?: Record<string, unknown>
 }
 
+const pendingMessageUpdates = new Map<
+  string,
+  { message: PicoMessage; expectedSessionId: string }
+>()
+let pendingMessageUpdateFrame: number | null = null
+
+function flushPendingMessageUpdates() {
+  pendingMessageUpdateFrame = null
+  const updates = [...pendingMessageUpdates.values()]
+  pendingMessageUpdates.clear()
+  for (const { message, expectedSessionId } of updates) {
+    handlePicoMessage(message, expectedSessionId)
+  }
+}
+
+export function queuePicoMessage(
+  message: PicoMessage,
+  expectedSessionId: string,
+) {
+  if (message.type !== "message.update") {
+    handlePicoMessage(message, expectedSessionId)
+    return
+  }
+
+  const messageId = message.payload?.message_id
+  if (typeof messageId !== "string" || !messageId) {
+    handlePicoMessage(message, expectedSessionId)
+    return
+  }
+
+  pendingMessageUpdates.set(`${expectedSessionId}\u0000${messageId}`, {
+    message,
+    expectedSessionId,
+  })
+  if (pendingMessageUpdateFrame === null) {
+    pendingMessageUpdateFrame = window.requestAnimationFrame(
+      flushPendingMessageUpdates,
+    )
+  }
+}
+
+export function cancelQueuedPicoMessages() {
+  if (pendingMessageUpdateFrame !== null) {
+    window.cancelAnimationFrame(pendingMessageUpdateFrame)
+    pendingMessageUpdateFrame = null
+  }
+  pendingMessageUpdates.clear()
+}
+
 function parseAttachments(
   payload: Record<string, unknown>,
 ): ChatAttachment[] | undefined {
@@ -78,9 +127,13 @@ function parseContextUsage(
   return {
     used_tokens: used,
     total_tokens: total,
-    history_tokens: obj.history_tokens != null ? Number(obj.history_tokens) : undefined,
+    history_tokens:
+      obj.history_tokens != null ? Number(obj.history_tokens) : undefined,
     compress_at_tokens: Number(obj.compress_at_tokens) || 0,
-    summarize_at_tokens: obj.summarize_at_tokens != null ? Number(obj.summarize_at_tokens) : undefined,
+    summarize_at_tokens:
+      obj.summarize_at_tokens != null
+        ? Number(obj.summarize_at_tokens)
+        : undefined,
     used_percent: Number(obj.used_percent) || 0,
   }
 }
@@ -112,6 +165,7 @@ export function handlePicoMessage(
       const attachments = parseAttachments(payload)
       const contextUsage = parseContextUsage(payload)
       const isPlaceholder = payload.placeholder === true
+      const isStreaming = payload.final === false
       const modelName = parseModelName(payload)
       const timestamp =
         message.timestamp !== undefined &&
@@ -130,6 +184,7 @@ export function handlePicoMessage(
             ...(modelName ? { modelName } : {}),
             ...(toolCalls ? { toolCalls } : {}),
             attachments,
+            streaming: isStreaming,
             timestamp,
           },
         ],
@@ -175,6 +230,10 @@ export function handlePicoMessage(
               toolCalls,
               ...(modelName ? { modelName } : {}),
               ...(attachments ? { attachments } : {}),
+              streaming:
+                typeof payload.final === "boolean"
+                  ? payload.final === false
+                  : msg.streaming,
             }
           })
           if (found) {
@@ -194,6 +253,7 @@ export function handlePicoMessage(
               toolCalls,
               ...(modelName ? { modelName } : {}),
               ...(attachments ? { attachments } : {}),
+              streaming: payload.final === false,
               timestamp,
             },
           ]
