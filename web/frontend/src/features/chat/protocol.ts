@@ -220,7 +220,32 @@ export function handlePicoMessage(
       break
 
     case "typing.stop":
-      updateChatStore({ isTyping: false })
+      updateChatStore((prev) => {
+        let lastUserIndex = -1
+        for (let index = prev.messages.length - 1; index >= 0; index -= 1) {
+          if (prev.messages[index]?.role === "user") {
+            lastUserIndex = index
+            break
+          }
+        }
+        const hasAssistantReply = prev.messages
+          .slice(lastUserIndex + 1)
+          .some(
+            (chatMessage) =>
+              chatMessage.role === "assistant" &&
+              (chatMessage.kind ?? "normal") === "normal" &&
+              (chatMessage.content.trim().length > 0 ||
+                Boolean(chatMessage.attachments?.length)),
+          )
+
+        return {
+          // The server can stop its typing event shortly before the first
+          // response chunk reaches the browser. Keep feedback visible until
+          // real assistant content arrives so the conversation never appears
+          // to stall between the indicator and the reply.
+          isTyping: lastUserIndex >= 0 && !hasAssistantReply,
+        }
+      })
       break
 
     case "error": {

@@ -44,14 +44,14 @@ export function formatMessageTime(dateRaw: number | string | Date): string {
   const isThisYear = date.isSame(now, "year")
 
   if (isToday) {
-    return date.format("LT")
+    return date.format("HH:mm")
   }
 
   if (isThisYear) {
-    return date.format("MMM D LT")
+    return date.format("MMM D HH:mm")
   }
 
-  return date.format("ll LT")
+  return date.format("YYYY MMM D HH:mm")
 }
 
 export function usePicoChat() {
