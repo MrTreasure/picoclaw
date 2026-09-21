@@ -1,3 +1,4 @@
+import { IconArrowDown } from "@tabler/icons-react"
 import { useAtom } from "jotai"
 import {
   type ChangeEvent,
@@ -18,6 +19,7 @@ import { ChatControls } from "@/components/chat/chat-controls"
 import { ChatEmptyState } from "@/components/chat/chat-empty-state"
 import { TypingIndicator } from "@/components/chat/typing-indicator"
 import { UserMessage } from "@/components/chat/user-message"
+import { Button } from "@/components/ui/button"
 import {
   CHAT_IMAGE_ACCEPT,
   buildChatImageAttachments,
@@ -156,6 +158,18 @@ export function ChatPage() {
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     syncScrollState(e.currentTarget)
+  }
+
+  const scrollToBottom = () => {
+    const element = scrollRef.current
+    if (!element) return
+    const reduceMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches
+    element.scrollTo({
+      top: element.scrollHeight,
+      behavior: reduceMotion ? "auto" : "smooth",
+    })
   }
 
   useEffect(() => {
@@ -311,52 +325,68 @@ export function ChatPage() {
         onNewChat={newChat}
       />
 
-      <div
-        ref={scrollRef}
-        onScroll={handleScroll}
-        className="min-h-0 flex-1 [scrollbar-gutter:stable] overflow-y-auto px-3 pt-[max(4rem,calc(env(safe-area-inset-top)+3.75rem))] pb-3 md:px-8 lg:px-24 xl:px-48"
-      >
-        <div className="mx-auto flex w-full max-w-250 flex-col gap-4 pb-5">
-          {messages.length === 0 && !isTyping && (
-            <ChatEmptyState
-              hasAvailableModels={hasAvailableModels}
-              defaultModelName={defaultModelName}
-              isConnected={isGatewayRunning}
-            />
-          )}
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="h-full [scrollbar-gutter:stable] overflow-y-auto px-3 pt-[max(4rem,calc(env(safe-area-inset-top)+3.75rem))] pb-3 md:px-8 lg:px-24 xl:px-48"
+        >
+          <div className="mx-auto flex w-full max-w-250 flex-col gap-4 pb-5">
+            {messages.length === 0 && !isTyping && (
+              <ChatEmptyState
+                hasAvailableModels={hasAvailableModels}
+                defaultModelName={defaultModelName}
+                isConnected={isGatewayRunning}
+              />
+            )}
 
-          {messages.map((msg) => {
-            if (
-              !shouldShowAssistantMessage(assistantDetailVisibility, msg.kind)
-            ) {
-              return null
-            }
+            {messages.map((msg) => {
+              if (
+                !shouldShowAssistantMessage(assistantDetailVisibility, msg.kind)
+              ) {
+                return null
+              }
 
-            return (
-              <div key={msg.id} className="flex w-full">
-                {msg.role === "assistant" ? (
-                  <AssistantMessage
-                    content={msg.content}
-                    attachments={msg.attachments}
-                    kind={msg.kind}
-                    modelName={msg.modelName}
-                    toolCalls={msg.toolCalls}
-                    isStreaming={msg.streaming}
-                    timestamp={msg.timestamp}
-                  />
-                ) : (
-                  <UserMessage
-                    content={msg.content}
-                    attachments={msg.attachments}
-                    timestamp={msg.timestamp}
-                  />
-                )}
-              </div>
-            )
-          })}
+              return (
+                <div key={msg.id} className="flex w-full">
+                  {msg.role === "assistant" ? (
+                    <AssistantMessage
+                      content={msg.content}
+                      attachments={msg.attachments}
+                      kind={msg.kind}
+                      modelName={msg.modelName}
+                      toolCalls={msg.toolCalls}
+                      isStreaming={msg.streaming}
+                      timestamp={msg.timestamp}
+                    />
+                  ) : (
+                    <UserMessage
+                      content={msg.content}
+                      attachments={msg.attachments}
+                      timestamp={msg.timestamp}
+                    />
+                  )}
+                </div>
+              )
+            })}
 
-          {isTyping && <TypingIndicator />}
+            {isTyping && <TypingIndicator />}
+          </div>
         </div>
+
+        {!isAtBottom && messages.length > 0 && (
+          <Button
+            type="button"
+            variant="secondary"
+            size="icon"
+            className="absolute right-3 bottom-3 z-30 size-11 rounded-full border shadow-lg backdrop-blur-xl md:right-5 md:bottom-4"
+            onClick={scrollToBottom}
+            aria-label={t("chat.scrollToBottom")}
+            title={t("chat.scrollToBottom")}
+          >
+            <IconArrowDown className="size-5" aria-hidden="true" />
+          </Button>
+        )}
       </div>
 
       <input

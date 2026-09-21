@@ -48,8 +48,12 @@ The comparison baseline currently used by this repository is
 - **Behavior:** The launcher ships the MuseC137-branded installable PWA,
   including the mobile chat control popover, accessible 44 px touch targets,
   audio-message bubbles, confirmed mobile session deletion, Service Worker and
-  Web Push controls, and long-press/right-click message actions that preserve a
-  text-selection path.
+  Web Push controls, a floating shortcut back to the latest message, and
+  long-press/right-click message actions that preserve a text-selection path.
+- **Notification reliability:** Web Push permission is requested directly from
+  the user's click before waiting for Service Worker state, and asynchronous
+  push operations have a timeout so the settings switch cannot remain busy
+  indefinitely.
 - **Performance:** Initial gateway status and session history load in parallel;
   the initial chat state is neutral instead of falsely disconnected. Streaming
   updates are batched by animation frame, render as plain text until finalized,

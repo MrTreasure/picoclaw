@@ -77,6 +77,7 @@
     "copyCode": "复制代码",
     "messageActions": "消息操作",
     "selectText": "选择文本",
+    "scrollToBottom": "返回最新消息",
     "copiedLabel": "已复制",
     "enableCodeWrap": "开启换行",
     "disableCodeWrap": "关闭换行",
