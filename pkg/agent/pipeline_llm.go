@@ -541,14 +541,21 @@ func (p *Pipeline) CallLLM(
 			al.targetReasoningChannelID(ts.channel),
 		)
 	}
+	llmUsage := LLMResponsePayload{
+		Model:        exec.llmModelName,
+		ContentLen:   len(exec.response.Content),
+		ToolCalls:    len(exec.response.ToolCalls),
+		HasReasoning: exec.response.Reasoning != "" || exec.response.ReasoningContent != "",
+	}
+	if exec.response.Usage != nil {
+		llmUsage.PromptTokens = exec.response.Usage.PromptTokens
+		llmUsage.CompletionTokens = exec.response.Usage.CompletionTokens
+		llmUsage.CachedTokens = exec.response.Usage.CachedTokens
+	}
 	al.emitEvent(
 		runtimeevents.KindAgentLLMResponse,
 		ts.eventMeta("runTurn", "turn.llm.response"),
-		LLMResponsePayload{
-			ContentLen:   len(exec.response.Content),
-			ToolCalls:    len(exec.response.ToolCalls),
-			HasReasoning: exec.response.Reasoning != "" || exec.response.ReasoningContent != "",
-		},
+		llmUsage,
 	)
 
 	llmResponseFields := map[string]any{
@@ -564,6 +571,7 @@ func (p *Pipeline) CallLLM(
 		llmResponseFields["prompt_tokens"] = exec.response.Usage.PromptTokens
 		llmResponseFields["completion_tokens"] = exec.response.Usage.CompletionTokens
 		llmResponseFields["total_tokens"] = exec.response.Usage.TotalTokens
+		llmResponseFields["cached_tokens"] = exec.response.Usage.CachedTokens
 	}
 	logger.DebugCF("agent", "LLM response", llmResponseFields)
 
