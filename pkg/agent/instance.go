@@ -23,30 +23,31 @@ import (
 // AgentInstance represents a fully configured agent with its own workspace,
 // session manager, context builder, and tool registry.
 type AgentInstance struct {
-	modelMu                   *sync.RWMutex
-	ID                        string
-	Name                      string
-	Model                     string
-	Fallbacks                 []string
-	Workspace                 string
-	MaxIterations             int
-	MaxTokens                 int
-	Temperature               float64
-	ThinkingLevel             ThinkingLevel
-	ThinkingLevelConfigured   bool
-	ContextWindow             int
-	SummarizeMessageThreshold int
-	SummarizeTokenPercent     int
-	Provider                  providers.LLMProvider
-	Sessions                  session.SessionStore
-	ContextBuilder            *ContextBuilder
-	Tools                     *tools.ToolRegistry
-	Definition                AgentContextDefinition
-	Subagents                 *config.SubagentsConfig
-	SkillsFilter              []string
-	MCPServerAllowlist        map[string]struct{}
-	Candidates                []providers.FallbackCandidate
-	ImageCandidates           []providers.FallbackCandidate
+	modelMu                    *sync.RWMutex
+	ID                         string
+	Name                       string
+	Model                      string
+	Fallbacks                  []string
+	Workspace                  string
+	MaxIterations              int
+	MaxTokens                  int
+	Temperature                float64
+	ThinkingLevel              ThinkingLevel
+	ThinkingLevelConfigured    bool
+	ThinkingLevelAgentOverride bool
+	ContextWindow              int
+	SummarizeMessageThreshold  int
+	SummarizeTokenPercent      int
+	Provider                   providers.LLMProvider
+	Sessions                   session.SessionStore
+	ContextBuilder             *ContextBuilder
+	Tools                      *tools.ToolRegistry
+	Definition                 AgentContextDefinition
+	Subagents                  *config.SubagentsConfig
+	SkillsFilter               []string
+	MCPServerAllowlist         map[string]struct{}
+	Candidates                 []providers.FallbackCandidate
+	ImageCandidates            []providers.FallbackCandidate
 
 	// Router is non-nil when model routing is configured and the light model
 	// was successfully resolved. It scores each incoming message and decides
@@ -215,8 +216,11 @@ func NewAgentInstance(
 		temperature = *defaults.Temperature
 	}
 
-	var thinkingLevelStr string
-	if mc, err := cfg.GetModelConfig(model); err == nil {
+	thinkingLevelStr := ""
+	thinkingLevelAgentOverride := agentCfg != nil && isConfiguredThinkingLevel(agentCfg.ThinkingLevel)
+	if thinkingLevelAgentOverride {
+		thinkingLevelStr = agentCfg.ThinkingLevel
+	} else if mc, err := cfg.GetModelConfig(model); err == nil {
 		thinkingLevelStr = mc.ThinkingLevel
 	}
 	thinkingLevel := parseThinkingLevel(thinkingLevelStr)
@@ -321,34 +325,35 @@ func NewAgentInstance(
 	}
 
 	return &AgentInstance{
-		modelMu:                   &sync.RWMutex{},
-		ID:                        agentID,
-		Name:                      agentName,
-		Model:                     model,
-		Fallbacks:                 fallbacks,
-		Workspace:                 workspace,
-		MaxIterations:             maxIter,
-		MaxTokens:                 maxTokens,
-		Temperature:               temperature,
-		ThinkingLevel:             thinkingLevel,
-		ThinkingLevelConfigured:   thinkingLevelConfigured,
-		ContextWindow:             contextWindow,
-		SummarizeMessageThreshold: summarizeMessageThreshold,
-		SummarizeTokenPercent:     summarizeTokenPercent,
-		Provider:                  provider,
-		Sessions:                  sessions,
-		ContextBuilder:            contextBuilder,
-		Tools:                     toolsRegistry,
-		Definition:                definition,
-		Subagents:                 subagents,
-		SkillsFilter:              skillsFilter,
-		MCPServerAllowlist:        agentMCPServerAllowlist,
-		Candidates:                candidates,
-		ImageCandidates:           imageCandidates,
-		Router:                    router,
-		LightCandidates:           lightCandidates,
-		LightProvider:             lightProvider,
-		CandidateProviders:        candidateProviders,
+		modelMu:                    &sync.RWMutex{},
+		ID:                         agentID,
+		Name:                       agentName,
+		Model:                      model,
+		Fallbacks:                  fallbacks,
+		Workspace:                  workspace,
+		MaxIterations:              maxIter,
+		MaxTokens:                  maxTokens,
+		Temperature:                temperature,
+		ThinkingLevel:              thinkingLevel,
+		ThinkingLevelConfigured:    thinkingLevelConfigured,
+		ThinkingLevelAgentOverride: thinkingLevelAgentOverride,
+		ContextWindow:              contextWindow,
+		SummarizeMessageThreshold:  summarizeMessageThreshold,
+		SummarizeTokenPercent:      summarizeTokenPercent,
+		Provider:                   provider,
+		Sessions:                   sessions,
+		ContextBuilder:             contextBuilder,
+		Tools:                      toolsRegistry,
+		Definition:                 definition,
+		Subagents:                  subagents,
+		SkillsFilter:               skillsFilter,
+		MCPServerAllowlist:         agentMCPServerAllowlist,
+		Candidates:                 candidates,
+		ImageCandidates:            imageCandidates,
+		Router:                     router,
+		LightCandidates:            lightCandidates,
+		LightProvider:              lightProvider,
+		CandidateProviders:         candidateProviders,
 	}
 }
 

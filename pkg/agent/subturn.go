@@ -12,6 +12,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/providers/messageutil"
+	"github.com/sipeed/picoclaw/pkg/session"
 	"github.com/sipeed/picoclaw/pkg/tools"
 )
 
@@ -198,8 +199,17 @@ func AgentLoopFromContext(ctx context.Context) *AgentLoop {
 
 // ====================== Helper Functions ======================
 
-func (al *AgentLoop) generateSubTurnID() string {
-	return fmt.Sprintf("subturn-%d", al.subTurnCounter.Add(1))
+func (al *AgentLoop) generateSubTurnID(channel string) string {
+	nowMillis := time.Now().UnixMilli()
+	for {
+		previous := al.subTurnCounter.Load()
+		if nowMillis <= previous {
+			nowMillis = previous + 1
+		}
+		if al.subTurnCounter.CompareAndSwap(previous, nowMillis) {
+			return session.BuildSemanticSessionKey(channel, time.UnixMilli(nowMillis), session.AgentTypeSub)
+		}
+	}
 }
 
 // ====================== Core Function: spawnSubTurn ======================
@@ -336,7 +346,11 @@ func spawnSubTurn(
 	childCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	childID := al.generateSubTurnID()
+	channel := "unknown"
+	if parentTS.opts.Dispatch.InboundContext != nil {
+		channel = parentTS.opts.Dispatch.InboundContext.Channel
+	}
+	childID := al.generateSubTurnID(channel)
 
 	// Resolve the agent instance for the child turn.
 	// When TargetAgentID is set, look up that agent from the registry so the

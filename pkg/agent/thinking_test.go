@@ -1,6 +1,10 @@
 package agent
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/sipeed/picoclaw/pkg/config"
+)
 
 func TestParseThinkingLevel(t *testing.T) {
 	tests := []struct {
@@ -31,5 +35,19 @@ func TestParseThinkingLevel(t *testing.T) {
 				t.Errorf("parseThinkingLevel(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestActiveThinkingSettingsAgentOverrideWinsModelConfig(t *testing.T) {
+	agent := &AgentInstance{
+		ThinkingLevel:              ThinkingOff,
+		ThinkingLevelConfigured:    true,
+		ThinkingLevelAgentOverride: true,
+	}
+	modelCfg := &config.ModelConfig{ThinkingLevel: "medium"}
+
+	got := activeThinkingSettings(agent, modelCfg)
+	if !got.configured || got.level != ThinkingOff {
+		t.Fatalf("activeThinkingSettings() = %+v, want configured off", got)
 	}
 }

@@ -23,6 +23,18 @@ const (
 	testMaxConcurrentSubTurns = defaultMaxConcurrentSubTurns
 )
 
+func TestGenerateSubTurnIDUsesSemanticSubAgentFormat(t *testing.T) {
+	al := &AgentLoop{}
+	first := al.generateSubTurnID("pico")
+	second := al.generateSubTurnID("pico")
+	if !strings.HasPrefix(first, "pico_") || !strings.HasSuffix(first, "_sub") {
+		t.Fatalf("generateSubTurnID() = %q, want pico_{starttime}_sub", first)
+	}
+	if first == second {
+		t.Fatalf("concurrent-safe IDs must be unique: %q", first)
+	}
+}
+
 // ====================== Test Helper: Event Collector ======================
 type eventCollector struct {
 	mu     sync.Mutex

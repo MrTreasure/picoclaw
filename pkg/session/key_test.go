@@ -1,6 +1,9 @@
 package session
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 type testScopeReader struct {
 	scope *SessionScope
@@ -17,6 +20,9 @@ func TestIsExplicitSessionKey(t *testing.T) {
 	}{
 		{"sk_v1_abc", true},
 		{"agent:main:direct:user123", true},
+		{"pico_20260921T104812123_main", true},
+		{"pico_20260921T104812123_sub", true},
+		{"pico_20260921_main", false},
 		{"custom-key", false},
 		{"", false},
 	}
@@ -25,6 +31,30 @@ func TestIsExplicitSessionKey(t *testing.T) {
 		if got := IsExplicitSessionKey(tt.key); got != tt.want {
 			t.Fatalf("IsExplicitSessionKey(%q) = %v, want %v", tt.key, got, tt.want)
 		}
+	}
+}
+
+func TestBuildSemanticSessionKey(t *testing.T) {
+	startedAt := time.Date(2026, time.September, 21, 10, 48, 12, 123000000, time.FixedZone("CST", 8*60*60))
+	if got := BuildSemanticSessionKey("Pico Web", startedAt, AgentTypeMain); got != "pico-web_20260921T104812123_main" {
+		t.Fatalf("BuildSemanticSessionKey() = %q", got)
+	}
+	if got := BuildSemanticSessionKey("pico", startedAt, AgentTypeSub); got != "pico_20260921T104812123_sub" {
+		t.Fatalf("BuildSemanticSessionKey(sub) = %q", got)
+	}
+}
+
+func TestBuildSessionKey_PreservesSemanticClientID(t *testing.T) {
+	scope := SessionScope{
+		Version: ScopeVersionV1,
+		AgentID: "pico-stream",
+		Channel: "pico",
+		Values: map[string]string{
+			"chat": "direct:pico:pico_20260921T104812123_main",
+		},
+	}
+	if got := BuildSessionKey(scope); got != "pico_20260921T104812123_main" {
+		t.Fatalf("BuildSessionKey() = %q", got)
 	}
 }
 

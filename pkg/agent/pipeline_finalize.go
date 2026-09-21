@@ -30,6 +30,12 @@ func (p *Pipeline) Finalize(
 		if ts.hardAbortRequested() {
 			return al.abortTurn(ts)
 		}
+		// A response-handled tool (for example send_tts/send_file) owns the
+		// user-visible result. Any text streamed before the tool call was only
+		// transient narration; leaving its publisher open creates an orphaned
+		// message beside the attachment. Cancel it explicitly so channels can
+		// retract the provisional stream and release streamer resources.
+		cancelConfiguredStreamingLLM(turnCtx, exec)
 		ts.setPhase(TurnPhaseCompleted)
 		return turnResult{
 			finalContent: finalContent,

@@ -4,7 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/sipeed/picoclaw/pkg/routing"
 )
@@ -12,6 +14,12 @@ import (
 const (
 	sessionKeyV1Prefix          = "sk_v1_"
 	legacyAgentSessionKeyPrefix = "agent:"
+	AgentTypeMain               = "main"
+	AgentTypeSub                = "sub"
+)
+
+var semanticSessionKeyPattern = regexp.MustCompile(
+	`^[a-z0-9][a-z0-9-]*_[0-9]{8}t[0-9]{9}_(main|sub)$`,
 )
 
 type ParsedLegacySessionKey struct {
@@ -37,12 +45,53 @@ func IsOpaqueSessionKey(key string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), sessionKeyV1Prefix)
 }
 
+// BuildSemanticSessionKey returns a human-readable session identifier in the
+// form {channel}_{starttime}_{agentType}. Milliseconds keep concurrent starts
+// distinct without adding a fourth, non-semantic component.
+func BuildSemanticSessionKey(channel string, startedAt time.Time, agentType string) string {
+	channel = normalizeSemanticSessionPart(channel, "unknown")
+	agentType = strings.ToLower(strings.TrimSpace(agentType))
+	if agentType != AgentTypeSub {
+		agentType = AgentTypeMain
+	}
+	starttime := strings.Replace(startedAt.Format("20060102T150405.000"), ".", "", 1)
+	return fmt.Sprintf("%s_%s_%s", channel, starttime, agentType)
+}
+
+// IsSemanticSessionKey reports whether key uses the public semantic format.
+func IsSemanticSessionKey(key string) bool {
+	return semanticSessionKeyPattern.MatchString(strings.ToLower(strings.TrimSpace(key)))
+}
+
+func normalizeSemanticSessionPart(value, fallback string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range value {
+		valid := r >= 'a' && r <= 'z' || r >= '0' && r <= '9'
+		if valid {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash && b.Len() > 0 {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	result := strings.Trim(b.String(), "-")
+	if result == "" {
+		return fallback
+	}
+	return result
+}
+
 func IsLegacyAgentSessionKey(key string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(key)), legacyAgentSessionKeyPrefix)
 }
 
 func IsExplicitSessionKey(key string) bool {
-	return IsOpaqueSessionKey(key) || IsLegacyAgentSessionKey(key)
+	return IsOpaqueSessionKey(key) || IsLegacyAgentSessionKey(key) || IsSemanticSessionKey(key)
 }
 
 func ParseLegacyAgentSessionKey(sessionKey string) *ParsedLegacySessionKey {
@@ -201,5 +250,13 @@ func CanonicalScopeSignature(scope SessionScope) string {
 
 // BuildSessionKey returns the current opaque key for a structured session scope.
 func BuildSessionKey(scope SessionScope) string {
+	for _, value := range scope.Values {
+		if idx := strings.LastIndex(value, ":"); idx >= 0 {
+			value = value[idx+1:]
+		}
+		if IsSemanticSessionKey(value) && strings.HasPrefix(value, normalizeSemanticSessionPart(scope.Channel, "unknown")+"_") {
+			return value
+		}
+	}
 	return BuildOpaqueSessionKey(CanonicalScopeSignature(scope))
 }

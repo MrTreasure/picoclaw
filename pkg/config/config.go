@@ -312,13 +312,14 @@ func (m AgentModelConfig) MarshalJSON() ([]byte, error) {
 }
 
 type AgentConfig struct {
-	ID        string            `json:"id"`
-	Default   bool              `json:"default,omitempty"`
-	Name      string            `json:"name,omitempty"`
-	Workspace string            `json:"workspace,omitempty"`
-	Model     *AgentModelConfig `json:"model,omitempty"`
-	Skills    []string          `json:"skills,omitempty"`
-	Subagents *SubagentsConfig  `json:"subagents,omitempty"`
+	ID            string            `json:"id"`
+	Default       bool              `json:"default,omitempty"`
+	Name          string            `json:"name,omitempty"`
+	Workspace     string            `json:"workspace,omitempty"`
+	Model         *AgentModelConfig `json:"model,omitempty"`
+	ThinkingLevel string            `json:"thinking_level,omitempty"`
+	Skills        []string          `json:"skills,omitempty"`
+	Subagents     *SubagentsConfig  `json:"subagents,omitempty"`
 }
 
 type SubagentsConfig struct {
@@ -690,14 +691,22 @@ func (c *WeixinSettings) SetToken(token string) {
 }
 
 type PicoSettings struct {
-	Token           SecureString    `json:"token,omitzero"              yaml:"token,omitempty" env:"PICOCLAW_CHANNELS_PICO_TOKEN"`
-	AllowTokenQuery bool            `json:"allow_token_query,omitempty" yaml:"-"`
-	AllowOrigins    []string        `json:"allow_origins,omitempty"     yaml:"-"`
-	Streaming       StreamingConfig `json:"streaming,omitzero"          yaml:"-"`
-	PingInterval    int             `json:"ping_interval,omitempty"     yaml:"-"`
-	ReadTimeout     int             `json:"read_timeout,omitempty"      yaml:"-"`
-	WriteTimeout    int             `json:"write_timeout,omitempty"     yaml:"-"`
-	MaxConnections  int             `json:"max_connections,omitempty"   yaml:"-"`
+	Token           SecureString        `json:"token,omitzero"              yaml:"token,omitempty" env:"PICOCLAW_CHANNELS_PICO_TOKEN"`
+	AllowTokenQuery bool                `json:"allow_token_query,omitempty" yaml:"-"`
+	AllowOrigins    []string            `json:"allow_origins,omitempty"     yaml:"-"`
+	Streaming       StreamingConfig     `json:"streaming,omitzero"          yaml:"-"`
+	PingInterval    int                 `json:"ping_interval,omitempty"     yaml:"-"`
+	ReadTimeout     int                 `json:"read_timeout,omitempty"      yaml:"-"`
+	WriteTimeout    int                 `json:"write_timeout,omitempty"     yaml:"-"`
+	MaxConnections  int                 `json:"max_connections,omitempty"   yaml:"-"`
+	WebPush         PicoWebPushSettings `json:"web_push,omitzero"       yaml:"web_push,omitempty"`
+}
+
+type PicoWebPushSettings struct {
+	Enabled    bool         `json:"enabled,omitempty"     yaml:"enabled,omitempty"`
+	PublicKey  string       `json:"public_key,omitempty"  yaml:"public_key,omitempty"`
+	PrivateKey SecureString `json:"private_key,omitzero" yaml:"private_key,omitempty"`
+	Subscriber string       `json:"subscriber,omitempty"  yaml:"subscriber,omitempty"`
 }
 
 // SetToken sets the Pico token and marks it as dirty for security saving

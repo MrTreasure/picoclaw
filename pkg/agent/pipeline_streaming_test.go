@@ -1051,6 +1051,41 @@ func TestConfiguredStreamingToolCallsUseCompleteStreamResponse(t *testing.T) {
 	}
 }
 
+func TestConfiguredStreamingResponseHandledToolCancelsProvisionalText(t *testing.T) {
+	cfg := newConfiguredStreamingTestConfig(t, true, true, nil)
+	streamer := &recordingStreamer{}
+	msgBus := bus.NewMessageBus()
+	msgBus.SetStreamDelegate(configuredStreamingDelegate{streamer: streamer})
+	provider := &configuredStreamingProvider{
+		streamPlan: []configuredStreamingCall{{
+			chunks: []string{"Preparing the voice reply."},
+			response: &providers.LLMResponse{
+				Content: "Preparing the voice reply.",
+				ToolCalls: []providers.ToolCall{{
+					ID:        "call-handled-user",
+					Type:      "function",
+					Name:      "handled_user_tool",
+					Arguments: map[string]any{},
+				}},
+			},
+		}},
+	}
+	al := NewAgentLoop(cfg, msgBus, provider)
+	al.GetRegistry().GetDefaultAgent().Tools.Register(&handledUserTool{})
+
+	got := runConfiguredStreamingTurn(t, al, "pico")
+
+	if got != "" {
+		t.Fatalf("response = %q, want empty response after handled delivery", got)
+	}
+	if streamer.canceled != 1 {
+		t.Fatalf("streamer canceled = %d, want 1", streamer.canceled)
+	}
+	if len(streamer.finalized) != 0 {
+		t.Fatalf("stream finalized = %v, want provisional text retracted", streamer.finalized)
+	}
+}
+
 func newConfiguredStreamingTestConfig(
 	t *testing.T,
 	channelStreaming bool,

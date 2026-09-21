@@ -243,7 +243,8 @@ func (p *Pipeline) CallLLM(
 			candidateThinking := thinkingSettingsFromModelConfig(candidateCfg)
 			applyThinkingOption(callOpts, candidateProvider, candidateThinking, true, ts.agent.ID)
 			exec.suppressReasoning = shouldSuppressReasoningFor(candidateThinking)
-			return candidateProvider.Chat(ctx, messagesForCall, candidateTools, candidate.Model, callOpts)
+			response, err := candidateProvider.Chat(ctx, messagesForCall, candidateTools, candidate.Model, callOpts)
+			return validateSplitMarkerResponse(response, err, candidate.Provider, candidate.Model)
 		}
 
 		if len(exec.activeCandidates) > 1 && p.Fallback != nil {
@@ -289,7 +290,14 @@ func (p *Pipeline) CallLLM(
 			}
 			return fbResult.Response, nil
 		}
-		return exec.activeProvider.Chat(providerCtx, messagesForCall, toolDefsForCall, exec.llmModel, exec.llmOpts)
+		response, err := exec.activeProvider.Chat(
+			providerCtx,
+			messagesForCall,
+			toolDefsForCall,
+			exec.llmModel,
+			exec.llmOpts,
+		)
+		return validateSplitMarkerResponse(response, err, "", exec.llmModel)
 	}
 
 	// Retry loop

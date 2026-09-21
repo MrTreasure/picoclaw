@@ -69,6 +69,12 @@ func thinkingSettingsFromModelConfig(mc *config.ModelConfig) thinkingSettings {
 }
 
 func activeThinkingSettings(agent *AgentInstance, modelCfg *config.ModelConfig) thinkingSettings {
+	if agent != nil && agent.ThinkingLevelAgentOverride {
+		return thinkingSettings{
+			level:      agent.ThinkingLevel,
+			configured: agent.ThinkingLevelConfigured,
+		}
+	}
 	if settings := thinkingSettingsFromModelConfig(modelCfg); settings.configured {
 		return settings
 	}

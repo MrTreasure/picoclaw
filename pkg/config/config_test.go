@@ -99,6 +99,7 @@ func TestAgentConfig_FullParse(t *testing.T) {
 			{
 				"id": "support",
 				"name": "Support Bot",
+				"thinking_level": "off",
 				"model": {
 					"primary": "claude-opus",
 					"fallbacks": ["haiku"]
@@ -137,6 +138,9 @@ func TestAgentConfig_FullParse(t *testing.T) {
 	support := cfg.Agents.List[1]
 	if support.ID != "support" || support.Name != "Support Bot" {
 		t.Errorf("support = %+v", support)
+	}
+	if support.ThinkingLevel != "off" {
+		t.Errorf("support.ThinkingLevel = %q, want off", support.ThinkingLevel)
 	}
 	if support.Model == nil || support.Model.Primary != "claude-opus" {
 		t.Errorf("support.Model = %+v", support.Model)

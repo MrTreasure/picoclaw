@@ -138,8 +138,8 @@ func TestBuildRequestBody_MapsDeepSeekThinkingLevels(t *testing.T) {
 		wantEffort       any
 	}{
 		{name: "off", level: "off", wantThinkingType: "disabled"},
-		{name: "low", level: "low", wantThinkingType: "enabled", wantEffort: "high"},
-		{name: "medium", level: "medium", wantThinkingType: "enabled", wantEffort: "high"},
+		{name: "low", level: "low", wantThinkingType: "enabled", wantEffort: "low"},
+		{name: "medium", level: "medium", wantThinkingType: "enabled", wantEffort: "medium"},
 		{name: "high", level: "high", wantThinkingType: "enabled", wantEffort: "high"},
 		{name: "xhigh", level: "xhigh", wantThinkingType: "enabled", wantEffort: "max"},
 		{name: "adaptive", level: "adaptive"},

@@ -107,6 +107,7 @@ type PicoChannel struct {
 	deleteMessageFn    func(context.Context, string, string) error
 	// broadcastFn lets tests intercept outbound broadcasts. nil → broadcastToSession.
 	broadcastFn func(chatID string, msg PicoMessage) error
+	webPush     *picoPushService
 }
 
 // NewPicoChannel creates a new Pico Protocol channel.
@@ -149,6 +150,7 @@ func NewPicoChannel(
 	}
 	ch.progress = channels.NewToolFeedbackAnimator(ch.EditMessage)
 	ch.deleteMessageFn = ch.DeleteMessage
+	ch.webPush = newPicoPushService(cfg.WebPush)
 	return ch, nil
 }
 
@@ -285,6 +287,10 @@ func (c *PicoChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch path {
 	case "/ws", "/ws/":
 		c.handleWebSocket(w, r)
+	case "/push/config", "/push/config/":
+		c.handlePushConfig(w, r)
+	case "/push/subscriptions", "/push/subscriptions/":
+		c.handlePushSubscriptions(w, r)
 	default:
 		if strings.HasPrefix(path, "/media/") {
 			c.handleMediaDownload(w, r)
@@ -313,6 +319,9 @@ func (c *PicoChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]stri
 	trackedMsgID, hasTrackedMsg := c.currentToolFeedbackMessage(msg.ChatID)
 	if outboundMessageFinalizesTrackedToolFeedback(msg) {
 		if msgIDs, handled := c.FinalizeToolFeedbackMessage(ctx, msg); handled {
+			if err := c.notifyFinal(ctx, msg.ChatID, msg.Content); err != nil {
+				return nil, err
+			}
 			return msgIDs, nil
 		}
 	}
@@ -350,6 +359,11 @@ func (c *PicoChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]stri
 
 	if err := c.broadcastToSession(msg.ChatID, outMsg); err != nil {
 		return nil, err
+	}
+	if !isThought && !isToolFeedback && !isToolCalls {
+		if err := c.notifyFinal(ctx, msg.ChatID, content); err != nil {
+			return nil, err
+		}
 	}
 	if isToolFeedback {
 		c.RecordToolFeedbackMessage(msg.ChatID, msgID, msg.Content)
@@ -581,7 +595,10 @@ func (s *picoStreamer) Finalize(ctx context.Context, content string) error {
 func (s *picoStreamer) FinalizeWithContext(ctx context.Context, content string, contextUsage *bus.ContextUsage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.updateLocked(ctx, content, true, contextUsage)
+	if err := s.updateLocked(ctx, content, true, contextUsage); err != nil {
+		return err
+	}
+	return s.channel.notifyFinal(ctx, s.chatID, content)
 }
 
 func (s *picoStreamer) UpdateReasoning(ctx context.Context, content string) error {
@@ -828,6 +845,9 @@ func (c *PicoChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMessag
 	if err := c.broadcastToSession(msg.ChatID, outMsg); err != nil {
 		return nil, err
 	}
+	if err := c.notifyFinal(ctx, msg.ChatID, caption); err != nil {
+		return nil, err
+	}
 	if hasTrackedMsg {
 		c.dismissTrackedToolFeedbackMessage(ctx, msg.ChatID, trackedMsgID)
 	}
@@ -976,6 +996,9 @@ func (c *PicoChannel) broadcastToSession(chatID string, msg PicoMessage) error {
 	}
 
 	if !sent {
+		if c.webPush.hasSubscriptions() {
+			return nil
+		}
 		return fmt.Errorf("no active connections for session %s: %w", sessionID, channels.ErrSendFailed)
 	}
 	return nil

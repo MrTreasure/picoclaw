@@ -3,6 +3,8 @@
 # ============================================================
 FROM golang:1.25-alpine AS builder
 
+ENV GOPROXY=https://goproxy.cn,direct
+
 RUN apk add --no-cache git make
 
 WORKDIR /src
@@ -19,6 +21,8 @@ RUN make build
 # Stage 2: Node.js-based runtime with full MCP support
 # ============================================================
 FROM node:24-alpine3.23
+
+ENV npm_config_registry=https://registry.npmmirror.com/
 
 # Install runtime dependencies
 RUN apk add --no-cache \
