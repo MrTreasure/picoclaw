@@ -35,6 +35,13 @@ export function generateSessionId(): string {
 }
 
 export function getInitialActiveSessionId(): string {
+  const linkedSession = new URLSearchParams(
+    globalThis.location?.search ?? "",
+  ).get("session_id")
+  if (linkedSession?.trim()) {
+    writeStoredSessionId(linkedSession.trim())
+    return linkedSession.trim()
+  }
   return readStorageValue() || generateSessionId()
 }
 

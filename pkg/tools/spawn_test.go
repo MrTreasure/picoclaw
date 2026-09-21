@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 // mockSpawner implements SubTurnSpawner for testing.
@@ -90,7 +91,24 @@ func TestSpawnTool_Execute_ValidTask(t *testing.T) {
 	if !result.Async {
 		t.Error("SpawnTool should return async result")
 	}
+	if !strings.Contains(result.ForLLM, "subagent-1") {
+		t.Fatalf("spawn result should expose the tracked task ID: %q", result.ForLLM)
+	}
 	<-spawner.done
+	deadline := time.Now().Add(time.Second)
+	for {
+		task, ok := manager.GetTaskCopy("subagent-1")
+		if ok && task.Status == "completed" {
+			if !strings.Contains(task.Result, "Task completed") {
+				t.Fatalf("tracked task result = %q", task.Result)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("spawned task was not tracked as completed: %#v", task)
+		}
+		time.Sleep(time.Millisecond)
+	}
 	if spawner.lastConfig.TargetAgentID != "research" {
 		t.Errorf("TargetAgentID = %q, want research", spawner.lastConfig.TargetAgentID)
 	}

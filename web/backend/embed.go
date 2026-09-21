@@ -23,6 +23,9 @@ func registerEmbedRoutes(mux *http.ServeMux) {
 	if err := mime.AddExtensionType(".svg", "image/svg+xml"); err != nil {
 		logger.ErrorC("web", fmt.Sprintf("Warning: failed to register SVG MIME type: %v", err))
 	}
+	if err := mime.AddExtensionType(".webmanifest", "application/manifest+json"); err != nil {
+		logger.ErrorC("web", fmt.Sprintf("Warning: failed to register Web App Manifest MIME type: %v", err))
+	}
 
 	// Attempt to get the subdirectory 'dist' where Vite usually builds
 	subFS, err := fs.Sub(frontendFS, "dist")

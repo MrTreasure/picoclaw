@@ -316,7 +316,7 @@ export function ChatPage() {
         onScroll={handleScroll}
         className="min-h-0 flex-1 [scrollbar-gutter:stable] overflow-y-auto px-3 pt-[max(4rem,calc(env(safe-area-inset-top)+3.75rem))] pb-3 md:px-8 lg:px-24 xl:px-48"
       >
-        <div className="mx-auto flex w-full max-w-250 flex-col gap-8 pb-8">
+        <div className="mx-auto flex w-full max-w-250 flex-col gap-4 pb-5">
           {messages.length === 0 && !isTyping && (
             <ChatEmptyState
               hasAvailableModels={hasAvailableModels}

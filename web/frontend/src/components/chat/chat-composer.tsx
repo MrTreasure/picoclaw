@@ -65,7 +65,6 @@ export function ChatComposer({
   const { t } = useTranslation()
   const canInput = inputDisabledReason === null
   const composingRef = useRef(false)
-  const hasInput = input.trim().length > 0
   const disabledMessage =
     inputDisabledReason === null
       ? null
@@ -91,11 +90,11 @@ export function ChatComposer({
   }
 
   return (
-    <div className="before:bg-background pointer-events-none relative z-10 -mt-[24px] shrink-0 [scrollbar-gutter:stable] overflow-y-auto px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] before:pointer-events-none before:absolute before:inset-x-0 before:top-[24px] before:bottom-0 before:content-[''] md:px-8 md:pb-8 lg:px-24 xl:px-48">
+    <div className="before:bg-background pointer-events-none relative z-10 -mt-4 shrink-0 [scrollbar-gutter:stable] overflow-y-auto px-2 pb-[calc(.5rem+env(safe-area-inset-bottom))] before:pointer-events-none before:absolute before:inset-x-0 before:top-4 before:bottom-0 before:content-[''] md:px-8 md:pb-5 lg:px-24 xl:px-48">
       <div className="pointer-events-auto mx-auto flex max-w-[1000px] flex-col items-end">
         <div
           className={cn(
-            "bg-card border-border/60 relative flex w-full flex-col rounded-2xl border p-3 shadow-sm transition-colors",
+            "bg-card border-border/60 relative flex w-full flex-col rounded-[22px] border p-2 shadow-sm transition-colors",
             isDragActive && "border-violet-400/70 bg-violet-500/5",
           )}
           onDragEnter={onDragEnter}
@@ -112,7 +111,7 @@ export function ChatComposer({
           )}
 
           {attachments.length > 0 && (
-            <div className="mb-3 flex flex-wrap gap-2 px-2">
+            <div className="mb-2 flex flex-wrap gap-2 px-1">
               {attachments.map((attachment, index) => (
                 <div
                   key={`${attachment.url}-${index}`}
@@ -137,45 +136,43 @@ export function ChatComposer({
             </div>
           )}
 
-          <TextareaAutosize
-            value={input}
-            onChange={(e) => onInputChange(e.target.value)}
-            onCompositionStart={() => {
-              composingRef.current = true
-            }}
-            onCompositionEnd={() => {
-              composingRef.current = false
-            }}
-            onPaste={onPaste}
-            onKeyDown={handleKeyDown}
-            placeholder={placeholder}
-            disabled={!canInput}
-            title={disabledMessage || undefined}
-            className={cn(
-              "placeholder:text-muted-foreground/50 max-h-[200px] min-h-[64px] resize-none border-0 bg-transparent px-2 py-1 text-[15px] shadow-none transition-colors focus-visible:ring-0 focus-visible:outline-none dark:bg-transparent",
-              !canInput && "cursor-not-allowed",
-            )}
-            minRows={1}
-            maxRows={8}
-          />
+          <div className="flex items-end gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground hover:text-foreground size-11 shrink-0 rounded-full"
+              onClick={onAddImages}
+              disabled={!canInput}
+              aria-label={t("chat.attachImage")}
+              title={t("chat.attachImage")}
+            >
+              <IconPhotoPlus className="size-5" aria-hidden="true" />
+            </Button>
 
-          <div className="mt-2 flex items-center justify-between px-1">
-            <div className="flex items-center gap-1">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="text-muted-foreground hover:text-foreground h-8 w-8 rounded-full"
-                onClick={onAddImages}
-                disabled={!canInput}
-                aria-label={t("chat.attachImage")}
-                title={t("chat.attachImage")}
-              >
-                <IconPhotoPlus className="size-4" />
-              </Button>
-            </div>
+            <TextareaAutosize
+              value={input}
+              onChange={(e) => onInputChange(e.target.value)}
+              onCompositionStart={() => {
+                composingRef.current = true
+              }}
+              onCompositionEnd={() => {
+                composingRef.current = false
+              }}
+              onPaste={onPaste}
+              onKeyDown={handleKeyDown}
+              placeholder={placeholder}
+              disabled={!canInput}
+              title={disabledMessage || undefined}
+              className={cn(
+                "placeholder:text-muted-foreground/50 min-h-11 min-w-0 flex-1 resize-none border-0 bg-transparent px-1.5 py-2.5 text-[15px] leading-6 shadow-none transition-colors focus-visible:ring-0 focus-visible:outline-none dark:bg-transparent",
+                !canInput && "cursor-not-allowed",
+              )}
+              minRows={1}
+              maxRows={6}
+            />
 
-            <div className="flex items-center gap-1.5">
+            <div className="flex shrink-0 items-center gap-1">
               {contextUsage && (
                 <ContextUsageRing
                   usage={contextUsage}
@@ -187,29 +184,17 @@ export function ChatComposer({
                   <Button
                     type="button"
                     size="icon"
-                    className="size-8 rounded-full bg-violet-500 text-white transition-transform hover:bg-violet-600 active:scale-95"
+                    className="size-11 rounded-full bg-violet-500 text-white transition-transform hover:bg-violet-600 active:scale-95"
                     onClick={onSend}
                     disabled={!canSend}
                     aria-label={t("chat.sendMessage")}
                   >
-                    <IconArrowUp className="size-4" />
+                    <IconArrowUp className="size-5" aria-hidden="true" />
                   </Button>
                 </span>
               ) : null}
             </div>
           </div>
-        </div>
-
-        <div
-          aria-hidden={!hasInput}
-          className={cn(
-            "border-border/50 bg-muted/55 text-muted-foreground mt-2 inline-flex items-center rounded-md border px-3 py-1 text-[11px] shadow-sm transition-all duration-200 dark:bg-muted/45",
-            hasInput
-              ? "translate-y-0 opacity-100"
-              : "pointer-events-none -translate-y-1 opacity-0",
-          )}
-        >
-          {t("chat.composeHint")}
         </div>
       </div>
     </div>

@@ -280,7 +280,9 @@ func isPublicLauncherDashboardStatic(method, p string) bool {
 	}
 	switch p {
 	case "/favicon.ico", "/favicon.svg", "/favicon-96x96.png",
-		"/apple-touch-icon.png", "/site.webmanifest", "/robots.txt":
+		"/apple-touch-icon.png", "/web-app-manifest-192x192.png",
+		"/web-app-manifest-512x512.png", "/site.webmanifest", "/sw.js",
+		"/offline.html", "/robots.txt":
 		return true
 	default:
 		return false

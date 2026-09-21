@@ -121,6 +121,68 @@ func TestHandleListSessions_JSONLStorage(t *testing.T) {
 	}
 }
 
+func TestHandleListSessions_DuplicateScopeUsesNewestCanonicalSession(t *testing.T) {
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+
+	dir := sessionsTestDir(t, configPath)
+	store, err := memory.NewJSONLStore(dir)
+	if err != nil {
+		t.Fatalf("NewJSONLStore() error = %v", err)
+	}
+	scope, err := json.Marshal(session.SessionScope{
+		Version: 1,
+		AgentID: "main",
+		Channel: "pico",
+		Values:  map[string]string{"chat": "direct:pico:duplicate-session"},
+	})
+	if err != nil {
+		t.Fatalf("Marshal(scope) error = %v", err)
+	}
+
+	oldKey := session.BuildOpaqueSessionKey("duplicate-old")
+	if err := store.AddFullMessage(nil, oldKey, providers.Message{Role: "user", Content: "stale conversation"}); err != nil {
+		t.Fatalf("AddFullMessage(old) error = %v", err)
+	}
+	if err := store.UpsertSessionMeta(nil, oldKey, scope, nil); err != nil {
+		t.Fatalf("UpsertSessionMeta(old) error = %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+
+	newKey := session.BuildOpaqueSessionKey("duplicate-new")
+	if err := store.AddFullMessage(nil, newKey, providers.Message{Role: "user", Content: "latest conversation"}); err != nil {
+		t.Fatalf("AddFullMessage(new) error = %v", err)
+	}
+	if err := store.UpsertSessionMeta(nil, newKey, scope, nil); err != nil {
+		t.Fatalf("UpsertSessionMeta(new) error = %v", err)
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var items []sessionListItem
+	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+		t.Fatalf("Unmarshal(list) error = %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "duplicate-session" || items[0].Title != "latest conversation" {
+		t.Fatalf("items = %#v, want newest duplicate-session", items)
+	}
+
+	detailRec := httptest.NewRecorder()
+	detailReq := httptest.NewRequest(http.MethodGet, "/api/sessions/duplicate-session", nil)
+	mux.ServeHTTP(detailRec, detailReq)
+	if detailRec.Code != http.StatusOK || !strings.Contains(detailRec.Body.String(), "latest conversation") {
+		t.Fatalf("detail status = %d, body=%s", detailRec.Code, detailRec.Body.String())
+	}
+}
+
 func TestHandleListSessions_TransientThoughtDoesNotInflateMessageCount(t *testing.T) {
 	configPath, cleanup := setupOAuthTestEnv(t)
 	defer cleanup()

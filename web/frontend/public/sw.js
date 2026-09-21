@@ -1,12 +1,12 @@
-const CACHE_VERSION = "musec137-shell-v6"
+const CACHE_VERSION = "musec137-shell-v7"
 const APP_SHELL = [
   "/",
   "/offline.html",
-  "/site.webmanifest?v=musec137-4",
-  "/favicon-96x96.png?v=musec137-4",
-  "/apple-touch-icon.png?v=musec137-4",
-  "/web-app-manifest-192x192.png?v=musec137-4",
-  "/web-app-manifest-512x512.png?v=musec137-4",
+  "/site.webmanifest?v=musec137-5",
+  "/favicon-96x96.png?v=musec137-5",
+  "/apple-touch-icon.png?v=musec137-5",
+  "/web-app-manifest-192x192.png?v=musec137-5",
+  "/web-app-manifest-512x512.png?v=musec137-5",
 ]
 
 self.addEventListener("install", (event) => {
@@ -45,15 +45,16 @@ self.addEventListener("push", (event) => {
         includeUncontrolled: true,
       })
       if (windows.some((client) => client.visibilityState === "visible")) return
+      const sessionId = payload.session_id || ""
       await self.registration.showNotification(payload.title || "MuseC137", {
         body: payload.body || "收到一条新消息",
         icon: "/web-app-manifest-192x192.png",
         badge: "/favicon-96x96.png",
-        tag: payload.session_id
-          ? `musec137-${payload.session_id}`
-          : "musec137-message",
-        data: { url: payload.url || "/" },
+        tag: sessionId ? `musec137-${sessionId}` : "musec137-message",
+        renotify: true,
+        data: { url: payload.url || "/", sessionId },
       })
+      if (self.navigator.setAppBadge) await self.navigator.setAppBadge()
     })(),
   )
 })

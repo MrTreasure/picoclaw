@@ -208,8 +208,9 @@ func (h *Handler) readJSONLSession(dir, sessionKey string) (sessionFile, error) 
 }
 
 type picoJSONLSessionRef struct {
-	ID  string
-	Key string
+	ID      string
+	Key     string
+	Updated time.Time
 }
 
 type picoLegacySessionRef struct {
@@ -278,7 +279,7 @@ func (h *Handler) findPicoJSONLSessions(dir string) ([]picoJSONLSessionRef, erro
 	}
 
 	refs := make([]picoJSONLSessionRef, 0)
-	seen := make(map[string]struct{})
+	refIndexes := make(map[string]int)
 	metaBackedBases := make(map[string]struct{})
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta.json") {
@@ -295,10 +296,14 @@ func (h *Handler) findPicoJSONLSessions(dir string) ([]picoJSONLSessionRef, erro
 			continue
 		}
 		metaBackedBases[strings.TrimSuffix(name, ".meta.json")] = struct{}{}
-		if _, exists := seen[ref.ID]; exists {
+		ref.Updated = meta.UpdatedAt
+		if index, exists := refIndexes[ref.ID]; exists {
+			if ref.Updated.After(refs[index].Updated) {
+				refs[index] = ref
+			}
 			continue
 		}
-		seen[ref.ID] = struct{}{}
+		refIndexes[ref.ID] = len(refs)
 		refs = append(refs, ref)
 	}
 
@@ -315,10 +320,10 @@ func (h *Handler) findPicoJSONLSessions(dir string) ([]picoJSONLSessionRef, erro
 		if !ok || ref.Key == "" || ref.ID == "" {
 			continue
 		}
-		if _, exists := seen[ref.ID]; exists {
+		if _, exists := refIndexes[ref.ID]; exists {
 			continue
 		}
-		seen[ref.ID] = struct{}{}
+		refIndexes[ref.ID] = len(refs)
 		refs = append(refs, ref)
 	}
 	return refs, nil

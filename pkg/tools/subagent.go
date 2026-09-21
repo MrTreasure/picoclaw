@@ -133,6 +133,47 @@ func (sm *SubagentManager) RegisterTool(tool Tool) {
 	sm.tools.Register(tool)
 }
 
+// RegisterExternalTask records a task whose goroutine is owned by SpawnTool.
+// Registering before the goroutine starts guarantees spawn_status can observe
+// the task as soon as spawn returns.
+func (sm *SubagentManager) RegisterExternalTask(
+	task, label, agentID, originChannel, originChatID string,
+) string {
+	if sm == nil {
+		return ""
+	}
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	taskID := fmt.Sprintf("subagent-%d", sm.nextID)
+	sm.nextID++
+	sm.tasks[taskID] = &SubagentTask{
+		ID:            taskID,
+		Task:          task,
+		Label:         label,
+		AgentID:       agentID,
+		OriginChannel: originChannel,
+		OriginChatID:  originChatID,
+		Status:        "running",
+		Created:       time.Now().UnixMilli(),
+	}
+	return taskID
+}
+
+// CompleteExternalTask updates a SpawnTool-owned task. Empty task IDs are
+// ignored so a partially configured tool cannot create phantom status rows.
+func (sm *SubagentManager) CompleteExternalTask(taskID, status, result string) {
+	if sm == nil || taskID == "" {
+		return
+	}
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if task, ok := sm.tasks[taskID]; ok {
+		task.Status = status
+		task.Result = result
+	}
+}
+
 func (sm *SubagentManager) Spawn(
 	ctx context.Context,
 	task, label, agentID, originChannel, originChatID string,

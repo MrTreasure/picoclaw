@@ -52,13 +52,13 @@ export const UserMessage = memo(function UserMessage({
       )}
 
       {hasText && (
-        <div className="relative max-w-[70%]">
+        <div className="relative max-w-[82%] sm:max-w-[70%]">
           <div
             className={cn(
               "wrap-break-word whitespace-pre-wrap",
               isCommand
-                ? "rounded-xl border border-zinc-200 bg-transparent px-4 py-3 font-mono text-[14px] text-zinc-800 dark:border-zinc-800/60 dark:bg-[#121212] dark:text-zinc-200 dark:shadow-sm"
-                : "rounded-2xl rounded-tr-sm bg-violet-500 px-5 py-3 text-[15px] leading-relaxed text-white shadow-sm",
+                ? "rounded-xl border border-zinc-200 bg-transparent px-3.5 py-2.5 font-mono text-[14px] text-zinc-800 dark:border-zinc-800/60 dark:bg-[#121212] dark:text-zinc-200 dark:shadow-sm"
+                : "rounded-2xl rounded-tr-sm bg-violet-500 px-4 py-2.5 text-[15px] leading-relaxed text-white shadow-sm",
             )}
           >
             {isCommand ? (
@@ -96,7 +96,7 @@ export const UserMessage = memo(function UserMessage({
       )}
 
       {formattedTimestamp && (
-        <span className="px-1 text-[12px] text-zinc-400">
+        <span className="px-1 text-[11px] text-zinc-400">
           {formattedTimestamp}
         </span>
       )}

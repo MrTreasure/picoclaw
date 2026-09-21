@@ -103,9 +103,17 @@ export function AppHeader() {
         <SidebarTrigger className="text-muted-foreground hover:bg-accent hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg sm:hidden [&>svg]:size-5">
           <IconMenu2 />
         </SidebarTrigger>
-        <div className="hidden w-36 shrink-0 items-center sm:flex">
-          <Link to="/">
-            <img className="w-full" src="/logo_with_text.png" alt="Logo" />
+        <div className="hidden shrink-0 items-center sm:flex">
+          <Link
+            className="text-foreground flex items-center gap-2.5 font-semibold tracking-[-0.02em]"
+            to="/"
+          >
+            <img
+              className="size-9 rounded-xl shadow-sm ring-1 ring-black/10"
+              src="/web-app-manifest-192x192.png"
+              alt=""
+            />
+            <span>MuseC137</span>
           </Link>
         </div>
       </div>

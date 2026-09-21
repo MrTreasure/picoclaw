@@ -19,6 +19,30 @@ The comparison baseline currently used by this repository is
 
 ## Active local features
 
+### Canonical source and reproducible deployment
+
+- **Behavior:** The complete Go gateway, Launcher backend, WebUI/PWA frontend,
+  and deployment templates live in this single repository. Production
+  binaries are built from a clean `main` commit and installed under
+  `/vol1/picoclaw/bin`; deployment directories never act as hidden source
+  trees.
+- **Audit:** Historical feature branches were compared by patch equivalence.
+  DashScope TTS, DingTalk media, session maintenance, cron reporting, Seahorse
+  integrity, tool-protocol filtering, and LLM usage events already have newer
+  equivalents on `main`. The missing spawn-status integration and PWA details
+  were reconciled during repository consolidation.
+- **Rollback:** Restore the verified Git bundle and source archive recorded in
+  the consolidation commit, then install the retained binaries.
+
+### Spawn task status integrity
+
+- **Behavior:** Asynchronous `spawn` tasks are registered before execution,
+  return their task ID, and update `spawn_status` on completion, failure,
+  cancellation, or panic.
+- **Configuration surface:** Existing `spawn`, `spawn_status`, and `subagent`
+  tool switches.
+- **Upstream status:** Local reconciliation of a previously uncommitted fix.
+
 ### MuseC137 Web/PWA experience
 
 - **Behavior:** The launcher ships the MuseC137-branded installable PWA,

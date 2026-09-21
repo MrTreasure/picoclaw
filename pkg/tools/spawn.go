@@ -8,6 +8,7 @@ import (
 
 type SpawnTool struct {
 	spawner        SubTurnSpawner
+	manager        *SubagentManager
 	defaultModel   string
 	maxTokens      int
 	temperature    float64
@@ -22,6 +23,7 @@ func NewSpawnTool(manager *SubagentManager) *SpawnTool {
 		return &SpawnTool{}
 	}
 	return &SpawnTool{
+		manager:      manager,
 		defaultModel: manager.defaultModel,
 		maxTokens:    manager.maxTokens,
 		temperature:  manager.temperature,
@@ -127,8 +129,29 @@ Task: %s`,
 
 	// Use spawner if available (direct SpawnSubTurn call)
 	if t.spawner != nil {
+		var taskID string
+		if t.manager != nil {
+			taskID = t.manager.RegisterExternalTask(
+				task,
+				label,
+				targetAgentID,
+				ToolChannel(ctx),
+				ToolChatID(ctx),
+			)
+		}
+
 		// Launch async sub-turn in goroutine
 		go func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					message := fmt.Sprintf("Spawn panicked: %v", recovered)
+					t.manager.CompleteExternalTask(taskID, "failed", message)
+					if cb != nil {
+						cb(ctx, ErrorResult(message))
+					}
+				}
+			}()
+
 			result, err := t.spawner.SpawnSubTurn(ctx, SubTurnConfig{
 				Model:         t.defaultModel,
 				Tools:         nil, // Will inherit from parent via context
@@ -142,6 +165,18 @@ Task: %s`,
 			if err != nil {
 				result = ErrorResult(fmt.Sprintf("Spawn failed: %v", err)).WithError(err)
 			}
+			if result == nil {
+				result = ErrorResult("Spawn failed: subagent returned no result")
+			}
+
+			status := "completed"
+			if err != nil || result.IsError {
+				status = "failed"
+				if ctx.Err() != nil {
+					status = "canceled"
+				}
+			}
+			t.manager.CompleteExternalTask(taskID, status, result.ForLLM)
 
 			// Call callback if provided
 			if cb != nil {
@@ -151,9 +186,9 @@ Task: %s`,
 
 		// Return immediate acknowledgment
 		if label != "" {
-			return AsyncResult(fmt.Sprintf("Spawned subagent '%s' for task: %s", label, task))
+			return AsyncResult(fmt.Sprintf("Spawned subagent '%s' (%s) for task: %s", label, taskID, task))
 		}
-		return AsyncResult(fmt.Sprintf("Spawned subagent for task: %s", task))
+		return AsyncResult(fmt.Sprintf("Spawned subagent (%s) for task: %s", taskID, task))
 	}
 
 	// Fallback: spawner not configured

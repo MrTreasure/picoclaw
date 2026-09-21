@@ -2,11 +2,30 @@
 <html lang="zh-CN" class="dark" style="background: #171717">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
+    <script>
+      ;(() => {
+        const storedTheme = localStorage.getItem("theme")
+        const theme = storedTheme === "light" ? "light" : "dark"
+        document.documentElement.classList.toggle("dark", theme === "dark")
+        document.documentElement.style.colorScheme = theme
+        document.documentElement.style.backgroundColor =
+          theme === "dark" ? "#171717" : "#ffffff"
+      })()
+    </script>
+    <link
+      rel="icon"
+      type="image/png"
+      href="/favicon-96x96.png?v=musec137-5"
+      sizes="96x96"
+    />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="shortcut icon" href="/favicon.ico" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-    <link rel="manifest" href="/site.webmanifest?v=musec137-4" />
+    <link rel="shortcut icon" href="/favicon.ico?v=musec137-5" />
+    <link
+      rel="apple-touch-icon"
+      sizes="180x180"
+      href="/apple-touch-icon.png?v=musec137-5"
+    />
+    <link rel="manifest" href="/site.webmanifest?v=musec137-5" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
@@ -19,6 +38,8 @@
       content="black-translucent"
     />
     <meta name="apple-mobile-web-app-title" content="MuseC137" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="format-detection" content="telephone=no" />
     <title>MuseC137</title>
   </head>
 

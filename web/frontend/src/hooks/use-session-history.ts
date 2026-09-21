@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 
 import { type SessionSummary, deleteSession, getSessions } from "@/api/sessions"
 
@@ -99,11 +100,13 @@ export function useSessionHistory({
         if (id === activeSessionId) {
           onDeletedActiveSession()
         }
+        toast.success(t("chat.sessionDeleted"))
       } catch (err) {
         console.error("Failed to delete session:", err)
+        toast.error(t("chat.sessionDeleteFailed"))
       }
     },
-    [activeSessionId, onDeletedActiveSession, sessions],
+    [activeSessionId, onDeletedActiveSession, sessions, t],
   )
 
   return {

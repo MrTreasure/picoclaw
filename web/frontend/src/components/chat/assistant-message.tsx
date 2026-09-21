@@ -114,7 +114,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       {!isCollapsedBlock && (
         <div className="text-muted-foreground/60 flex items-center justify-between gap-2 px-1 text-xs opacity-70">
           <div className="flex items-center gap-2">
-            <span>PicoClaw</span>
+            <span>MuseC137</span>
             {trimmedModelName && (
               <>
                 <span className="opacity-50">•</span>

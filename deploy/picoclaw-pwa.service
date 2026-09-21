@@ -1,0 +1,17 @@
+[Unit]
+Description=PicoClaw PWA Launcher
+After=network-online.target picoclaw-gateway.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=PICOCLAW_BINARY=/vol1/picoclaw/bin/picoclaw
+ExecStart=/vol1/picoclaw/bin/picoclaw-launcher -host 127.0.0.1,172.21.0.1 -port 18800 -no-browser -console /vol1/picoclaw/home/config.json
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
