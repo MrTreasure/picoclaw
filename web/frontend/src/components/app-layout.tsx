@@ -15,7 +15,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <TooltipProvider>
-      <SidebarProvider className="flex h-dvh flex-col overflow-hidden">
+      <SidebarProvider className="flex h-dvh min-h-0 flex-col overflow-hidden">
         <a
           href="#main-content"
           className="bg-background text-foreground focus:ring-ring fixed top-2 left-2 z-[100] -translate-y-20 rounded-md px-4 py-2 shadow-lg focus:translate-y-0 focus:ring-2 focus:outline-none"

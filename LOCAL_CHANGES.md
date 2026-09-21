@@ -50,10 +50,13 @@ The comparison baseline currently used by this repository is
   audio-message bubbles, confirmed mobile session deletion, Service Worker and
   Web Push controls, a floating shortcut back to the latest message, and
   long-press/right-click message actions that preserve a text-selection path.
+  The application shell remains viewport-bound; only designated content areas
+  scroll, including in standalone mode with mobile safe-area insets.
 - **Notification reliability:** Web Push permission is requested directly from
   the user's click before waiting for Service Worker state, and asynchronous
   push operations have a timeout so the settings switch cannot remain busy
-  indefinitely.
+  indefinitely. The subscription allowlist supports Chrome, Edge, Firefox, and
+  Safari push services while continuing to reject arbitrary outbound endpoints.
 - **Performance:** Initial gateway status and session history load in parallel;
   the initial chat state is neutral instead of falsely disconnected. Streaming
   updates are batched by animation frame, render as plain text until finalized,

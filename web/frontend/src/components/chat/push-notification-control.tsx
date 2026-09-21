@@ -81,6 +81,8 @@ export function PushNotificationControl() {
     // owns transient user activation. Awaiting serviceWorker.ready first makes
     // Chrome silently reject or suppress the permission prompt.
     setBusy(true)
+    let phase: "permission" | "serviceWorker" | "subscription" | "save" =
+      "permission"
     try {
       const permission = enabled
         ? await Notification.requestPermission()
@@ -89,6 +91,7 @@ export function PushNotificationControl() {
         throw new Error("permission-denied")
       }
 
+      phase = "serviceWorker"
       const registration = await withTimeout(navigator.serviceWorker.ready)
       const current = await withTimeout(
         registration.pushManager.getSubscription(),
@@ -105,6 +108,7 @@ export function PushNotificationControl() {
       const config = await getPicoPushConfig()
       if (!config.enabled || !config.public_key)
         throw new Error("not-configured")
+      phase = "subscription"
       const subscription =
         current ??
         (await withTimeout(
@@ -113,15 +117,25 @@ export function PushNotificationControl() {
             applicationServerKey: decodeApplicationServerKey(config.public_key),
           }),
         ))
+      phase = "save"
       await savePicoPushSubscription(subscription)
       setSubscribed(true)
       toast.success(t("chat.push.enabled"))
     } catch (error) {
-      toast.error(
-        error instanceof Error && error.message === "permission-denied"
-          ? t("chat.push.permissionDenied")
-          : t("chat.push.failed"),
-      )
+      const permissionDenied =
+        error instanceof Error &&
+        (error.message === "permission-denied" ||
+          error.name === "NotAllowedError")
+      const message = permissionDenied
+        ? t("chat.push.permissionDenied")
+        : enabled && phase === "serviceWorker"
+          ? t("chat.push.serviceWorkerFailed")
+          : enabled && phase === "subscription"
+            ? t("chat.push.subscriptionFailed")
+            : enabled && phase === "save"
+              ? t("chat.push.saveFailed")
+              : t("chat.push.failed")
+      toast.error(message)
     } finally {
       setBusy(false)
     }

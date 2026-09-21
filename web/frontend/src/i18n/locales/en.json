@@ -100,6 +100,9 @@
       "enabled": "Background notifications enabled",
       "disabled": "Background notifications disabled",
       "permissionDenied": "Chrome notifications are blocked. Allow them in Android settings.",
+      "serviceWorkerFailed": "The notification service did not start. Reload the page and try again.",
+      "subscriptionFailed": "The browser could not create a push subscription. Check system notification settings and try again.",
+      "saveFailed": "The push subscription could not be saved by the server.",
       "failed": "Could not update notifications. Try again."
     },
     "audioMessage": "Voice message",

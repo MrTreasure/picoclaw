@@ -301,7 +301,7 @@ export function ChatPage() {
     canInput && (Boolean(input.trim()) || attachments.length > 0)
 
   return (
-    <div className="bg-background/95 relative flex h-full flex-col">
+    <div className="bg-background/95 relative flex h-full min-h-0 flex-col overflow-hidden">
       <ChatControls
         defaultModelName={defaultModelName}
         apiKeyModels={apiKeyModels}
@@ -325,7 +325,7 @@ export function ChatPage() {
         onNewChat={newChat}
       />
 
-      <div className="relative min-h-0 flex-1">
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         <div
           ref={scrollRef}
           onScroll={handleScroll}

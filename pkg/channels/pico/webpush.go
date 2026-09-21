@@ -44,8 +44,9 @@ func newPicoPushService(settings config.PicoWebPushSettings) *picoPushService {
 		return nil
 	}
 	subscriber := strings.TrimSpace(settings.Subscriber)
+	subscriber = strings.TrimPrefix(subscriber, "mailto:")
 	if subscriber == "" {
-		subscriber = "mailto:webpush@mrtreasure.cc"
+		subscriber = "webpush@mrtreasure.cc"
 	}
 	s := &picoPushService{
 		path:          filepath.Join(config.GetHome(), "pico-web-push-subscriptions.json"),
@@ -71,7 +72,7 @@ func (s *picoPushService) load() error {
 		return err
 	}
 	for _, subscription := range subscriptions {
-		if validChromePushSubscription(subscription) {
+		if validWebPushSubscription(subscription) {
 			s.subscriptions[subscription.Endpoint] = subscription
 		}
 	}
@@ -110,10 +111,19 @@ func (s *picoPushService) saveLocked() error {
 	return os.Rename(tmpName, s.path)
 }
 
-func validChromePushSubscription(subscription webpush.Subscription) bool {
+func validWebPushSubscription(subscription webpush.Subscription) bool {
 	u, err := url.Parse(subscription.Endpoint)
-	return err == nil && u.Scheme == "https" && u.Hostname() == "fcm.googleapis.com" &&
-		strings.TrimSpace(subscription.Keys.Auth) != "" && strings.TrimSpace(subscription.Keys.P256dh) != ""
+	if err != nil || u.Scheme != "https" || u.User != nil || u.Hostname() == "" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	allowedHost := host == "fcm.googleapis.com" ||
+		host == "updates.push.services.mozilla.com" ||
+		host == "web.push.apple.com" ||
+		host == "notify.windows.com" ||
+		strings.HasSuffix(host, ".notify.windows.com")
+	return allowedHost && strings.TrimSpace(subscription.Keys.Auth) != "" &&
+		strings.TrimSpace(subscription.Keys.P256dh) != ""
 }
 
 func (s *picoPushService) hasSubscriptions() bool {
@@ -126,8 +136,8 @@ func (s *picoPushService) hasSubscriptions() bool {
 }
 
 func (s *picoPushService) upsert(subscription webpush.Subscription) error {
-	if !validChromePushSubscription(subscription) {
-		return fmt.Errorf("only Chrome FCM push subscriptions are accepted")
+	if !validWebPushSubscription(subscription) {
+		return fmt.Errorf("unsupported Web Push subscription endpoint")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

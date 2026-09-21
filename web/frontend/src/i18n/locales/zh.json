@@ -100,6 +100,9 @@
       "enabled": "后台通知已开启",
       "disabled": "后台通知已关闭",
       "permissionDenied": "Chrome 通知权限未开启，请在系统设置中允许通知。",
+      "serviceWorkerFailed": "通知服务未能启动，请刷新页面后重试。",
+      "subscriptionFailed": "浏览器无法创建推送订阅，请检查系统通知设置后重试。",
+      "saveFailed": "服务器无法保存推送订阅。",
       "failed": "通知设置失败，请重试。"
     },
     "audioMessage": "语音消息",
