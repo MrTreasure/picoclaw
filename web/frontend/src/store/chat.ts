@@ -36,7 +36,8 @@ export interface ChatToolCall {
   extraContent?: ChatToolCallExtraContent
 }
 
-export type AssistantMessageKind = "normal" | "thought" | "tool_calls"
+export type AssistantMessageKind =
+  "normal" | "thought" | "tool_calls" | "tool_feedback"
 
 export interface ChatMessage {
   id: string
@@ -59,10 +60,7 @@ export interface ContextUsage {
 }
 
 export type ConnectionState =
-  | "disconnected"
-  | "connecting"
-  | "connected"
-  | "error"
+  "disconnected" | "connecting" | "connected" | "error"
 
 export interface ChatStoreState {
   messages: ChatMessage[]

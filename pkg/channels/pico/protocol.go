@@ -30,8 +30,9 @@ const (
 	PayloadKeyModelName   = "model_name"
 	PayloadKeyUsage       = "usage"
 
-	MessageKindThought   = "thought"
-	MessageKindToolCalls = "tool_calls"
+	MessageKindThought      = "thought"
+	MessageKindToolCalls    = "tool_calls"
+	MessageKindToolFeedback = "tool_feedback"
 )
 
 // PicoMessage is the wire format for all Pico Protocol messages.

@@ -66,6 +66,41 @@ function scheduleReconnect(generation: number, sessionId: string) {
   }, delay)
 }
 
+async function reconcileSessionAfterConnect({
+  socket,
+  generation,
+  sessionId,
+}: {
+  socket: WebSocket
+  generation: number
+  sessionId: string
+}) {
+  try {
+    const historyMessages = await loadSessionMessages(sessionId)
+    if (
+      !isCurrentSocket({
+        socket,
+        currentSocket: wsRef,
+        generation,
+        currentGeneration: connectionGeneration,
+        sessionId,
+        currentSessionId: activeSessionIdRef,
+      })
+    ) {
+      return
+    }
+
+    updateChatStore((prev) => ({
+      messages: mergeHistoryMessages(historyMessages, prev.messages),
+      isTyping: false,
+    }))
+  } catch (error) {
+    // Reconciliation is best-effort. Keep the live socket usable even when the
+    // history endpoint is temporarily unavailable.
+    console.warn("Failed to reconcile session history after reconnect:", error)
+  }
+}
+
 function needsActiveSessionHydration(): boolean {
   const state = getChatState()
   const storedSessionId = readStoredSessionId()
@@ -164,6 +199,7 @@ export async function connectChat() {
       updateChatStore({ connectionState: "connected" })
       isConnecting = false
       reconnectAttempts = 0
+      void reconcileSessionAfterConnect({ socket, generation, sessionId })
     }
 
     socket.onmessage = (event) => {

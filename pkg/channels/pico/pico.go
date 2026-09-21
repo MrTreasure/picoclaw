@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mime"
 	"net/http"
@@ -55,7 +56,7 @@ func outboundMessageIsToolFeedback(msg bus.OutboundMessage) bool {
 	if len(msg.Context.Raw) == 0 {
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(msg.Context.Raw["message_kind"]), "tool_feedback")
+	return strings.EqualFold(strings.TrimSpace(msg.Context.Raw["message_kind"]), MessageKindToolFeedback)
 }
 
 func outboundMessageIsToolCalls(msg bus.OutboundMessage) bool {
@@ -317,15 +318,6 @@ func (c *PicoChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]stri
 		}
 	}
 	trackedMsgID, hasTrackedMsg := c.currentToolFeedbackMessage(msg.ChatID)
-	if outboundMessageFinalizesTrackedToolFeedback(msg) {
-		if msgIDs, handled := c.FinalizeToolFeedbackMessage(ctx, msg); handled {
-			if err := c.notifyFinal(ctx, msg.ChatID, msg.Content); err != nil {
-				return nil, err
-			}
-			return msgIDs, nil
-		}
-	}
-
 	content := msg.Content
 	if isToolFeedback {
 		content = channels.InitialAnimatedToolFeedbackContent(msg.Content)
@@ -353,17 +345,20 @@ func (c *PicoChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]stri
 		if toolCalls, ok := picoToolCallsPayload(msg); ok {
 			payload[PayloadKeyToolCalls] = toolCalls
 		}
+	case isToolFeedback:
+		payload[PayloadKeyKind] = MessageKindToolFeedback
 	}
 	setContextUsagePayload(payload, msg.ContextUsage)
 	outMsg := newMessage(TypeMessageCreate, payload)
 
-	if err := c.broadcastToSession(msg.ChatID, outMsg); err != nil {
-		return nil, err
-	}
+	broadcastErr := c.broadcastToSession(msg.ChatID, outMsg)
 	if !isThought && !isToolFeedback && !isToolCalls {
-		if err := c.notifyFinal(ctx, msg.ChatID, content); err != nil {
+		notifyErr := c.notifyFinal(ctx, msg.ChatID, content)
+		if err := finalDeliveryError(broadcastErr, notifyErr, c.webPush != nil); err != nil {
 			return nil, err
 		}
+	} else if broadcastErr != nil {
+		return nil, broadcastErr
 	}
 	if isToolFeedback {
 		c.RecordToolFeedbackMessage(msg.ChatID, msgID, msg.Content)
@@ -595,10 +590,22 @@ func (s *picoStreamer) Finalize(ctx context.Context, content string) error {
 func (s *picoStreamer) FinalizeWithContext(ctx context.Context, content string, contextUsage *bus.ContextUsage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.updateLocked(ctx, content, true, contextUsage); err != nil {
-		return err
+	updateErr := s.updateLocked(ctx, content, true, contextUsage)
+	notifyErr := s.channel.notifyFinal(ctx, s.chatID, content)
+	return finalDeliveryError(updateErr, notifyErr, s.channel.webPush != nil)
+}
+
+// finalDeliveryError treats WebSocket and Web Push as independent delivery
+// paths. Android may suspend Chrome (and therefore its WebSocket) while the
+// screen is off; a successful push still counts as successful delivery.
+func finalDeliveryError(webSocketErr, pushErr error, pushEnabled bool) error {
+	if webSocketErr == nil {
+		return pushErr
 	}
-	return s.channel.notifyFinal(ctx, s.chatID, content)
+	if pushEnabled && pushErr == nil {
+		return nil
+	}
+	return errors.Join(webSocketErr, pushErr)
 }
 
 func (s *picoStreamer) UpdateReasoning(ctx context.Context, content string) error {

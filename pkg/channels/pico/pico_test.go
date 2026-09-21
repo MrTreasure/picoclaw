@@ -131,7 +131,44 @@ func TestDismissTrackedToolFeedbackMessage_DeletesProgressMessage(t *testing.T) 
 	}
 }
 
-func TestSend_ThoughtMessageDoesNotFinalizeTrackedToolFeedback(t *testing.T) {
+func TestFinalDeliveryError_AcceptsPushWhenWebSocketIsOffline(t *testing.T) {
+	webSocketErr := errors.New("no active websocket")
+	if err := finalDeliveryError(webSocketErr, nil, true); err != nil {
+		t.Fatalf("finalDeliveryError() = %v, want nil after successful push", err)
+	}
+	if err := finalDeliveryError(webSocketErr, nil, false); !errors.Is(err, webSocketErr) {
+		t.Fatalf("finalDeliveryError() = %v, want websocket error when push is disabled", err)
+	}
+}
+
+func TestSend_ToolFeedbackHasDedicatedKind(t *testing.T) {
+	ch := newTestPicoChannel(t)
+	if err := ch.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer ch.Stop(context.Background())
+
+	clientConn, received, cleanup := newTestPicoWebSocket(t)
+	defer cleanup()
+	ch.addConnForTest(&picoConn{id: "conn-1", conn: clientConn, sessionID: "sess-1"})
+
+	if _, err := ch.Send(context.Background(), bus.OutboundMessage{
+		ChatID:  "pico:sess-1",
+		Content: "Checking configuration",
+		Context: bus.InboundContext{Raw: map[string]string{
+			"message_kind": MessageKindToolFeedback,
+		}},
+	}); err != nil {
+		t.Fatalf("Send(tool feedback) error = %v", err)
+	}
+
+	message := mustReceivePicoMessage(t, received)
+	if got := message.Payload[PayloadKeyKind]; got != MessageKindToolFeedback {
+		t.Fatalf("tool feedback kind = %#v, want %q", got, MessageKindToolFeedback)
+	}
+}
+
+func TestSend_FinalReplyDoesNotOverwriteTrackedToolFeedback(t *testing.T) {
 	ch := newTestPicoChannel(t)
 
 	if err := ch.Start(context.Background()); err != nil {
@@ -208,12 +245,12 @@ func TestSend_ThoughtMessageDoesNotFinalizeTrackedToolFeedback(t *testing.T) {
 
 	select {
 	case msg := <-received:
-		if msg.Type != TypeMessageUpdate {
-			t.Fatalf("final message type = %q, want %q", msg.Type, TypeMessageUpdate)
+		if msg.Type != TypeMessageCreate {
+			t.Fatalf("final message type = %q, want %q", msg.Type, TypeMessageCreate)
 		}
 		payload := msg.Payload
-		if got := payload["message_id"]; got != "msg-progress" {
-			t.Fatalf("final message_id = %#v, want %q", got, "msg-progress")
+		if got := payload["message_id"]; got == "msg-progress" || got == nil || got == "" {
+			t.Fatalf("final message_id = %#v, want new non-progress id", got)
 		}
 		if got := payload[PayloadKeyContent]; got != "final reply" {
 			t.Fatalf("final content = %#v, want %q", got, "final reply")
@@ -232,7 +269,19 @@ func TestSend_ThoughtMessageDoesNotFinalizeTrackedToolFeedback(t *testing.T) {
 			t.Fatalf("total_tokens = %#v, want 4096", rawUsage["total_tokens"])
 		}
 	case <-time.After(time.Second):
-		t.Fatal("expected final reply to finalize tracked tool feedback")
+		t.Fatal("expected final reply to create a separate message")
+	}
+
+	select {
+	case msg := <-received:
+		if msg.Type != TypeMessageDelete {
+			t.Fatalf("progress cleanup type = %q, want %q", msg.Type, TypeMessageDelete)
+		}
+		if got := msg.Payload["message_id"]; got != "msg-progress" {
+			t.Fatalf("deleted message_id = %#v, want %q", got, "msg-progress")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected tracked progress message to be removed")
 	}
 
 	if _, ok := ch.currentToolFeedbackMessage("pico:sess-1"); ok {

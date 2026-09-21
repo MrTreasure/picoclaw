@@ -83,9 +83,7 @@ function messageSignature(message: ChatMessage): string {
     )
     .join("\u0002")
 
-  return `${message.role}\u0000${message.content}\u0000${normalizeMessageTimestamp(
-    message.timestamp,
-  )}\u0000${message.kind ?? ""}\u0000${message.modelName ?? ""}\u0000${attachmentSignature}\u0000${toolCallsSignature(
+  return `${message.role}\u0000${message.content}\u0000${message.kind ?? ""}\u0000${message.modelName ?? ""}\u0000${attachmentSignature}\u0000${toolCallsSignature(
     message.toolCalls,
   )}`
 }
@@ -101,18 +99,29 @@ export function mergeHistoryMessages(
   currentMessages: ChatMessage[],
 ): ChatMessage[] {
   const currentIds = new Set(currentMessages.map((message) => message.id))
-  const currentSignatures = new Set(
-    currentMessages.map((message) => messageSignature(message)),
-  )
+  const unmatchedCurrentSignatures = new Map<string, number>()
+  for (const message of currentMessages) {
+    const signature = messageSignature(message)
+    unmatchedCurrentSignatures.set(
+      signature,
+      (unmatchedCurrentSignatures.get(signature) ?? 0) + 1,
+    )
+  }
 
-  const merged = [
-    ...historyMessages.filter(
-      (message) =>
-        !currentIds.has(message.id) &&
-        !currentSignatures.has(messageSignature(message)),
-    ),
-    ...currentMessages,
-  ]
+  const missingHistoryMessages = historyMessages.filter((message) => {
+    if (currentIds.has(message.id)) {
+      return false
+    }
+    const signature = messageSignature(message)
+    const matches = unmatchedCurrentSignatures.get(signature) ?? 0
+    if (matches === 0) {
+      return true
+    }
+    unmatchedCurrentSignatures.set(signature, matches - 1)
+    return false
+  })
+
+  const merged = [...missingHistoryMessages, ...currentMessages]
 
   return merged.sort(
     (left, right) =>

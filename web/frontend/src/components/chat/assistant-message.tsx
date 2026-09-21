@@ -5,6 +5,7 @@ import {
   IconCopy,
   IconDownload,
   IconFileText,
+  IconLoader2,
   IconTool,
 } from "@tabler/icons-react"
 import { useState } from "react"
@@ -16,12 +17,12 @@ import rehypeSanitize from "rehype-sanitize"
 import remarkGfm from "remark-gfm"
 
 import {
-  MessageCodeBlock,
   MarkdownCodeBlock,
+  MessageCodeBlock,
 } from "@/components/chat/message-code-block"
 import { Button } from "@/components/ui/button"
-import { formatMessageTime } from "@/hooks/use-pico-chat"
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard"
+import { formatMessageTime } from "@/hooks/use-pico-chat"
 import { cn } from "@/lib/utils"
 import {
   type AssistantMessageKind,
@@ -50,6 +51,7 @@ export function AssistantMessage({
   const { copy, isCopied } = useCopyToClipboard()
   const isThought = kind === "thought"
   const isToolCalls = kind === "tool_calls"
+  const isToolFeedback = kind === "tool_feedback"
   const isCollapsedBlock = isThought || isToolCalls
   const hasText = content.trim().length > 0
   const hasToolCalls = toolCalls.length > 0
@@ -70,10 +72,23 @@ export function AssistantMessage({
     : t("chat.copyMessage")
   const trimmedModelName = modelName?.trim() ?? ""
 
+  if (isToolFeedback) {
+    return (
+      <div
+        className="text-muted-foreground flex items-start gap-2 px-1 py-1 text-[13px] leading-relaxed"
+        role="status"
+        aria-live="polite"
+      >
+        <IconLoader2 className="mt-0.5 size-3.5 shrink-0 animate-spin opacity-60" />
+        <span className="whitespace-pre-wrap opacity-75">{content}</span>
+      </div>
+    )
+  }
+
   return (
     <div className="group flex w-full flex-col gap-1.5">
       {!isCollapsedBlock && (
-          <div className="text-muted-foreground/60 flex items-center justify-between gap-2 px-1 text-xs opacity-70">
+        <div className="text-muted-foreground/60 flex items-center justify-between gap-2 px-1 text-xs opacity-70">
           <div className="flex items-center gap-2">
             <span>PicoClaw</span>
             {trimmedModelName && (
@@ -114,7 +129,9 @@ export function AssistantMessage({
                 )}
                 <span>{collapsedLabel}</span>
                 {trimmedModelName && (
-                  <span className="text-muted-foreground/45">{trimmedModelName}</span>
+                  <span className="text-muted-foreground/45">
+                    {trimmedModelName}
+                  </span>
                 )}
               </div>
               <div className="flex items-center gap-2">
@@ -194,7 +211,9 @@ export function AssistantMessage({
                             <MessageCodeBlock
                               code={toolArguments}
                               language="json"
-                              label={toolName || t("chat.toolCallArgumentsLabel")}
+                              label={
+                                toolName || t("chat.toolCallArgumentsLabel")
+                              }
                               className="my-0 shadow-none"
                               bodyClassName="px-3 py-2 text-[12px] leading-relaxed"
                             />
