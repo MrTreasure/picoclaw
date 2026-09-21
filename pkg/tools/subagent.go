@@ -133,6 +133,48 @@ func (sm *SubagentManager) RegisterTool(tool Tool) {
 	sm.tools.Register(tool)
 }
 
+// GenerateTaskID atomically produces the next unique task ID and increments
+// the internal counter. This is used by SpawnTool to generate IDs consistent
+// with the SubagentManager's own ID sequence.
+func (sm *SubagentManager) GenerateTaskID() string {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	id := sm.nextID
+	sm.nextID++
+	return fmt.Sprintf("subagent-%d", id)
+}
+
+// RegisterSpawnTask inserts a task into the manager's tasks map without
+// calling runTask(). The caller owns the goroutine and must call
+// CompleteSpawnTask when done. This bridges SpawnTool's SubTurnSpawner
+// path with the SubagentManager's task tracking — without it, spawn_status
+// would never see tasks created via SpawnTool.
+func (sm *SubagentManager) RegisterSpawnTask(taskID, task, label, agentID, originChannel, originChatID string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.tasks[taskID] = &SubagentTask{
+		ID:            taskID,
+		Task:          task,
+		Label:         label,
+		AgentID:       agentID,
+		OriginChannel: originChannel,
+		OriginChatID:  originChatID,
+		Status:        "running",
+		Created:       time.Now().UnixMilli(),
+	}
+}
+
+// CompleteSpawnTask atomically updates an existing task's status and result.
+// Safe to call from any goroutine. No-op if taskID doesn't exist.
+func (sm *SubagentManager) CompleteSpawnTask(taskID, status, result string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if task, ok := sm.tasks[taskID]; ok {
+		task.Status = status
+		task.Result = result
+	}
+}
+
 func (sm *SubagentManager) Spawn(
 	ctx context.Context,
 	task, label, agentID, originChannel, originChatID string,

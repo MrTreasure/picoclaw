@@ -8,6 +8,7 @@ import (
 
 type SpawnTool struct {
 	spawner        SubTurnSpawner
+	manager        *SubagentManager // used for task registration so spawn_status can find spawned tasks
 	defaultModel   string
 	maxTokens      int
 	temperature    float64
@@ -22,6 +23,7 @@ func NewSpawnTool(manager *SubagentManager) *SpawnTool {
 		return &SpawnTool{}
 	}
 	return &SpawnTool{
+		manager:      manager,
 		defaultModel: manager.defaultModel,
 		maxTokens:    manager.maxTokens,
 		temperature:  manager.temperature,
@@ -129,6 +131,27 @@ Task: %s`,
 	if t.spawner != nil {
 		// Launch async sub-turn in goroutine
 		go func() {
+			// Register task with SubagentManager so spawn_status can find it.
+			// This fixes the data-flow断裂 bug where spawn tool never wrote to manager.tasks.
+			var taskID string
+			if t.manager != nil {
+				taskID = t.manager.GenerateTaskID()
+				channel := ToolChannel(ctx)
+				chatID := ToolChatID(ctx)
+				t.manager.RegisterSpawnTask(taskID, task, label, targetAgentID, channel, chatID)
+			}
+
+			// Defer: recover from panic and update task to failed
+			var panicked bool
+			defer func() {
+				if r := recover(); r != nil {
+					panicked = true
+					if t.manager != nil && taskID != "" {
+						t.manager.CompleteSpawnTask(taskID, "failed", fmt.Sprintf("Spawn panicked: %v", r))
+					}
+				}
+			}()
+
 			result, err := t.spawner.SpawnSubTurn(ctx, SubTurnConfig{
 				Model:         t.defaultModel,
 				Tools:         nil, // Will inherit from parent via context
@@ -141,6 +164,17 @@ Task: %s`,
 			})
 			if err != nil {
 				result = ErrorResult(fmt.Sprintf("Spawn failed: %v", err)).WithError(err)
+			}
+
+			// Update task status in manager after completion
+			if !panicked && t.manager != nil && taskID != "" {
+				if err != nil {
+					t.manager.CompleteSpawnTask(taskID, "failed", fmt.Sprintf("Spawn failed: %v", err))
+				} else if result != nil && result.IsError {
+					t.manager.CompleteSpawnTask(taskID, "failed", result.ForLLM)
+				} else {
+					t.manager.CompleteSpawnTask(taskID, "completed", result.ForLLM)
+				}
 			}
 
 			// Call callback if provided
