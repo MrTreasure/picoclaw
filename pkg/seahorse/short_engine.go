@@ -231,7 +231,20 @@ func (e *Engine) getSessionMutex(sessionKey string) *sync.Mutex {
 }
 
 // Ingest adds messages to a conversation identified by sessionKey.
+// Ingest records messages that arrived during normal conversation.
 func (e *Engine) Ingest(ctx context.Context, sessionKey string, messages []Message) (*IngestResult, error) {
+	return e.ingestMessages(ctx, sessionKey, messages, true)
+}
+
+// ingestMessages stores messages and, when countTurns is set, reports the user
+// messages among them as completed turns.
+//
+// Bootstrap passes countTurns=false: replaying stored history is a repair, not
+// user activity. Counting it lets a single repaired delta (thousands of
+// messages) push active_turn_count far past the next SummarizeEveryTurns
+// multiple, and because scheduled summarization only fires on an exact multiple
+// it then never fires again for that window.
+func (e *Engine) ingestMessages(ctx context.Context, sessionKey string, messages []Message, countTurns bool) (*IngestResult, error) {
 	if e.shouldIgnoreSession(sessionKey) {
 		return nil, nil
 	}
@@ -291,8 +304,10 @@ func (e *Engine) Ingest(ctx context.Context, sessionKey string, messages []Messa
 	if err := e.store.AppendContextMessages(ctx, conv.ConversationID, msgIDs); err != nil {
 		return nil, fmt.Errorf("append context: %w", err)
 	}
-	if err := e.store.IncrementActiveTurnCount(ctx, conv.ConversationID, userTurns); err != nil {
-		return nil, fmt.Errorf("increment active turns: %w", err)
+	if countTurns {
+		if err := e.store.IncrementActiveTurnCount(ctx, conv.ConversationID, userTurns); err != nil {
+			return nil, fmt.Errorf("increment active turns: %w", err)
+		}
 	}
 
 	logger.InfoCF("seahorse", "ingest", map[string]any{
@@ -564,7 +579,7 @@ func (e *Engine) Bootstrap(ctx context.Context, sessionKey string, messages []Me
 		// Re-ingest from anchor+1 to end
 		delta := messages[anchor+1:]
 		if len(delta) > 0 {
-			_, err := e.Ingest(ctx, sessionKey, delta)
+			_, err := e.ingestMessages(ctx, sessionKey, delta, false)
 			if err != nil {
 				return fmt.Errorf("bootstrap: re-ingest: %w", err)
 			}
@@ -576,7 +591,7 @@ func (e *Engine) Bootstrap(ctx context.Context, sessionKey string, messages []Me
 	if anchor >= 0 && anchor < len(messages)-1 {
 		delta := messages[anchor+1:]
 		if len(delta) > 0 {
-			_, err := e.Ingest(ctx, sessionKey, delta)
+			_, err := e.ingestMessages(ctx, sessionKey, delta, false)
 			if err != nil {
 				return fmt.Errorf("bootstrap: ingest delta: %w", err)
 			}
@@ -594,14 +609,14 @@ func (e *Engine) Bootstrap(ctx context.Context, sessionKey string, messages []Me
 		}
 		// Re-ingest everything
 		if len(messages) > 0 {
-			_, err := e.Ingest(ctx, sessionKey, messages)
+			_, err := e.ingestMessages(ctx, sessionKey, messages, false)
 			if err != nil {
 				return fmt.Errorf("bootstrap: re-ingest all: %w", err)
 			}
 		}
 	} else if anchor == -1 && len(dbMsgs) == 0 {
 		// DB is empty, ingest everything
-		_, err := e.Ingest(ctx, sessionKey, messages)
+		_, err := e.ingestMessages(ctx, sessionKey, messages, false)
 		if err != nil {
 			return fmt.Errorf("bootstrap: ingest all: %w", err)
 		}

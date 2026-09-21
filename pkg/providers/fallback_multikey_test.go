@@ -173,7 +173,9 @@ func TestMultiKeyFailoverCooldown(t *testing.T) {
 	}
 }
 
-// TestMultiKeyFailoverWithFormatError tests that format errors are non-retriable
+// TestMultiKeyFailoverWithFormatError tests that format errors ARE retriable:
+// a 400-class rejection from one candidate must not abort the whole turn, it
+// falls through to the remaining candidates instead.
 func TestMultiKeyFailoverWithFormatError(t *testing.T) {
 	cfg := ModelConfig{
 		Primary:   "glm-4.7",
@@ -185,7 +187,7 @@ func TestMultiKeyFailoverWithFormatError(t *testing.T) {
 	cooldown := NewCooldownTracker()
 	chain := NewFallbackChain(cooldown, nil)
 
-	// Mock run function: first call fails with format error (bad request)
+	// Mock run function: every candidate fails with a format error (bad request)
 	callCount := 0
 	mockRun := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
 		callCount++
@@ -198,24 +200,28 @@ func TestMultiKeyFailoverWithFormatError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for format failure, got nil")
 	}
-
-	// Format errors should NOT trigger failover (non-retriable)
-	// So we should only have 1 call
-	if callCount != 1 {
-		t.Errorf("expected 1 call (format error is non-retriable), got %d", callCount)
+	if result != nil {
+		t.Errorf("expected nil result, got %+v", result)
 	}
 
-	// Verify the error is a FailoverError with format reason
-	var failoverErr *FailoverError
-	if !errors.As(err, &failoverErr) {
-		t.Errorf("expected FailoverError, got: %T - %v", err, err)
+	// Format errors trigger failover now, so every candidate should be tried.
+	if callCount != len(candidates) {
+		t.Errorf("expected %d calls (format errors are retriable), got %d", len(candidates), callCount)
 	}
 
-	if failoverErr.Reason != FailoverFormat {
-		t.Errorf("expected FailoverFormat reason, got: %s", failoverErr.Reason)
+	// Every candidate failed, so the chain is exhausted and aggregates the attempts.
+	var exhausted *FallbackExhaustedError
+	if !errors.As(err, &exhausted) {
+		t.Fatalf("expected FallbackExhaustedError, got: %T - %v", err, err)
 	}
-
-	_ = result // result should be nil
+	if len(exhausted.Attempts) != len(candidates) {
+		t.Fatalf("expected %d attempts, got %d", len(candidates), len(exhausted.Attempts))
+	}
+	for i, attempt := range exhausted.Attempts {
+		if attempt.Reason != FailoverFormat {
+			t.Errorf("attempt %d: reason = %q, want format", i, attempt.Reason)
+		}
+	}
 }
 
 // TestMultiKeyWithModelFallback tests multi-key failover combined with model fallback.

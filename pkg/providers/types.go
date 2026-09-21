@@ -114,9 +114,16 @@ func (e *FailoverError) Unwrap() error {
 }
 
 // IsRetriable returns true if this error should trigger fallback to next candidate.
-// Non-retriable: Format errors (bad request structure, image dimension/size).
+// Non-retriable: ContextOverflow only — the same oversized request would be
+// rejected identically by every candidate.
+//
+// Format errors (400-class: bad request structure, image dimension/size,
+// provider-side rejections) ARE retriable: the rejection is frequently specific
+// to one provider's request handling, and a hard abort here means the whole
+// turn fails with no reply at all. Worst case the remaining candidates each
+// reject the same way, which costs one call apiece.
 func (e *FailoverError) IsRetriable() bool {
-	return e.Reason != FailoverFormat && e.Reason != FailoverContextOverflow
+	return e.Reason != FailoverContextOverflow
 }
 
 // ModelConfig holds primary model and fallback list.

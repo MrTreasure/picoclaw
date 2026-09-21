@@ -66,6 +66,58 @@ func TestRunMigrations(t *testing.T) {
 	}
 }
 
+// Bootstrap loads a conversation's messages one at a time, so every
+// loadMessageParts call must be an indexed lookup. Without an index on
+// message_parts(message_id) each call scans the whole table and builds a temp
+// B-tree for the ORDER BY, which made session loading quadratic in session size
+// (measured: 4.24ms vs 0.01ms per lookup on a 13k-row table).
+func TestMessagePartsLookupUsesIndex(t *testing.T) {
+	db := openTestDB(t)
+
+	if err := runSchema(db); err != nil {
+		t.Fatalf("runSchema: %v", err)
+	}
+
+	var indexName string
+	if err := db.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='index' AND name='idx_message_parts_message'",
+	).Scan(&indexName); err != nil {
+		t.Fatalf("idx_message_parts_message not found: %v", err)
+	}
+
+	rows, err := db.Query(
+		`EXPLAIN QUERY PLAN
+		 SELECT part_id, message_id, type, text, name, arguments, tool_call_id, media_uri, mime_type
+		 FROM message_parts WHERE message_id = ? ORDER BY ordinal`,
+		1,
+	)
+	if err != nil {
+		t.Fatalf("explain query plan: %v", err)
+	}
+	defer rows.Close()
+
+	var plan strings.Builder
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notUsed, &detail); err != nil {
+			t.Fatalf("scan plan: %v", err)
+		}
+		plan.WriteString(detail)
+		plan.WriteString("\n")
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("plan rows: %v", err)
+	}
+
+	if !strings.Contains(plan.String(), "idx_message_parts_message") {
+		t.Fatalf("message_parts lookup does not use the index:\n%s", plan.String())
+	}
+	if strings.Contains(plan.String(), "SCAN message_parts") {
+		t.Fatalf("message_parts lookup falls back to a full scan:\n%s", plan.String())
+	}
+}
+
 func TestRunMigrationsIdempotent(t *testing.T) {
 	db := openTestDB(t)
 

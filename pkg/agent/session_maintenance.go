@@ -21,6 +21,12 @@ func (al *AgentLoop) maybeMaintainSession(
 		return nil
 	}
 
+	// Compaction issues its own LLM calls, and this entry point runs before
+	// runTurn installs the turn-scoped request metadata. Attach the
+	// conversation-scoped equivalent so those calls carry the same session
+	// header as the conversation's turns.
+	ctx = withSessionProviderRequestMetadata(ctx, agent.ID, sessionKey)
+
 	window, ok := al.contextManager.(ActiveContextWindowManager)
 	if !ok {
 		// A destructive fallback is intentionally forbidden: unsupported context

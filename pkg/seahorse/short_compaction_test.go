@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	providercommon "github.com/sipeed/picoclaw/pkg/providers/common"
 )
 
 // --- Test Helpers ---
@@ -79,6 +81,32 @@ func newTestCompactionEngineWithStore(
 // mockCompleteFn returns a simple summary for testing
 var mockCompleteFn CompleteFn = func(ctx context.Context, prompt string, opts CompleteOptions) (string, error) {
 	return "Mock summary of the conversation segment.", nil
+}
+
+func TestAsyncCompactionContextPreservesProviderMetadataAndShutdown(t *testing.T) {
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+	ce := &CompactionEngine{shutdownCtx: shutdownCtx}
+	requestCtx := providercommon.WithRequestMetadata(context.Background(), providercommon.RequestMetadata{
+		SessionID: "ses_test",
+		RequestID: "req_test",
+		Client:    "picoclaw",
+	})
+
+	asyncCtx := ce.asyncCompactionContext(requestCtx)
+	metadata, ok := providercommon.RequestMetadataFromContext(asyncCtx)
+	if !ok {
+		t.Fatal("provider request metadata missing from async compaction context")
+	}
+	if metadata.SessionID != "ses_test" || metadata.RequestID != "req_test" || metadata.Client != "picoclaw" {
+		t.Fatalf("provider request metadata = %#v", metadata)
+	}
+
+	shutdownCancel()
+	select {
+	case <-asyncCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("async compaction context was not canceled by engine shutdown")
+	}
 }
 
 func TestNeedsCompaction(t *testing.T) {

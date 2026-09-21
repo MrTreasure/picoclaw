@@ -1,11 +1,89 @@
 package agent
 
 import (
+	"context"
 	"testing"
 
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
+
+// recordingContextManager captures the context handed to Compact so tests can
+// inspect what the provider would have received.
+type recordingContextManager struct {
+	turnCount       int
+	lastSummaryTurn int
+	rotateCalls     int
+	compactCtx      context.Context
+	compactRequests []*CompactRequest
+}
+
+func (r *recordingContextManager) Assemble(context.Context, *AssembleRequest) (*AssembleResponse, error) {
+	return &AssembleResponse{}, nil
+}
+
+func (r *recordingContextManager) Compact(ctx context.Context, req *CompactRequest) error {
+	r.compactCtx = ctx
+	r.compactRequests = append(r.compactRequests, req)
+	return nil
+}
+
+func (r *recordingContextManager) Ingest(context.Context, *IngestRequest) error { return nil }
+
+func (r *recordingContextManager) Clear(context.Context, string) error { return nil }
+
+func (r *recordingContextManager) ActiveWindowState(context.Context, string) (int, int, error) {
+	return r.turnCount, r.lastSummaryTurn, nil
+}
+
+func (r *recordingContextManager) RotateActiveWindow(context.Context, string, int) error {
+	r.rotateCalls++
+	return nil
+}
+
+func (r *recordingContextManager) MarkActiveWindowSummarized(context.Context, string, int) error {
+	return nil
+}
+
+// Maintenance compaction runs from the inbound-message entry point, before
+// runTurn installs the turn-scoped metadata. The context it hands to Compact
+// must still identify the conversation, or OpenCode answers the header-less
+// call with 400 MissingSessionID and the compaction silently never happens.
+func TestMaybeMaintainSessionAttachesProviderMetadata(t *testing.T) {
+	al, agent, cleanup := newTurnCoordTestLoop(t, &simpleConvProvider{})
+	defer cleanup()
+
+	cm := &recordingContextManager{turnCount: 40}
+	al.contextManager = cm
+	al.cfg.Agents.Defaults.SessionMaintenance = config.SessionMaintenanceConfig{
+		Enabled:             true,
+		Channels:            []string{"weixin"},
+		SummarizeEveryTurns: 40,
+	}
+
+	if err := al.maybeMaintainSession(context.Background(), agent, "chat-1", "weixin"); err != nil {
+		t.Fatalf("maybeMaintainSession() error = %v", err)
+	}
+	if len(cm.compactRequests) == 0 {
+		t.Fatal("expected maintenance to invoke Compact")
+	}
+	if cm.compactCtx == nil {
+		t.Fatal("Compact received a nil context")
+	}
+
+	maintenance := requestMetadataForTest(t, cm.compactCtx)
+	turn := requestMetadataForTest(t, withProviderRequestMetadata(context.Background(), &turnState{
+		agentID: agent.ID, sessionKey: "chat-1", turnID: "turn-1",
+	}))
+
+	if maintenance.SessionID == "" {
+		t.Fatal("maintenance compaction context carried an empty session ID")
+	}
+	if maintenance.SessionID != turn.SessionID {
+		t.Fatalf("maintenance session ID %q does not match the turn session ID %q",
+			maintenance.SessionID, turn.SessionID)
+	}
+}
 
 func TestSessionMaintenanceApplies(t *testing.T) {
 	cfg := config.SessionMaintenanceConfig{Enabled: true, Channels: []string{"weixin"}}

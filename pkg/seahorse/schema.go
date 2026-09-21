@@ -118,6 +118,13 @@ func runSchema(db *sql.DB) error {
 		// Indexes for common query patterns
 		`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(conversation_id, created_at)`,
+		// message_parts is looked up by message_id on every message load and every
+		// delete. Without this index each lookup scans the whole table and builds a
+		// temp B-tree for the ORDER BY ordinal; bootstrap loads every message of a
+		// conversation one at a time, so the cost was quadratic in session size
+		// (measured 4.24ms -> 0.01ms per lookup on a 13k-row table). The ordinal
+		// column makes it covering, which also removes the temp B-tree.
+		`CREATE INDEX IF NOT EXISTS idx_message_parts_message ON message_parts(message_id, ordinal)`,
 		`CREATE INDEX IF NOT EXISTS idx_summaries_conversation ON summaries(conversation_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_summaries_kind_depth ON summaries(conversation_id, kind, depth)`,
 		`CREATE INDEX IF NOT EXISTS idx_summary_parents_parent ON summary_parents(parent_summary_id)`,

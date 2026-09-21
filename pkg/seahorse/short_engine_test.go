@@ -414,6 +414,67 @@ func TestEngineIngestPreservesReasoningContent(t *testing.T) {
 	}
 }
 
+// Bootstrap reconciles stored history with the session's JSONL. The messages it
+// replays are already-accounted-for history, not newly completed user turns.
+// Counting them lets one repaired delta push active_turn_count past the next
+// SummarizeEveryTurns multiple, and because scheduled summarization only fires
+// on an exact multiple it then never fires again for that window.
+func TestBootstrapDeltaDoesNotCountCompletedTurns(t *testing.T) {
+	eng := newTestEngine(t)
+	ctx := context.Background()
+	sessionKey := "agent:bootstrap-turn-count"
+
+	initial := []Message{
+		{Role: "user", Content: "u1"},
+		{Role: "assistant", Content: "a1"},
+		{Role: "user", Content: "u2"},
+		{Role: "assistant", Content: "a2"},
+	}
+	if _, err := eng.Ingest(ctx, sessionKey, initial); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+
+	turnsBefore, _, err := eng.ActiveWindowState(ctx, sessionKey)
+	if err != nil {
+		t.Fatalf("ActiveWindowState: %v", err)
+	}
+	if turnsBefore != 2 {
+		t.Fatalf("active turn count after Ingest = %d, want 2", turnsBefore)
+	}
+
+	// The JSONL has moved on: one more exchange the DB has not seen yet.
+	appended := append(append([]Message(nil), initial...),
+		Message{Role: "user", Content: "u3"},
+		Message{Role: "assistant", Content: "a3"},
+	)
+	if err := eng.Bootstrap(ctx, sessionKey, appended); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+
+	// Guard against a vacuous pass: the delta really must have been replayed.
+	conv, err := eng.store.GetOrCreateConversation(ctx, sessionKey)
+	if err != nil {
+		t.Fatalf("GetOrCreateConversation: %v", err)
+	}
+	stored, err := eng.store.GetMessages(ctx, conv.ConversationID, 10, 0)
+	if err != nil {
+		t.Fatalf("GetMessages: %v", err)
+	}
+	if len(stored) != len(appended) {
+		t.Fatalf("stored messages = %d, want %d (bootstrap did not replay the delta)",
+			len(stored), len(appended))
+	}
+
+	turnsAfter, _, err := eng.ActiveWindowState(ctx, sessionKey)
+	if err != nil {
+		t.Fatalf("ActiveWindowState after bootstrap: %v", err)
+	}
+	if turnsAfter != turnsBefore {
+		t.Fatalf("bootstrap counted replayed history as completed turns: %d -> %d",
+			turnsBefore, turnsAfter)
+	}
+}
+
 func TestBootstrapRepairsMissingModelName(t *testing.T) {
 	eng := newTestEngine(t)
 	ctx := context.Background()

@@ -133,7 +133,7 @@ func TestFallback_NonRetriableError(t *testing.T) {
 	attempt := 0
 	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
 		attempt++
-		return nil, errors.New("string should match pattern")
+		return nil, errors.New("context_length_exceeded")
 	}
 
 	_, err := fc.Execute(context.Background(), candidates, run)
@@ -144,11 +144,47 @@ func TestFallback_NonRetriableError(t *testing.T) {
 	if !errors.As(err, &fe) {
 		t.Fatalf("expected FailoverError, got %T", err)
 	}
-	if fe.Reason != FailoverFormat {
-		t.Errorf("reason = %q, want format", fe.Reason)
+	if fe.Reason != FailoverContextOverflow {
+		t.Errorf("reason = %q, want context_overflow", fe.Reason)
 	}
 	if attempt != 1 {
 		t.Errorf("attempt = %d, want 1 (non-retriable should not try next)", attempt)
+	}
+}
+
+// TestFallback_FormatErrorIsRetriable covers the opposite direction: a 400-class
+// rejection must fall through to the remaining candidates rather than aborting
+// the turn outright.
+func TestFallback_FormatErrorIsRetriable(t *testing.T) {
+	ct := NewCooldownTracker()
+	fc := NewFallbackChain(ct, nil)
+
+	candidates := []FallbackCandidate{
+		makeCandidate("openai", "gpt-4"),
+		makeCandidate("anthropic", "claude"),
+	}
+
+	attempt := 0
+	run := func(ctx context.Context, provider, model string) (*LLMResponse, error) {
+		attempt++
+		return nil, errors.New("string should match pattern")
+	}
+
+	_, err := fc.Execute(context.Background(), candidates, run)
+	if err == nil {
+		t.Fatal("expected error after all candidates failed")
+	}
+	var exhausted *FallbackExhaustedError
+	if !errors.As(err, &exhausted) {
+		t.Fatalf("expected FallbackExhaustedError, got %T", err)
+	}
+	if attempt != len(candidates) {
+		t.Errorf("attempt = %d, want %d (format errors should try next)", attempt, len(candidates))
+	}
+	for i, a := range exhausted.Attempts {
+		if a.Reason != FailoverFormat {
+			t.Errorf("attempt %d: reason = %q, want format", i, a.Reason)
+		}
 	}
 }
 

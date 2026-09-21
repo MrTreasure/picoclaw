@@ -9,6 +9,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
+	providercommon "github.com/sipeed/picoclaw/pkg/providers/common"
 	"github.com/sipeed/picoclaw/pkg/tokenizer"
 )
 
@@ -78,9 +79,10 @@ func (e *CompactionEngine) Compact(ctx context.Context, convID int64, input Comp
 	if input.Force || (tokensBefore > budget && budget > 0) {
 		// Launch async condensed compaction with dedup
 		if _, loaded := e.condensing.LoadOrStore(convID, struct{}{}); !loaded {
+			asyncCtx := e.asyncCompactionContext(ctx)
 			go func() {
 				defer e.condensing.Delete(convID)
-				e.runCondensedLoop(e.shutdownCtx, convID)
+				e.runCondensedLoop(asyncCtx, convID)
 			}()
 		}
 	}
@@ -91,6 +93,14 @@ func (e *CompactionEngine) Compact(ctx context.Context, convID int64, input Comp
 	}
 
 	return result, nil
+}
+
+func (e *CompactionEngine) asyncCompactionContext(ctx context.Context) context.Context {
+	asyncCtx := e.shutdownCtx
+	if metadata, ok := providercommon.RequestMetadataFromContext(ctx); ok {
+		asyncCtx = providercommon.WithRequestMetadata(asyncCtx, metadata)
+	}
+	return asyncCtx
 }
 
 // CompactUntilUnder aggressively compacts until context is under budget.

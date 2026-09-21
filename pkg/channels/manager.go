@@ -1471,29 +1471,7 @@ func (m *Manager) runWorker(ctx context.Context, name string, w *channelWorker) 
 				maxLen = mlp.MaxMessageLength()
 			}
 
-			// Collect all message chunks to send
-			var chunks []string
-
-			// Step 1: Try marker-based splitting if enabled.
-			// Tool feedback must stay a single message, so it skips marker splitting.
-			// Stream-final duplicate responses must also stay intact so preSend can
-			// consume the whole final message before any marker chunk leaks.
-			if m.finalizedStreamActiveForMessage(name, msg) {
-				chunks = []string{msg.Content}
-			} else if m.config != nil && m.config.Agents.Defaults.SplitOnMarker && !outboundMessageIsToolFeedback(msg) {
-				if markerChunks := SplitByMarker(msg.Content); len(markerChunks) > 1 {
-					for _, chunk := range markerChunks {
-						chunkMsg := msg
-						chunkMsg.Content = chunk
-						chunks = append(chunks, splitOutboundMessageContent(chunkMsg, maxLen)...)
-					}
-				}
-			}
-
-			// Step 2: Fallback to length-based splitting if no chunks from marker
-			if len(chunks) == 0 {
-				chunks = splitOutboundMessageContent(msg, maxLen)
-			}
+			chunks := m.splitOutboundMessageChunks(name, msg, maxLen)
 
 			// Step 3: Send all chunks
 			for _, chunk := range chunks {
@@ -1517,6 +1495,32 @@ func (m *Manager) finalizedStreamActiveForMessage(channelName string, msg bus.Ou
 	}
 	_, active := m.streamActive.Load(streamSuppressionKey(channelName, chatID, msg.SessionKey))
 	return active
+}
+
+// splitOutboundMessageChunks applies semantic marker splitting before the
+// channel-specific length limit. All outbound paths must use this helper so
+// synchronous sends (including the message tool) cannot leak protocol markers.
+func (m *Manager) splitOutboundMessageChunks(channelName string, msg bus.OutboundMessage, maxLen int) []string {
+	// Stream-final duplicate responses must stay intact so preSend can consume
+	// the whole final message before any marker chunk leaks.
+	if m.finalizedStreamActiveForMessage(channelName, msg) {
+		return []string{msg.Content}
+	}
+
+	// Tool feedback must stay a single message, so it skips marker splitting.
+	if m.config != nil && m.config.Agents.Defaults.SplitOnMarker && !outboundMessageIsToolFeedback(msg) {
+		if markerChunks := SplitByMarker(msg.Content); len(markerChunks) > 1 {
+			chunks := make([]string, 0, len(markerChunks))
+			for _, chunk := range markerChunks {
+				chunkMsg := msg
+				chunkMsg.Content = chunk
+				chunks = append(chunks, splitOutboundMessageContent(chunkMsg, maxLen)...)
+			}
+			return chunks
+		}
+	}
+
+	return splitOutboundMessageContent(msg, maxLen)
 }
 
 // splitOutboundMessageContent splits regular outbound content by maxLen, but
@@ -2058,7 +2062,7 @@ func (m *Manager) SendMessage(ctx context.Context, msg bus.OutboundMessage) erro
 	if mlp, ok := w.ch.(MessageLengthProvider); ok {
 		maxLen = mlp.MaxMessageLength()
 	}
-	if chunks := splitOutboundMessageContent(msg, maxLen); len(chunks) > 1 {
+	if chunks := m.splitOutboundMessageChunks(channelName, msg, maxLen); len(chunks) > 1 {
 		for _, chunk := range chunks {
 			chunkMsg := msg
 			chunkMsg.Content = chunk

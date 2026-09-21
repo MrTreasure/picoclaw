@@ -3276,6 +3276,51 @@ func TestSendMessage_WithSplitting(t *testing.T) {
 	}
 }
 
+func TestSendMessage_WithMarkerSplitting(t *testing.T) {
+	m := newTestManager()
+	m.config = &config.Config{
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				SplitOnMarker: true,
+			},
+		},
+	}
+
+	var received []string
+	ch := &mockChannel{
+		sendFn: func(_ context.Context, msg bus.OutboundMessage) error {
+			received = append(received, msg.Content)
+			return nil
+		},
+	}
+	w := &channelWorker{
+		ch:      ch,
+		limiter: rate.NewLimiter(rate.Inf, 1),
+	}
+	m.channels["test"] = ch
+	m.workers["test"] = w
+
+	msg := testOutboundMessage(bus.OutboundMessage{
+		Channel: "test",
+		ChatID:  "123",
+		Content: "first <|[SPLIT]|> second <|[SPLIT]|> third",
+	})
+
+	if err := m.SendMessage(context.Background(), msg); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	want := []string{"first", "second", "third"}
+	if len(received) != len(want) {
+		t.Fatalf("received %d messages, want %d: %q", len(received), len(want), received)
+	}
+	for i := range want {
+		if received[i] != want[i] {
+			t.Fatalf("received[%d] = %q, want %q", i, received[i], want[i])
+		}
+	}
+}
+
 func TestSendMedia_ContextOnlyUsesContextAddressing(t *testing.T) {
 	m := newTestManager()
 
