@@ -1,4 +1,9 @@
-import { IconArrowUp, IconPhotoPlus, IconX } from "@tabler/icons-react"
+import {
+  IconArrowUp,
+  IconPhotoPlus,
+  IconPlayerStopFilled,
+  IconX,
+} from "@tabler/icons-react"
 import {
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
@@ -37,9 +42,11 @@ interface ChatComposerProps {
   onDrop: (event: ReactDragEvent<HTMLDivElement>) => void
   onRemoveAttachment: (index: number) => void
   onSend: () => void
+  onStop: () => void
   onContextDetail?: () => void
   inputDisabledReason: ChatInputDisabledReason | null
   canSend: boolean
+  isGenerating: boolean
   isDragActive: boolean
   contextUsage?: ContextUsage
 }
@@ -56,9 +63,11 @@ export function ChatComposer({
   onDrop,
   onRemoveAttachment,
   onSend,
+  onStop,
   onContextDetail,
   inputDisabledReason,
   canSend,
+  isGenerating,
   isDragActive,
   contextUsage,
 }: ChatComposerProps) {
@@ -179,7 +188,19 @@ export function ChatComposer({
                   onDetailClick={onContextDetail}
                 />
               )}
-              {canInput ? (
+              {canInput && isGenerating ? (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="destructive"
+                  className="size-11 rounded-full transition-transform active:scale-95"
+                  onClick={onStop}
+                  aria-label={t("chat.stopGeneration")}
+                  title={t("chat.stopGeneration")}
+                >
+                  <IconPlayerStopFilled className="size-4" aria-hidden="true" />
+                </Button>
+              ) : canInput ? (
                 <span tabIndex={!canSend ? 0 : undefined}>
                   <Button
                     type="button"

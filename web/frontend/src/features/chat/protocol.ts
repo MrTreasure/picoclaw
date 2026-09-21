@@ -4,6 +4,7 @@ import {
   parseAssistantMessageCreateState,
   parseAssistantMessageUpdateState,
 } from "@/features/chat/assistant-message-state"
+import { removeMatchingHistoryCopies } from "@/features/chat/history"
 import { normalizeUnixTimestamp } from "@/features/chat/state"
 import {
   type ChatAttachment,
@@ -173,21 +174,27 @@ export function handlePicoMessage(
           ? normalizeUnixTimestamp(Number(message.timestamp))
           : Date.now()
 
+      const nextMessage = {
+        id: messageId,
+        role: "assistant" as const,
+        content,
+        kind,
+        ...(modelName ? { modelName } : {}),
+        ...(toolCalls ? { toolCalls } : {}),
+        attachments,
+        streaming: isStreaming,
+        timestamp,
+      }
+
       updateChatStore((prev) => ({
-        messages: [
-          ...prev.messages,
-          {
-            id: messageId,
-            role: "assistant",
-            content,
-            kind,
-            ...(modelName ? { modelName } : {}),
-            ...(toolCalls ? { toolCalls } : {}),
-            attachments,
-            streaming: isStreaming,
-            timestamp,
-          },
-        ],
+        messages: removeMatchingHistoryCopies(
+          prev.messages.some((item) => item.id === messageId)
+            ? prev.messages.map((item) =>
+                item.id === messageId ? { ...item, ...nextMessage } : item,
+              )
+            : [...prev.messages, nextMessage],
+          nextMessage,
+        ),
         isTyping:
           !isPlaceholder &&
           (kind === "normal" || message.type === "media.create")
@@ -215,14 +222,15 @@ export function handlePicoMessage(
       updateChatStore((prev) => ({
         messages: (() => {
           let found = false
-          const messages = prev.messages.map((msg) => {
+          let liveMessage: (typeof prev.messages)[number] | undefined
+          let messages = prev.messages.map((msg) => {
             if (msg.id !== messageId) {
               return msg
             }
             found = true
             const { content, kind, toolCalls } =
               parseAssistantMessageUpdateState(payload, msg)
-            return {
+            liveMessage = {
               ...msg,
               id: messageId,
               content,
@@ -235,28 +243,30 @@ export function handlePicoMessage(
                   ? payload.final === false
                   : msg.streaming,
             }
+            return liveMessage
           })
           if (found) {
-            return messages
+            return liveMessage
+              ? removeMatchingHistoryCopies(messages, liveMessage)
+              : messages
           }
 
           const { content, kind, toolCalls } =
             parseAssistantMessageUpdateState(payload)
 
-          return [
-            ...messages,
-            {
-              id: messageId,
-              role: "assistant" as const,
-              content,
-              kind,
-              toolCalls,
-              ...(modelName ? { modelName } : {}),
-              ...(attachments ? { attachments } : {}),
-              streaming: payload.final === false,
-              timestamp,
-            },
-          ]
+          liveMessage = {
+            id: messageId,
+            role: "assistant" as const,
+            content,
+            kind,
+            toolCalls,
+            ...(modelName ? { modelName } : {}),
+            ...(attachments ? { attachments } : {}),
+            streaming: payload.final === false,
+            timestamp,
+          }
+          messages = [...messages, liveMessage]
+          return removeMatchingHistoryCopies(messages, liveMessage)
         })(),
         ...(contextUsage ? { contextUsage } : {}),
       }))

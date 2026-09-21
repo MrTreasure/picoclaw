@@ -299,6 +299,8 @@ export function ChatPage() {
 
   const canSubmit =
     canInput && (Boolean(input.trim()) || attachments.length > 0)
+  const isGenerating =
+    isTyping || messages.some((message) => message.streaming === true)
 
   return (
     <div className="bg-background/95 relative flex h-full min-h-0 flex-col overflow-hidden">
@@ -410,6 +412,9 @@ export function ChatPage() {
         onDrop={handleComposerDrop}
         onRemoveAttachment={handleRemoveAttachment}
         onSend={handleSend}
+        onStop={() => {
+          sendMessage({ content: "/stop", attachments: [] })
+        }}
         onContextDetail={() => {
           if (sendMessage({ content: "/context", attachments: [] })) {
             setInput("")
@@ -417,6 +422,7 @@ export function ChatPage() {
         }}
         inputDisabledReason={inputDisabledReason}
         canSend={canSubmit}
+        isGenerating={isGenerating}
         isDragActive={isDragActive}
         contextUsage={contextUsage}
       />

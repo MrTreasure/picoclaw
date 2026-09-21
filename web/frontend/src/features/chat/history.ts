@@ -47,7 +47,9 @@ export async function loadSessionMessages(
   const detail = await getSessionHistory(sessionId)
   return splitMarkedAssistantMessages(
     detail.messages.map((message, index) => ({
-      id: `hist-${index}-${Date.now()}`,
+      // History can be loaded more than once while the live socket reconnects.
+      // Keep IDs stable so repeated hydration never creates a second copy.
+      id: `hist-${sessionId}-${index}`,
       role: message.role,
       content: message.content,
       kind:
@@ -106,7 +108,7 @@ function normalizeMessageTimestamp(timestamp: number | string): string {
   return Number.isNaN(parsed) ? trimmed : String(parsed)
 }
 
-function messageSignature(message: ChatMessage): string {
+export function messageSignature(message: ChatMessage): string {
   const attachmentSignature = (message.attachments ?? [])
     .map(
       (attachment) =>
@@ -117,6 +119,49 @@ function messageSignature(message: ChatMessage): string {
   return `${message.role}\u0000${message.content}\u0000${message.kind ?? ""}\u0000${message.modelName ?? ""}\u0000${attachmentSignature}\u0000${toolCallsSignature(
     message.toolCalls,
   )}`
+}
+
+export function removeMatchingHistoryCopies(
+  messages: ChatMessage[],
+  liveMessage: ChatMessage,
+): ChatMessage[] {
+  if (
+    liveMessage.role !== "assistant" ||
+    liveMessage.content.trim().length === 0
+  ) {
+    return messages
+  }
+
+  const signature = messageSignature(liveMessage)
+  const liveTimestamp = comparableTimestamp(liveMessage.timestamp)
+  let duplicateIndex = -1
+  let closestTimestampDifference = Number.POSITIVE_INFINITY
+
+  messages.forEach((message, index) => {
+    if (
+      !message.id.startsWith("hist-") ||
+      messageSignature(message) !== signature
+    ) {
+      return
+    }
+
+    const timestampDifference = Math.abs(
+      comparableTimestamp(message.timestamp) - liveTimestamp,
+    )
+    // A repeated answer in a later turn is legitimate. Only reconcile the
+    // history copy produced by the same in-flight response.
+    if (
+      timestampDifference <= 30_000 &&
+      timestampDifference < closestTimestampDifference
+    ) {
+      duplicateIndex = index
+      closestTimestampDifference = timestampDifference
+    }
+  })
+
+  return duplicateIndex < 0
+    ? messages
+    : messages.filter((_, index) => index !== duplicateIndex)
 }
 
 function comparableTimestamp(timestamp: number | string): number {
