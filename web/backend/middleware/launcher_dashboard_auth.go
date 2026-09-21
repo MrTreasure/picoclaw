@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
@@ -27,8 +28,20 @@ const (
 	LauncherDashboardLocalAutoLoginPath = "/launcher-auto-login"
 	// LauncherDashboardSetupPath is the setup page used before the dashboard
 	// password is initialized.
-	LauncherDashboardSetupPath = "/launcher-setup"
+	LauncherDashboardSetupPath  = "/launcher-setup"
+	LauncherAndroidWebLoginPath = "/android-webview-login"
 )
+
+type DeviceAuthenticator interface {
+	Authenticate(context.Context, string) (deviceID string, ok bool, err error)
+}
+
+type launcherDeviceIDContextKey struct{}
+
+func LauncherDeviceID(r *http.Request) string {
+	deviceID, _ := r.Context().Value(launcherDeviceIDContextKey{}).(string)
+	return deviceID
+}
 
 // NewLauncherDashboardSessionCookie creates the per-process session cookie value.
 func NewLauncherDashboardSessionCookie() (string, error) {
@@ -50,6 +63,8 @@ type LauncherDashboardAuthConfig struct {
 	LocalAutoLogin *LauncherDashboardLocalAutoLogin
 	// SecureCookie sets the session cookie's Secure flag. If nil, DefaultLauncherDashboardSecureCookie is used.
 	SecureCookie func(*http.Request) bool
+	DeviceAuth   DeviceAuthenticator
+	WebGrants    interface{ Consume(string) (string, error) }
 }
 
 // LauncherDashboardLocalAutoLogin is an in-memory, one-shot startup grant.
@@ -134,6 +149,10 @@ func ClearLauncherDashboardSessionCookie(w http.ResponseWriter, r *http.Request,
 func LauncherDashboardAuth(cfg LauncherDashboardAuthConfig, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := canonicalAuthPath(r.URL.Path)
+		if p == LauncherAndroidWebLoginPath {
+			handleLauncherAndroidWebLogin(w, r, cfg)
+			return
+		}
 		if p == LauncherDashboardLocalAutoLoginPath {
 			handleLauncherLocalAutoLogin(w, r, cfg)
 			return
@@ -146,8 +165,53 @@ func LauncherDashboardAuth(cfg LauncherDashboardAuthConfig, next http.Handler) h
 			next.ServeHTTP(w, r)
 			return
 		}
+		if deviceBearerPathAllowed(p) {
+			if deviceID, ok := validLauncherDeviceAuth(r, cfg); ok {
+				ctx := context.WithValue(r.Context(), launcherDeviceIDContextKey{}, deviceID)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+		}
 		rejectLauncherDashboardAuth(w, r, p)
 	})
+}
+
+func deviceBearerPathAllowed(p string) bool {
+	if p == "/pico/ws" || strings.HasPrefix(p, "/pico/media/") {
+		return true
+	}
+	return p == "/api/sessions" || strings.HasPrefix(p, "/api/sessions/") ||
+		p == "/api/models" || strings.HasPrefix(p, "/api/models/") ||
+		strings.HasPrefix(p, "/api/android/")
+}
+
+func handleLauncherAndroidWebLogin(w http.ResponseWriter, r *http.Request, cfg LauncherDashboardAuthConfig) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if r.Method == http.MethodHead || cfg.WebGrants == nil {
+		rejectLauncherDashboardAuth(w, r, LauncherAndroidWebLoginPath)
+		return
+	}
+	if _, err := cfg.WebGrants.Consume(r.URL.Query().Get("nonce")); err != nil {
+		rejectLauncherDashboardAuth(w, r, LauncherAndroidWebLoginPath)
+		return
+	}
+	SetLauncherDashboardSessionCookie(w, r, cfg.ExpectedCookie, cfg.SecureCookie)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func validLauncherDeviceAuth(r *http.Request, cfg LauncherDashboardAuthConfig) (string, bool) {
+	if cfg.DeviceAuth == nil {
+		return "", false
+	}
+	header := strings.TrimSpace(r.Header.Get("Authorization"))
+	if len(header) < 8 || !strings.EqualFold(header[:7], "Bearer ") {
+		return "", false
+	}
+	deviceID, ok, err := cfg.DeviceAuth.Authenticate(r.Context(), strings.TrimSpace(header[7:]))
+	return deviceID, ok && err == nil
 }
 
 // canonicalAuthPath matches path cleaning used for routing decisions so
@@ -254,6 +318,8 @@ func isPublicLauncherDashboardPath(method, p string) bool {
 		return true
 	}
 	switch p {
+	case "/api/android/devices/login":
+		return method == http.MethodPost
 	case "/api/auth/login":
 		return method == http.MethodPost
 	case "/api/auth/logout":

@@ -31,6 +31,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/netbind"
 	"github.com/sipeed/picoclaw/web/backend/api"
 	"github.com/sipeed/picoclaw/web/backend/dashboardauth"
+	"github.com/sipeed/picoclaw/web/backend/deviceauth"
 	"github.com/sipeed/picoclaw/web/backend/launcherconfig"
 	"github.com/sipeed/picoclaw/web/backend/middleware"
 	"github.com/sipeed/picoclaw/web/backend/utils"
@@ -644,6 +645,16 @@ func main() {
 		PasswordStore: passwordStore,
 		StoreError:    authStoreErr,
 	})
+	deviceStore, err := deviceauth.New(picoHome)
+	if err != nil {
+		logger.Fatalf("Device credential setup failed: %v", err)
+	}
+	webGrants := deviceauth.NewGrantStore()
+	api.RegisterAndroidDeviceRoutes(mux, api.AndroidDeviceRouteOpts{
+		PasswordStore: passwordStore,
+		DeviceStore:   deviceStore,
+		WebGrants:     webGrants,
+	})
 
 	// API Routes (e.g. /api/status)
 	apiHandler = api.NewHandler(absPath)
@@ -674,6 +685,8 @@ func main() {
 	dashAuth := middleware.LauncherDashboardAuth(middleware.LauncherDashboardAuthConfig{
 		ExpectedCookie: dashboardSessionCookie,
 		LocalAutoLogin: localAutoLogin,
+		DeviceAuth:     deviceStore,
+		WebGrants:      webGrants,
 	}, accessControlledMux)
 
 	// Apply middleware stack

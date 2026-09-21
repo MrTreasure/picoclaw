@@ -38,6 +38,10 @@ func (h *Handler) createWsProxy(origProtocol string, upstreamProtocol string) *h
 		Rewrite: func(r *httputil.ProxyRequest) {
 			target := h.gatewayProxyURL()
 			r.SetURL(target)
+			// A launcher device bearer authenticates only against this process.
+			// Never forward it to the Pico gateway; the scoped Pico subprotocol
+			// below is the only credential the gateway should receive.
+			r.Out.Header.Del("Authorization")
 			r.Out.Header.Del(protocolKey)
 			if upstreamProtocol != "" {
 				r.Out.Header.Set(protocolKey, upstreamProtocol)
