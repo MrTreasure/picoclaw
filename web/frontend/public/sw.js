@@ -1,4 +1,4 @@
-const CACHE_VERSION = "musec137-shell-v7"
+const CACHE_VERSION = "musec137-shell-v8"
 const APP_SHELL = [
   "/",
   "/offline.html",
