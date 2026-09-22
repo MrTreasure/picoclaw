@@ -707,6 +707,7 @@ type PicoWebPushSettings struct {
 	PublicKey  string       `json:"public_key,omitempty"  yaml:"public_key,omitempty"`
 	PrivateKey SecureString `json:"private_key,omitzero" yaml:"private_key,omitempty"`
 	Subscriber string       `json:"subscriber,omitempty"  yaml:"subscriber,omitempty"`
+	FCMProxy   string       `json:"fcm_proxy,omitempty"   yaml:"fcm_proxy,omitempty"`
 }
 
 // SetToken sets the Pico token and marks it as dirty for security saving

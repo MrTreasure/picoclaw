@@ -54,12 +54,31 @@ func newPicoPushService(settings config.PicoWebPushSettings) *picoPushService {
 		privateKey:    settings.PrivateKey.String(),
 		subscriber:    subscriber,
 		subscriptions: make(map[string]webpush.Subscription),
-		client:        &http.Client{Timeout: 8 * time.Second},
+		client:        newPicoPushHTTPClient(settings.FCMProxy),
 	}
 	if err := s.load(); err != nil && !errors.Is(err, os.ErrNotExist) {
 		logger.WarnC("pico", "Could not load Web Push subscriptions; starting with an empty store")
 	}
 	return s
+}
+
+func newPicoPushHTTPClient(fcmProxy string) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	proxyValue := strings.TrimSpace(fcmProxy)
+	if proxyValue != "" {
+		proxyURL, err := url.Parse(proxyValue)
+		if err != nil || proxyURL.Scheme == "" || proxyURL.Host == "" {
+			logger.WarnC("pico", "Ignoring invalid FCM Web Push proxy URL")
+		} else {
+			transport.Proxy = func(request *http.Request) (*url.URL, error) {
+				if strings.EqualFold(request.URL.Hostname(), "fcm.googleapis.com") {
+					return proxyURL, nil
+				}
+				return nil, nil
+			}
+		}
+	}
+	return &http.Client{Timeout: 8 * time.Second, Transport: transport}
 }
 
 func (s *picoPushService) load() error {

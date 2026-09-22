@@ -2,6 +2,7 @@ package pico
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
@@ -38,6 +39,28 @@ func TestValidWebPushSubscription(t *testing.T) {
 				t.Fatalf("validWebPushSubscription() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestPicoPushHTTPClientProxiesOnlyFCM(t *testing.T) {
+	t.Parallel()
+
+	client := newPicoPushHTTPClient("http://127.0.0.1:7897")
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport.Proxy == nil {
+		t.Fatal("expected Web Push HTTP transport with selective proxy")
+	}
+
+	fcmRequest, _ := http.NewRequest(http.MethodPost, "https://fcm.googleapis.com/fcm/send/test", nil)
+	fcmProxy, err := transport.Proxy(fcmRequest)
+	if err != nil || fcmProxy == nil || fcmProxy.String() != "http://127.0.0.1:7897" {
+		t.Fatalf("FCM proxy = %v, error = %v", fcmProxy, err)
+	}
+
+	mozillaRequest, _ := http.NewRequest(http.MethodPost, "https://updates.push.services.mozilla.com/wpush/test", nil)
+	mozillaProxy, err := transport.Proxy(mozillaRequest)
+	if err != nil || mozillaProxy != nil {
+		t.Fatalf("Mozilla proxy = %v, error = %v; want direct", mozillaProxy, err)
 	}
 }
 
