@@ -2,6 +2,7 @@ import dayjs from "dayjs"
 import { useAtomValue } from "jotai"
 
 import {
+  loadOlderChatMessages,
   newChatSession,
   sendChatMessage,
   switchChatSession,
@@ -55,8 +56,15 @@ export function formatMessageTime(dateRaw: number | string | Date): string {
 }
 
 export function usePicoChat() {
-  const { messages, connectionState, isTyping, activeSessionId, contextUsage } =
-    useAtomValue(chatAtom)
+  const {
+    messages,
+    connectionState,
+    isTyping,
+    activeSessionId,
+    contextUsage,
+    hasOlderMessages,
+    isLoadingOlderMessages,
+  } = useAtomValue(chatAtom)
 
   return {
     messages,
@@ -64,6 +72,9 @@ export function usePicoChat() {
     isTyping,
     activeSessionId,
     contextUsage,
+    hasOlderMessages,
+    isLoadingOlderMessages,
+    loadOlderMessages: loadOlderChatMessages,
     sendMessage: sendChatMessage,
     switchSession: switchChatSession,
     newChat: newChatSession,

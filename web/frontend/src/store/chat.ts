@@ -76,6 +76,8 @@ export interface ChatStoreState {
   isTyping: boolean
   activeSessionId: string
   hasHydratedActiveSession: boolean
+  hasOlderMessages: boolean
+  isLoadingOlderMessages: boolean
   contextUsage?: ContextUsage
 }
 
@@ -87,6 +89,8 @@ const DEFAULT_CHAT_STATE: ChatStoreState = {
   isTyping: false,
   activeSessionId: getInitialActiveSessionId(),
   hasHydratedActiveSession: false,
+  hasOlderMessages: false,
+  isLoadingOlderMessages: false,
 }
 
 export const chatAtom = atom<ChatStoreState>(DEFAULT_CHAT_STATE)

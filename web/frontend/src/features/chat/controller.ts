@@ -1,17 +1,23 @@
 import { getDefaultStore } from "jotai"
 import { toast } from "sonner"
 
+import { getSessions } from "@/api/sessions"
 import {
+  CHAT_HISTORY_PAGE_SIZE,
   loadSessionMessages,
   mergeHistoryMessages,
 } from "@/features/chat/history"
+import {
+  loadCachedSession,
+  mergeCachedMessages,
+  saveCachedSession,
+} from "@/features/chat/local-cache"
 import {
   type PicoMessage,
   cancelQueuedPicoMessages,
   queuePicoMessage,
 } from "@/features/chat/protocol"
 import {
-  clearStoredSessionId,
   generateSessionId,
   readStoredSessionId,
   writeStoredSessionId,
@@ -20,6 +26,8 @@ import { invalidateSocket, isCurrentSocket } from "@/features/chat/websocket"
 import i18n from "@/i18n"
 import {
   type ChatAttachment,
+  type ChatMessage,
+  chatAtom,
   getChatState,
   updateChatStore,
 } from "@/store/chat"
@@ -34,6 +42,7 @@ let msgIdCounter = 0
 let activeSessionIdRef = getChatState().activeSessionId
 let initialized = false
 let unsubscribeGateway: (() => void) | null = null
+let unsubscribeChatCache: (() => void) | null = null
 let hydratePromise: Promise<void> | null = null
 let connectionGeneration = 0
 let reconnectTimer: number | null = null
@@ -41,6 +50,45 @@ let probeTimer: number | null = null
 let reconnectAttempts = 0
 let shouldMaintainConnection = false
 let lastPongAt = 0
+let cacheTimer: number | null = null
+let cacheSessionIdRef = activeSessionIdRef
+let cachedMessagesRef: ChatMessage[] = []
+let hiddenCachedMessagesRef: ChatMessage[] = []
+let olderCursorRef: number | null = null
+
+function clearCacheTimer() {
+  if (cacheTimer !== null) {
+    window.clearTimeout(cacheTimer)
+    cacheTimer = null
+  }
+}
+
+function persistCurrentSession() {
+  clearCacheTimer()
+  const state = getChatState()
+  if (state.activeSessionId !== cacheSessionIdRef) return
+  cachedMessagesRef = mergeCachedMessages(cachedMessagesRef, state.messages)
+  void saveCachedSession({
+    id: state.activeSessionId,
+    messages: cachedMessagesRef,
+    hasMore: state.hasOlderMessages,
+    nextBefore: olderCursorRef,
+    updatedAt: Date.now(),
+  })
+}
+
+function scheduleSessionCache() {
+  clearCacheTimer()
+  cacheTimer = window.setTimeout(persistCurrentSession, 250)
+}
+
+function resetCacheContext(sessionId: string) {
+  clearCacheTimer()
+  cacheSessionIdRef = sessionId
+  cachedMessagesRef = []
+  hiddenCachedMessagesRef = []
+  olderCursorRef = null
+}
 
 function clearReconnectTimer() {
   if (reconnectTimer !== null) {
@@ -138,7 +186,7 @@ async function reconcileSessionAfterConnect({
   sessionId: string
 }) {
   try {
-    const historyMessages = await loadSessionMessages(sessionId)
+    const historyPage = await loadSessionMessages(sessionId)
     if (
       !isCurrentSocket({
         socket,
@@ -153,9 +201,14 @@ async function reconcileSessionAfterConnect({
     }
 
     updateChatStore((prev) => ({
-      messages: mergeHistoryMessages(historyMessages, prev.messages),
+      messages: mergeHistoryMessages(historyPage.messages, prev.messages),
+      hasOlderMessages:
+        hiddenCachedMessagesRef.length > 0 || historyPage.hasMore,
       isTyping: false,
     }))
+    if (olderCursorRef === null) {
+      olderCursorRef = historyPage.nextBefore
+    }
   } catch (error) {
     // Reconciliation is best-effort. Keep the live socket usable even when the
     // history endpoint is temporarily unavailable.
@@ -356,31 +409,53 @@ export async function hydrateActiveSession() {
     return
   }
 
-  hydratePromise = loadSessionMessages(storedSessionId)
-    .then((historyMessages) => {
+  hydratePromise = (async () => {
+    resetCacheContext(storedSessionId)
+    const cached = await loadCachedSession(storedSessionId)
+
+    if (cached && getChatState().activeSessionId === storedSessionId) {
+      cachedMessagesRef = cached.messages
+      hiddenCachedMessagesRef = cached.messages.slice(
+        0,
+        -CHAT_HISTORY_PAGE_SIZE,
+      )
+      olderCursorRef = cached.nextBefore
+      const recentCachedMessages = cached.messages.slice(
+        -CHAT_HISTORY_PAGE_SIZE,
+      )
+      updateChatStore((prev) => ({
+        messages: mergeHistoryMessages(recentCachedMessages, prev.messages),
+        hasOlderMessages: hiddenCachedMessagesRef.length > 0 || cached.hasMore,
+        isTyping: false,
+        hasHydratedActiveSession: true,
+      }))
+    }
+
+    try {
+      const historyPage = await loadSessionMessages(storedSessionId)
       const currentState = getChatState()
       if (currentState.activeSessionId !== storedSessionId) {
         return
       }
 
-      if (currentState.messages.length > 0) {
-        updateChatStore({
-          messages: mergeHistoryMessages(
-            historyMessages,
-            currentState.messages,
-          ),
-          hasHydratedActiveSession: true,
-        })
-        return
+      cachedMessagesRef = mergeCachedMessages(
+        cachedMessagesRef,
+        historyPage.messages,
+      )
+      if (olderCursorRef === null) {
+        olderCursorRef = historyPage.nextBefore
       }
-
       updateChatStore({
-        messages: historyMessages,
+        messages: mergeHistoryMessages(
+          historyPage.messages,
+          currentState.messages,
+        ),
+        hasOlderMessages:
+          hiddenCachedMessagesRef.length > 0 || historyPage.hasMore,
         isTyping: false,
         hasHydratedActiveSession: true,
       })
-    })
-    .catch((error) => {
+    } catch (error) {
       console.error("Failed to restore last session history:", error)
 
       const currentState = getChatState()
@@ -388,23 +463,103 @@ export async function hydrateActiveSession() {
         return
       }
 
-      if (currentState.messages.length > 0) {
-        updateChatStore({ hasHydratedActiveSession: true })
-        return
+      // Older releases could erase the last-session pointer after one failed
+      // history request and replace it with a fresh empty ID. Recover from that
+      // state by selecting the newest durable Pico session once; the chosen ID
+      // is then persisted normally for all later reconnects.
+      if (!cached && currentState.messages.length === 0) {
+        try {
+          const [latestSession] = await getSessions(0, 1)
+          if (latestSession && latestSession.id !== storedSessionId) {
+            const latestPage = await loadSessionMessages(latestSession.id)
+            disconnectChatInternal({ clearDesiredConnection: false })
+            setActiveSessionId(latestSession.id)
+            resetCacheContext(latestSession.id)
+            cachedMessagesRef = latestPage.messages
+            olderCursorRef = latestPage.nextBefore
+            updateChatStore({
+              messages: latestPage.messages,
+              hasOlderMessages: latestPage.hasMore,
+              isLoadingOlderMessages: false,
+              isTyping: false,
+              hasHydratedActiveSession: true,
+            })
+            if (store.get(gatewayAtom).status === "running") {
+              shouldMaintainConnection = true
+              await connectChat()
+            }
+            return
+          }
+        } catch (latestError) {
+          console.warn("Failed to discover latest chat session:", latestError)
+        }
       }
 
-      clearStoredSessionId()
       updateChatStore({
-        messages: [],
         isTyping: false,
         hasHydratedActiveSession: true,
       })
-    })
-    .finally(() => {
-      hydratePromise = null
-    })
+    }
+  })().finally(() => {
+    hydratePromise = null
+  })
 
   return hydratePromise
+}
+
+export async function loadOlderChatMessages(): Promise<boolean> {
+  const state = getChatState()
+  if (state.isLoadingOlderMessages || !state.hasOlderMessages) return false
+
+  const sessionId = state.activeSessionId
+  updateChatStore({ isLoadingOlderMessages: true })
+  try {
+    if (hiddenCachedMessagesRef.length > 0) {
+      const start = Math.max(
+        0,
+        hiddenCachedMessagesRef.length - CHAT_HISTORY_PAGE_SIZE,
+      )
+      const page = hiddenCachedMessagesRef.slice(start)
+      hiddenCachedMessagesRef = hiddenCachedMessagesRef.slice(0, start)
+      if (getChatState().activeSessionId !== sessionId) return false
+      updateChatStore((prev) => ({
+        messages: mergeHistoryMessages(page, prev.messages),
+        hasOlderMessages:
+          hiddenCachedMessagesRef.length > 0 || olderCursorRef !== null,
+        isLoadingOlderMessages: false,
+      }))
+      return true
+    }
+
+    if (olderCursorRef === null) {
+      updateChatStore({
+        hasOlderMessages: false,
+        isLoadingOlderMessages: false,
+      })
+      return false
+    }
+
+    const historyPage = await loadSessionMessages(sessionId, olderCursorRef)
+    if (getChatState().activeSessionId !== sessionId) return false
+    olderCursorRef = historyPage.nextBefore
+    cachedMessagesRef = mergeCachedMessages(
+      cachedMessagesRef,
+      historyPage.messages,
+    )
+    updateChatStore((prev) => ({
+      messages: mergeHistoryMessages(historyPage.messages, prev.messages),
+      hasOlderMessages: historyPage.hasMore,
+      isLoadingOlderMessages: false,
+    }))
+    persistCurrentSession()
+    return historyPage.messages.length > 0
+  } catch (error) {
+    console.warn("Failed to load older chat messages:", error)
+    if (getChatState().activeSessionId === sessionId) {
+      updateChatStore({ isLoadingOlderMessages: false })
+    }
+    return false
+  }
 }
 
 interface SendChatMessageInput {
@@ -478,14 +633,48 @@ export async function switchChatSession(sessionId: string) {
   }
 
   try {
-    const historyMessages = await loadSessionMessages(sessionId)
+    persistCurrentSession()
+    const cached = await loadCachedSession(sessionId)
+    let historyPage: Awaited<ReturnType<typeof loadSessionMessages>> | null =
+      null
+    try {
+      historyPage = await loadSessionMessages(sessionId)
+    } catch (error) {
+      if (!cached) throw error
+      console.warn("Using cached session while history is unavailable:", error)
+    }
 
     disconnectChatInternal({ clearDesiredConnection: false })
     setActiveSessionId(sessionId)
+    resetCacheContext(sessionId)
+    if (cached) {
+      cachedMessagesRef = cached.messages
+      hiddenCachedMessagesRef = cached.messages.slice(
+        0,
+        -CHAT_HISTORY_PAGE_SIZE,
+      )
+      olderCursorRef = cached.nextBefore
+    }
+    if (historyPage) {
+      cachedMessagesRef = mergeCachedMessages(
+        cachedMessagesRef,
+        historyPage.messages,
+      )
+      if (olderCursorRef === null) olderCursorRef = historyPage.nextBefore
+    }
+    const recentCachedMessages =
+      cached?.messages.slice(-CHAT_HISTORY_PAGE_SIZE) ?? []
     updateChatStore({
-      messages: historyMessages,
+      messages: historyPage
+        ? mergeHistoryMessages(historyPage.messages, recentCachedMessages)
+        : recentCachedMessages,
       isTyping: false,
       hasHydratedActiveSession: true,
+      hasOlderMessages:
+        hiddenCachedMessagesRef.length > 0 ||
+        historyPage?.hasMore === true ||
+        cached?.hasMore === true,
+      isLoadingOlderMessages: false,
       contextUsage: undefined,
     })
 
@@ -504,12 +693,17 @@ export async function newChatSession() {
     return
   }
 
+  persistCurrentSession()
   disconnectChatInternal({ clearDesiredConnection: false })
-  setActiveSessionId(generateSessionId())
+  const sessionId = generateSessionId()
+  setActiveSessionId(sessionId)
+  resetCacheContext(sessionId)
   updateChatStore({
     messages: [],
     isTyping: false,
     hasHydratedActiveSession: true,
+    hasOlderMessages: false,
+    isLoadingOlderMessages: false,
     contextUsage: undefined,
   })
 
@@ -547,6 +741,7 @@ export function initializeChatStore() {
   }
 
   unsubscribeGateway = store.sub(gatewayAtom, syncConnectionWithGateway)
+  unsubscribeChatCache = store.sub(chatAtom, scheduleSessionCache)
   document.addEventListener("visibilitychange", handlePageResume)
   window.addEventListener("pageshow", handlePageResume)
   window.addEventListener("online", handlePageResume)
@@ -570,8 +765,12 @@ export function initializeChatStore() {
 }
 
 export function teardownChatStore() {
+  persistCurrentSession()
   unsubscribeGateway?.()
   unsubscribeGateway = null
+  unsubscribeChatCache?.()
+  unsubscribeChatCache = null
+  clearCacheTimer()
   document.removeEventListener("visibilitychange", handlePageResume)
   window.removeEventListener("pageshow", handlePageResume)
   window.removeEventListener("online", handlePageResume)

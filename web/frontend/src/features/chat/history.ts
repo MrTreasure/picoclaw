@@ -7,6 +7,13 @@ import {
 import type { ChatAttachment, ChatMessage } from "@/store/chat"
 
 const MESSAGE_SPLIT_MARKER = "<|[SPLIT]|>"
+export const CHAT_HISTORY_PAGE_SIZE = 40
+
+export interface ChatHistoryPage {
+  messages: ChatMessage[]
+  hasMore: boolean
+  nextBefore: number | null
+}
 
 function toChatAttachments({
   media,
@@ -43,13 +50,18 @@ function toChatAttachments({
 
 export async function loadSessionMessages(
   sessionId: string,
-): Promise<ChatMessage[]> {
-  const detail = await getSessionHistory(sessionId)
-  return splitMarkedAssistantMessages(
+  before?: number,
+): Promise<ChatHistoryPage> {
+  const detail = await getSessionHistory(sessionId, {
+    limit: CHAT_HISTORY_PAGE_SIZE,
+    ...(before !== undefined ? { before } : {}),
+  })
+  const offset = detail.message_offset ?? 0
+  const messages = splitMarkedAssistantMessages(
     detail.messages.map((message, index) => ({
       // History can be loaded more than once while the live socket reconnects.
       // Keep IDs stable so repeated hydration never creates a second copy.
-      id: `hist-${sessionId}-${index}`,
+      id: `hist-${sessionId}-${offset + index}`,
       role: message.role,
       content: message.content,
       kind:
@@ -66,6 +78,14 @@ export async function loadSessionMessages(
       timestamp: message.created_at ?? detail.updated,
     })),
   )
+  return {
+    messages,
+    hasMore: detail.has_more === true,
+    nextBefore:
+      detail.has_more === true && typeof detail.next_before === "number"
+        ? detail.next_before
+        : null,
+  }
 }
 
 function splitMarkedAssistantMessages(messages: ChatMessage[]): ChatMessage[] {

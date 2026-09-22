@@ -1,11 +1,13 @@
 import { IconArrowDown } from "@tabler/icons-react"
 import { useNavigate } from "@tanstack/react-router"
+import { useVirtualizer } from "@tanstack/react-virtual"
 import { useAtom } from "jotai"
 import {
   type ChangeEvent,
   type ClipboardEvent,
   type DragEvent,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react"
@@ -100,6 +102,8 @@ export function ChatPage() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dragDepthRef = useRef(0)
+  const loadingOlderRef = useRef(false)
+  const didInitialScrollRef = useRef(false)
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [input, setInput] = useState("")
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
@@ -110,9 +114,13 @@ export function ChatPage() {
 
   const {
     messages,
+    activeSessionId,
     connectionState,
     isTyping,
     contextUsage,
+    hasOlderMessages,
+    isLoadingOlderMessages,
+    loadOlderMessages,
     sendMessage,
     newChat,
   } = usePicoChat()
@@ -136,14 +144,39 @@ export function ChatPage() {
     gatewayState: gwState,
   })
   const canInput = inputDisabledReason === null
-  const isTransientConnectionState =
-    inputDisabledReason === "websocketConnecting" ||
-    inputDisabledReason === "websocketDisconnected" ||
-    inputDisabledReason === "websocketError"
-  const canCompose = canInput || isTransientConnectionState
-  const composerDisabledReason = isTransientConnectionState
-    ? null
-    : inputDisabledReason
+  const canCompose = true
+
+  const visibleMessages = useMemo(
+    () =>
+      messages.filter((message) =>
+        shouldShowAssistantMessage(assistantDetailVisibility, message.kind),
+      ),
+    [assistantDetailVisibility, messages],
+  )
+  // Variable-height chat bubbles require the virtualizer's imperative
+  // measurements; this hook intentionally opts out of React Compiler memoizing.
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const virtualizer = useVirtualizer({
+    count: visibleMessages.length + (isTyping ? 1 : 0),
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) =>
+      index >= visibleMessages.length
+        ? 64
+        : visibleMessages[index]?.role === "assistant"
+          ? 180
+          : 92,
+    getItemKey: (index) =>
+      index >= visibleMessages.length
+        ? "typing-indicator"
+        : (visibleMessages[index]?.id ?? index),
+    overscan: 6,
+  })
+
+  useEffect(() => {
+    didInitialScrollRef.current = false
+    loadingOlderRef.current = false
+    setIsAtBottom(true)
+  }, [activeSessionId])
 
   useEffect(() => {
     const currentState = window.history.state as Record<string, unknown> | null
@@ -175,8 +208,30 @@ export function ChatPage() {
     setIsAtBottom(scrollHeight - scrollTop <= clientHeight + 10)
   }
 
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    syncScrollState(e.currentTarget)
+  const handleScroll = async (e: React.UIEvent<HTMLDivElement>) => {
+    const element = e.currentTarget
+    syncScrollState(element)
+    if (
+      !didInitialScrollRef.current ||
+      element.scrollTop > 160 ||
+      !hasOlderMessages ||
+      isLoadingOlderMessages ||
+      loadingOlderRef.current
+    ) {
+      return
+    }
+
+    loadingOlderRef.current = true
+    const previousHeight = element.scrollHeight
+    const previousTop = element.scrollTop
+    const loaded = await loadOlderMessages()
+    requestAnimationFrame(() => {
+      const current = scrollRef.current
+      if (loaded && current) {
+        current.scrollTop = current.scrollHeight - previousHeight + previousTop
+      }
+      loadingOlderRef.current = false
+    })
   }
 
   const scrollToBottom = () => {
@@ -194,11 +249,16 @@ export function ChatPage() {
   useEffect(() => {
     if (scrollRef.current) {
       if (isAtBottom) {
-        scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+        requestAnimationFrame(() => {
+          const element = scrollRef.current
+          if (!element) return
+          element.scrollTop = element.scrollHeight
+          didInitialScrollRef.current = true
+          syncScrollState(element)
+        })
       }
-      syncScrollState(scrollRef.current)
     }
-  }, [messages, isTyping, isAtBottom])
+  }, [messages, isTyping, isAtBottom, virtualizer])
 
   const handleSend = () => {
     if ((!input.trim() && attachments.length === 0) || !canInput) return
@@ -343,48 +403,71 @@ export function ChatPage() {
           onScroll={handleScroll}
           className="h-full [scrollbar-gutter:stable] overflow-y-auto px-3 pt-[calc(4.75rem+env(safe-area-inset-top))] pb-3 md:px-8 lg:px-24 xl:px-48"
         >
-          <div className="mx-auto flex w-full max-w-225 flex-col gap-3 pb-5 md:gap-4">
+          <div className="mx-auto w-full max-w-225 pb-5">
             {messages.length === 0 && !isTyping && (
               <ChatEmptyState
                 hasAvailableModels={hasAvailableModels}
                 defaultModelName={defaultModelName}
-                isConnected={isGatewayRunning}
+                isConnected={gwState !== "stopped" && gwState !== "error"}
+                isInitializing={
+                  gwState === "unknown" ||
+                  gwState === "starting" ||
+                  gwState === "restarting"
+                }
               />
             )}
 
-            {messages.map((msg) => {
-              if (
-                !shouldShowAssistantMessage(assistantDetailVisibility, msg.kind)
-              ) {
-                return null
-              }
-
-              return (
-                <div key={msg.id} className="flex w-full">
-                  {msg.role === "assistant" ? (
-                    <AssistantMessage
-                      content={msg.content}
-                      attachments={msg.attachments}
-                      kind={msg.kind}
-                      modelName={msg.modelName}
-                      toolCalls={msg.toolCalls}
-                      isStreaming={msg.streaming}
-                      timestamp={msg.timestamp}
-                    />
-                  ) : (
-                    <UserMessage
-                      content={msg.content}
-                      attachments={msg.attachments}
-                      timestamp={msg.timestamp}
-                    />
-                  )}
-                </div>
-              )
-            })}
-
-            {isTyping && <TypingIndicator />}
+            <div
+              className="relative w-full"
+              style={{ height: `${virtualizer.getTotalSize()}px` }}
+            >
+              {virtualizer.getVirtualItems().map((virtualItem) => {
+                const msg = visibleMessages[virtualItem.index]
+                return (
+                  <div
+                    key={virtualItem.key}
+                    ref={virtualizer.measureElement}
+                    data-index={virtualItem.index}
+                    className="absolute top-0 left-0 w-full pb-3 md:pb-4"
+                    style={{
+                      transform: `translateY(${virtualItem.start}px)`,
+                    }}
+                  >
+                    {msg ? (
+                      <div className="flex w-full">
+                        {msg.role === "assistant" ? (
+                          <AssistantMessage
+                            content={msg.content}
+                            attachments={msg.attachments}
+                            kind={msg.kind}
+                            modelName={msg.modelName}
+                            toolCalls={msg.toolCalls}
+                            isStreaming={msg.streaming}
+                            timestamp={msg.timestamp}
+                          />
+                        ) : (
+                          <UserMessage
+                            content={msg.content}
+                            attachments={msg.attachments}
+                            timestamp={msg.timestamp}
+                          />
+                        )}
+                      </div>
+                    ) : (
+                      <TypingIndicator />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
           </div>
         </div>
+
+        {isLoadingOlderMessages && (
+          <div className="bg-background/80 text-muted-foreground pointer-events-none absolute top-[calc(5rem+env(safe-area-inset-top))] left-1/2 z-30 -translate-x-1/2 rounded-full border px-3 py-1 text-xs shadow-sm backdrop-blur-xl">
+            {t("common.loading")}
+          </div>
+        )}
 
         {!isAtBottom && messages.length > 0 && (
           <Button
@@ -430,7 +513,7 @@ export function ChatPage() {
             setInput("")
           }
         }}
-        inputDisabledReason={composerDisabledReason}
+        inputDisabledReason={null}
         canSend={canSubmit}
         isGenerating={isGenerating}
         isDragActive={isDragActive}

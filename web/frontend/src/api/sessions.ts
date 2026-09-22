@@ -39,6 +39,15 @@ export interface SessionDetail {
   summary: string
   created: string
   updated: string
+  message_offset?: number
+  message_total?: number
+  has_more?: boolean
+  next_before?: number
+}
+
+export interface SessionHistoryPageOptions {
+  before?: number
+  limit?: number
 }
 
 export async function getSessions(
@@ -57,8 +66,21 @@ export async function getSessions(
   return res.json()
 }
 
-export async function getSessionHistory(id: string): Promise<SessionDetail> {
-  const res = await launcherFetch(`/api/sessions/${encodeURIComponent(id)}`)
+export async function getSessionHistory(
+  id: string,
+  options: SessionHistoryPageOptions = {},
+): Promise<SessionDetail> {
+  const params = new URLSearchParams()
+  if (options.limit !== undefined) {
+    params.set("limit", String(options.limit))
+  }
+  if (options.before !== undefined) {
+    params.set("before", String(options.before))
+  }
+  const query = params.size > 0 ? `?${params.toString()}` : ""
+  const res = await launcherFetch(
+    `/api/sessions/${encodeURIComponent(id)}${query}`,
+  )
   if (!res.ok) {
     throw new Error(`Failed to fetch session ${id}: ${res.status}`)
   }

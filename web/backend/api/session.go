@@ -981,14 +981,56 @@ func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	messages := detailSessionMessages(sess.Messages, toolFeedbackMaxArgsLength)
+	totalMessages := len(messages)
+	messageOffset := 0
+	hasMore := false
+	nextBefore := 0
+
+	// Keep the no-query response backwards compatible for native and older
+	// clients. Web clients opt into reverse pagination so opening a long chat
+	// only transfers the newest page; `before` is the exclusive message index.
+	if limitValue := strings.TrimSpace(r.URL.Query().Get("limit")); limitValue != "" {
+		limit, parseErr := strconv.Atoi(limitValue)
+		if parseErr != nil || limit <= 0 {
+			http.Error(w, "invalid history limit", http.StatusBadRequest)
+			return
+		}
+		if limit > 200 {
+			limit = 200
+		}
+
+		end := totalMessages
+		if beforeValue := strings.TrimSpace(r.URL.Query().Get("before")); beforeValue != "" {
+			before, beforeErr := strconv.Atoi(beforeValue)
+			if beforeErr != nil || before < 0 {
+				http.Error(w, "invalid history cursor", http.StatusBadRequest)
+				return
+			}
+			if before < end {
+				end = before
+			}
+		}
+
+		messageOffset = end - limit
+		if messageOffset < 0 {
+			messageOffset = 0
+		}
+		messages = messages[messageOffset:end]
+		hasMore = messageOffset > 0
+		nextBefore = messageOffset
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"id":       sessionID,
-		"messages": messages,
-		"summary":  sess.Summary,
-		"created":  sess.Created.Format(time.RFC3339),
-		"updated":  sess.Updated.Format(time.RFC3339),
+		"id":             sessionID,
+		"messages":       messages,
+		"message_offset": messageOffset,
+		"message_total":  totalMessages,
+		"has_more":       hasMore,
+		"next_before":    nextBefore,
+		"summary":        sess.Summary,
+		"created":        sess.Created.Format(time.RFC3339),
+		"updated":        sess.Updated.Format(time.RFC3339),
 	})
 }
 

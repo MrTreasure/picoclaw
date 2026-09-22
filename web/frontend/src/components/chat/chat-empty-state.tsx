@@ -13,14 +13,30 @@ interface ChatEmptyStateProps {
   hasAvailableModels: boolean
   defaultModelName: string
   isConnected: boolean
+  isInitializing?: boolean
 }
 
 export function ChatEmptyState({
   hasAvailableModels,
   defaultModelName,
   isConnected,
+  isInitializing = false,
 }: ChatEmptyStateProps) {
   const { t } = useTranslation()
+
+  if (isInitializing) {
+    return (
+      <div className="flex flex-col items-center justify-center px-6 py-20">
+        <div className="bg-accent text-accent-foreground mb-6 flex h-16 w-16 items-center justify-center rounded-2xl">
+          <IconRobot className="h-8 w-8" />
+        </div>
+        <h3 className="mb-2 text-xl font-medium">{t("chat.welcome")}</h3>
+        <p className="text-muted-foreground text-center text-sm">
+          {t("chat.welcomeDesc")}
+        </p>
+      </div>
+    )
+  }
 
   if (!hasAvailableModels) {
     return (

@@ -358,6 +358,66 @@ func TestHandleGetSession_JSONLStorage(t *testing.T) {
 	}
 }
 
+func TestHandleGetSession_PaginatesFromNewestMessage(t *testing.T) {
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+
+	dir := sessionsTestDir(t, configPath)
+	store, err := memory.NewJSONLStore(dir)
+	if err != nil {
+		t.Fatalf("NewJSONLStore() error = %v", err)
+	}
+
+	sessionKey := legacyPicoSessionPrefix + "detail-paged"
+	for _, content := range []string{"one", "two", "three", "four", "five"} {
+		if err := store.AddFullMessage(nil, sessionKey, providers.Message{
+			Role:    "user",
+			Content: content,
+		}); err != nil {
+			t.Fatalf("AddFullMessage() error = %v", err)
+		}
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	assertPage := func(target string, want []string, wantOffset, wantTotal, wantBefore int, wantMore bool) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Messages      []sessionChatMessage `json:"messages"`
+			MessageOffset int                  `json:"message_offset"`
+			MessageTotal  int                  `json:"message_total"`
+			NextBefore    int                  `json:"next_before"`
+			HasMore       bool                 `json:"has_more"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("Unmarshal() error = %v", err)
+		}
+		if resp.MessageOffset != wantOffset || resp.MessageTotal != wantTotal || resp.NextBefore != wantBefore || resp.HasMore != wantMore {
+			t.Fatalf("pagination = offset:%d total:%d before:%d more:%v", resp.MessageOffset, resp.MessageTotal, resp.NextBefore, resp.HasMore)
+		}
+		if len(resp.Messages) != len(want) {
+			t.Fatalf("len(messages) = %d, want %d", len(resp.Messages), len(want))
+		}
+		for index, content := range want {
+			if resp.Messages[index].Content != content {
+				t.Fatalf("messages[%d] = %q, want %q", index, resp.Messages[index].Content, content)
+			}
+		}
+	}
+
+	assertPage("/api/sessions/detail-paged?limit=2", []string{"four", "five"}, 3, 5, 3, true)
+	assertPage("/api/sessions/detail-paged?limit=2&before=3", []string{"two", "three"}, 1, 5, 1, true)
+	assertPage("/api/sessions/detail-paged?limit=2&before=1", []string{"one"}, 0, 5, 0, false)
+}
+
 func TestDetailSessionMessages_SplitsInternalMessageMarker(t *testing.T) {
 	now := time.Now().UTC()
 	messages := detailSessionMessages([]providers.Message{{
