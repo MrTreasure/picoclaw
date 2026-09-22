@@ -96,6 +96,9 @@ func transcriberFromModelConfig(modelCfg *config.ModelConfig) Transcriber {
 		_, modelID := providers.ExtractProtocol(modelCfg)
 		return NewElevenLabsTranscriber(modelCfg.APIKey(), modelCfg.APIBase, modelID)
 	}
+	if _, modelID := providers.ExtractProtocol(modelCfg); strings.HasPrefix(strings.ToLower(modelID), "qwen3-asr-flash") {
+		return NewQwenASRTranscriber(modelCfg)
+	}
 	if modelID := whisperModelID(modelCfg); modelID != "" {
 		return NewWhisperTranscriber(modelCfg)
 	}

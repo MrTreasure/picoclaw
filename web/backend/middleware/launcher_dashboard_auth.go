@@ -177,7 +177,7 @@ func LauncherDashboardAuth(cfg LauncherDashboardAuthConfig, next http.Handler) h
 }
 
 func deviceBearerPathAllowed(p string) bool {
-	if p == "/pico/ws" || strings.HasPrefix(p, "/pico/media/") {
+	if p == "/pico/ws" || p == "/pico/upload" || strings.HasPrefix(p, "/pico/media/") {
 		return true
 	}
 	return p == "/api/sessions" || strings.HasPrefix(p, "/api/sessions/") ||
@@ -199,7 +199,11 @@ func handleLauncherAndroidWebLogin(w http.ResponseWriter, r *http.Request, cfg L
 		return
 	}
 	SetLauncherDashboardSessionCookie(w, r, cfg.ExpectedCookie, cfg.SecureCookie)
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	next := strings.TrimSpace(r.URL.Query().Get("next"))
+	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+		next = "/"
+	}
+	http.Redirect(w, r, next, http.StatusSeeOther)
 }
 
 func validLauncherDeviceAuth(r *http.Request, cfg LauncherDashboardAuthConfig) (string, bool) {

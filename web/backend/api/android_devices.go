@@ -121,5 +121,5 @@ func (h *androidDeviceHandlers) issueWebViewGrant(w http.ResponseWriter, r *http
 		http.Error(w, `{"error":"failed to issue web login grant"}`, http.StatusInternalServerError)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]string{"path": middleware.LauncherAndroidWebLoginPath + "?nonce=" + nonce})
+	_ = json.NewEncoder(w).Encode(map[string]string{"path": middleware.LauncherAndroidWebLoginPath + "?nonce=" + nonce + "&next=%2Fconfig"})
 }

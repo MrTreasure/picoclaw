@@ -1,9 +1,12 @@
 package pico
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -66,6 +69,42 @@ func TestHandleMessageSend_ForwardsMessageMetadata(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected inbound pico message")
+	}
+}
+
+func TestHandleMessageSend_ForwardsUploadedVoiceRef(t *testing.T) {
+	msgBus := bus.NewMessageBus()
+	bc := &config.Channel{Type: config.ChannelPico, Enabled: true}
+	cfg := &config.PicoSettings{}
+	cfg.SetToken("test-token")
+	ch, err := NewPicoChannel(bc, cfg, msgBus)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch.ctx = context.Background()
+	store := media.NewFileMediaStore()
+	ch.SetMediaStore(store)
+	path := filepath.Join(t.TempDir(), "voice.aac")
+	if err := os.WriteFile(path, []byte("audio"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := store.Store(path, media.MediaMeta{Filename: "voice.aac", ContentType: "audio/aac"}, "scope")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ch.handleMessageSend(&picoConn{id: "conn-1", sessionID: "sess-1"}, PicoMessage{
+		Type: TypeMediaSend, ID: "msg-voice", SessionID: "sess-1",
+		Payload: map[string]any{"media_refs": []any{ref}},
+	})
+
+	select {
+	case inbound := <-msgBus.InboundChan():
+		if inbound.Content != "[voice]" || len(inbound.Media) != 1 || inbound.Media[0] != ref {
+			t.Fatalf("unexpected inbound voice: %+v", inbound)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected inbound voice message")
 	}
 }
 
@@ -1009,6 +1048,90 @@ func TestHandleMediaDownload_ServesStoredFile(t *testing.T) {
 	}
 	if got := rec.Header().Get("Content-Type"); got != "text/plain" {
 		t.Fatalf("Content-Type = %q, want %q", got, "text/plain")
+	}
+}
+
+func TestHandleMediaUpload_StoresAuthenticatedAttachment(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	ch := newTestPicoChannel(t)
+	store := media.NewFileMediaStore()
+	ch.SetMediaStore(store)
+	if err := ch.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer ch.Stop(context.Background())
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("session_id", "session-1")
+	_ = writer.WriteField("message_id", "message-1")
+	part, err := writer.CreateFormFile("file", "note.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = part.Write([]byte("# uploaded"))
+	_ = writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/pico/upload", &body)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	ch.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Ref      string `json:"ref"`
+		Filename string `json:"filename"`
+		Type     string `json:"type"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Filename != "note.md" || response.Type != "file" {
+		t.Fatalf("unexpected response: %+v", response)
+	}
+	path, meta, err := store.ResolveWithMeta(response.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Filename != "note.md" {
+		t.Fatalf("stored filename = %q", meta.Filename)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "# uploaded" {
+		t.Fatalf("stored body = %q, err=%v", data, err)
+	}
+}
+
+func TestHandleMediaUpload_RejectsUnauthenticatedAndUnsupportedFiles(t *testing.T) {
+	ch := newTestPicoChannel(t)
+	ch.SetMediaStore(media.NewFileMediaStore())
+	if err := ch.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer ch.Stop(context.Background())
+
+	unauthorized := httptest.NewRecorder()
+	ch.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodPost, "/pico/upload", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d", unauthorized.Code)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("session_id", "session-1")
+	_ = writer.WriteField("message_id", "message-1")
+	part, _ := writer.CreateFormFile("file", "program.exe")
+	_, _ = part.Write([]byte("not allowed"))
+	_ = writer.Close()
+	req := httptest.NewRequest(http.MethodPost, "/pico/upload", &body)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+	ch.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("unsupported status = %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

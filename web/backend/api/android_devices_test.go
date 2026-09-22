@@ -88,6 +88,9 @@ func TestAndroidDeviceLoginBearerWebGrantAndRevoke(t *testing.T) {
 	if web.Code != http.StatusSeeOther || len(web.Result().Cookies()) != 1 {
 		t.Fatalf("web bootstrap = %d cookies=%d", web.Code, len(web.Result().Cookies()))
 	}
+	if location := web.Header().Get("Location"); location != "/config" {
+		t.Fatalf("web bootstrap location = %q, want /config", location)
+	}
 	reuse := httptest.NewRecorder()
 	handler.ServeHTTP(reuse, httptest.NewRequest(http.MethodGet, grant.Path, nil))
 	if reuse.Code != http.StatusFound {

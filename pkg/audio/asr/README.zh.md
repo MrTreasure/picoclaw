@@ -16,6 +16,7 @@
 | --- | --- | --- |
 | [Groq](https://console.groq.com/keys) | `groq/whisper-large-v3-turbo` | Whisper 风格转录速度快，并且提供 OpenAI 兼容接口，配置比较直接。Groq 目前官方提供2000请求每日的免费套餐。 |
 | [ElevenLabs](https://elevenlabs.io/pricing) | `elevenlabs/scribe_v1` | 上手简单，语音转文字质量也不错。ElevenLabs 目前官方免费套餐包含 STT 用量。 |
+| 阿里云百炼 | `qwen3-asr-flash` | 支持 OpenAI 兼容的 Base64 音频输入，适合移动端短语音。 |
 
 价格和免费额度可能会变化，正式使用前请以官网定价页为准。
 
@@ -124,6 +125,39 @@ model_list:
     api_keys:
       - "sk-openai-your-key"
 ```
+
+### 方案 D：阿里云百炼 Qwen3-ASR-Flash
+
+`config.json`
+
+```json
+{
+  "voice": {
+    "model_name": "qwen-asr"
+  },
+  "model_list": [
+    {
+      "model_name": "qwen-asr",
+      "provider": "openai",
+      "model": "qwen3-asr-flash",
+      "api_base": "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+    }
+  ]
+}
+```
+
+`.security.yml`
+
+```yaml
+model_list:
+  qwen-asr:0:
+    api_keys:
+      - "your-bailian-key"
+```
+
+Qwen3-ASR-Flash 的 OpenAI 兼容请求要求把完整 Data URI 放在
+`input_audio.data` 中，因此 PicoClaw 会使用专用转录器，而不是普通音频聊天模型的
+`data` / `format` 对象。当前同步模型单段音频上限为 10 MB。
 
 ## 其他支持 ASR 的模型类型
 

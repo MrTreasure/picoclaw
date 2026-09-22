@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"mime"
 	"net/http"
 	"net/url"
@@ -24,6 +25,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/identity"
 	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/picoclaw/pkg/media"
 	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
@@ -292,6 +294,8 @@ func (c *PicoChannel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		c.handlePushConfig(w, r)
 	case "/push/subscriptions", "/push/subscriptions/":
 		c.handlePushSubscriptions(w, r)
+	case "/upload", "/upload/":
+		c.handleMediaUpload(w, r)
 	default:
 		if strings.HasPrefix(path, "/media/") {
 			c.handleMediaDownload(w, r)
@@ -991,6 +995,143 @@ func (c *PicoChannel) handleMediaDownload(w http.ResponseWriter, r *http.Request
 	http.ServeContent(w, r, filename, info.ModTime(), file)
 }
 
+const picoUploadMaxBytes = 20 << 20
+
+var picoUploadExtensions = map[string]bool{
+	".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true,
+	".txt": true, ".md": true, ".pdf": true, ".json": true, ".xml": true,
+	".m4a": true, ".aac": true, ".mp3": true, ".ogg": true, ".opus": true, ".wav": true,
+}
+
+// handleMediaUpload streams one authenticated attachment into the gateway's
+// MediaStore. The caller supplies the future Pico message ID so the normal
+// turn cleanup releases the upload after the agent has consumed it.
+func (c *PicoChannel) handleMediaUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	if !c.IsRunning() {
+		http.Error(w, "channel not running", http.StatusServiceUnavailable)
+		return
+	}
+	if !c.authenticate(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	store := c.GetMediaStore()
+	if store == nil {
+		http.Error(w, "media store unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, picoUploadMaxBytes+(1<<20))
+	reader, err := r.MultipartReader()
+	if err != nil {
+		http.Error(w, "multipart form required", http.StatusBadRequest)
+		return
+	}
+	var sessionID, messageID string
+	var savedPath, filename, contentType string
+	var size int64
+	cleanup := func() {
+		if savedPath != "" {
+			_ = os.Remove(savedPath)
+		}
+	}
+	defer cleanup()
+
+	for {
+		part, partErr := reader.NextPart()
+		if errors.Is(partErr, io.EOF) {
+			break
+		}
+		if partErr != nil {
+			http.Error(w, "invalid multipart body", http.StatusBadRequest)
+			return
+		}
+		name := part.FormName()
+		if name != "file" {
+			value, readErr := io.ReadAll(io.LimitReader(part, 4097))
+			_ = part.Close()
+			if readErr != nil || len(value) > 4096 {
+				http.Error(w, "invalid upload metadata", http.StatusBadRequest)
+				return
+			}
+			switch name {
+			case "session_id":
+				sessionID = strings.TrimSpace(string(value))
+			case "message_id":
+				messageID = strings.TrimSpace(string(value))
+			}
+			continue
+		}
+		if savedPath != "" {
+			_ = part.Close()
+			http.Error(w, "only one file is allowed", http.StatusBadRequest)
+			return
+		}
+		filename = utils.SanitizeFilename(filepath.Base(strings.TrimSpace(part.FileName())))
+		ext := strings.ToLower(filepath.Ext(filename))
+		if filename == "" || !picoUploadExtensions[ext] {
+			_ = part.Close()
+			http.Error(w, "unsupported file type", http.StatusUnsupportedMediaType)
+			return
+		}
+		if err := os.MkdirAll(media.TempDir(), 0o700); err != nil {
+			_ = part.Close()
+			http.Error(w, "failed to prepare upload", http.StatusInternalServerError)
+			return
+		}
+		file, createErr := os.CreateTemp(media.TempDir(), "pico-upload-*"+ext)
+		if createErr != nil {
+			_ = part.Close()
+			http.Error(w, "failed to prepare upload", http.StatusInternalServerError)
+			return
+		}
+		savedPath = file.Name()
+		size, err = io.Copy(file, io.LimitReader(part, picoUploadMaxBytes+1))
+		closeErr := file.Close()
+		_ = part.Close()
+		if err != nil || closeErr != nil {
+			http.Error(w, "failed to save upload", http.StatusInternalServerError)
+			return
+		}
+		if size == 0 || size > picoUploadMaxBytes {
+			http.Error(w, "file must be between 1 byte and 20 MB", http.StatusRequestEntityTooLarge)
+			return
+		}
+		contentType = strings.TrimSpace(part.Header.Get("Content-Type"))
+		if contentType == "" || contentType == "application/octet-stream" {
+			if probe, openErr := os.Open(savedPath); openErr == nil {
+				buf := make([]byte, 512)
+				n, _ := probe.Read(buf)
+				_ = probe.Close()
+				contentType = http.DetectContentType(buf[:n])
+			}
+		}
+	}
+
+	if savedPath == "" || sessionID == "" || messageID == "" {
+		http.Error(w, "session_id, message_id and file are required", http.StatusBadRequest)
+		return
+	}
+	scope := channels.BuildMediaScope("pico", "pico:"+sessionID, messageID)
+	ref, err := store.Store(savedPath, media.MediaMeta{
+		Filename: filename, ContentType: contentType, Source: "pico-upload",
+	}, scope)
+	if err != nil {
+		http.Error(w, "failed to register upload", http.StatusInternalServerError)
+		return
+	}
+	savedPath = "" // ownership transferred to MediaStore
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ref": ref, "filename": filename, "content_type": contentType,
+		"size": size, "type": picoInferAttachmentType(filename, contentType),
+	})
+}
+
 // broadcast routes through broadcastFn when set (tests), else broadcastToSession.
 func (c *PicoChannel) broadcast(chatID string, msg PicoMessage) error {
 	if c.broadcastFn != nil {
@@ -1240,7 +1381,7 @@ func (c *PicoChannel) handleMessage(pc *picoConn, msg PicoMessage) {
 // handleMessageSend processes an inbound message.send from a client.
 func (c *PicoChannel) handleMessageSend(pc *picoConn, msg PicoMessage) {
 	content, _ := msg.Payload["content"].(string)
-	media, err := parseInlineImageMedia(msg.Payload)
+	mediaRefs, annotations, err := c.parseInboundMedia(msg.Payload)
 	if err != nil {
 		errMsg := newErrorWithPayload("invalid_media", err.Error(), map[string]any{
 			"request_id": msg.ID,
@@ -1249,12 +1390,18 @@ func (c *PicoChannel) handleMessageSend(pc *picoConn, msg PicoMessage) {
 		return
 	}
 
-	if strings.TrimSpace(content) == "" && len(media) == 0 {
+	if strings.TrimSpace(content) == "" && len(mediaRefs) == 0 {
 		errMsg := newErrorWithPayload("empty_content", "message content is empty", map[string]any{
 			"request_id": msg.ID,
 		})
 		pc.writeJSON(errMsg)
 		return
+	}
+	if len(annotations) > 0 {
+		if strings.TrimSpace(content) != "" {
+			content += "\n"
+		}
+		content += strings.Join(annotations, "\n")
 	}
 
 	sessionID := msg.SessionID
@@ -1274,7 +1421,7 @@ func (c *PicoChannel) handleMessageSend(pc *picoConn, msg PicoMessage) {
 	logger.DebugCF("pico", "Received message", map[string]any{
 		"session_id": sessionID,
 		"preview":    truncate(content, 50),
-		"media":      len(media),
+		"media":      len(mediaRefs),
 	})
 
 	sender := bus.SenderInfo{
@@ -1296,7 +1443,55 @@ func (c *PicoChannel) handleMessageSend(pc *picoConn, msg PicoMessage) {
 		Raw:       metadata,
 	}
 
-	c.HandleInboundContext(c.ctx, chatID, content, media, inboundCtx, sender)
+	c.HandleInboundContext(c.ctx, chatID, content, mediaRefs, inboundCtx, sender)
+}
+
+func (c *PicoChannel) parseInboundMedia(payload map[string]any) ([]string, []string, error) {
+	legacy, err := parseInlineImageMedia(payload)
+	if err != nil {
+		return nil, nil, err
+	}
+	refs := append([]string(nil), legacy...)
+	annotations := make([]string, 0)
+	raw, ok := payload["media_refs"]
+	if !ok {
+		return refs, annotations, nil
+	}
+	values, ok := raw.([]any)
+	if !ok {
+		return nil, nil, fmt.Errorf("media_refs must be an array")
+	}
+	if len(values) > 8 {
+		return nil, nil, fmt.Errorf("at most 8 attachments are allowed")
+	}
+	store := c.GetMediaStore()
+	if store == nil {
+		return nil, nil, fmt.Errorf("media store unavailable")
+	}
+	for i, value := range values {
+		ref, ok := value.(string)
+		if !ok || !strings.HasPrefix(ref, "media://") {
+			return nil, nil, fmt.Errorf("media_refs[%d] is invalid", i)
+		}
+		_, meta, resolveErr := store.ResolveWithMeta(ref)
+		if resolveErr != nil {
+			return nil, nil, fmt.Errorf("media_refs[%d] is unknown", i)
+		}
+		refs = append(refs, ref)
+		filename := strings.TrimSpace(meta.Filename)
+		if filename == "" {
+			filename = "attachment"
+		}
+		switch picoInferAttachmentType(filename, meta.ContentType) {
+		case "audio":
+			annotations = append(annotations, "[voice]")
+		case "image":
+			annotations = append(annotations, "[image: "+filename+"]")
+		default:
+			annotations = append(annotations, filename+" [file]")
+		}
+	}
+	return refs, annotations, nil
 }
 
 // truncate truncates a string to maxLen runes.
