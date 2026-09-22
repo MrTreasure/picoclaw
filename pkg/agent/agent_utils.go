@@ -358,11 +358,30 @@ func latestUserContent(messages []providers.Message) string {
 		if msg.Role != "user" {
 			continue
 		}
-		if content := strings.TrimSpace(msg.Content); content != "" {
+		if content := stripDynamicContextPrefix(msg.Content); content != "" {
 			return content
 		}
 	}
 	return ""
+}
+
+// stripDynamicContextPrefix removes the per-request context prepended by
+// ContextBuilder before using a user message as visible tool feedback. The
+// context remains in the provider request; it simply must not leak into UI
+// labels such as "Runtime", "Current Session", or "Current Sender".
+func stripDynamicContextPrefix(content string) string {
+	content = strings.TrimSpace(content)
+	if !strings.HasPrefix(content, "## Current Time\n") &&
+		!strings.HasPrefix(content, "## Current Time\r\n") {
+		return content
+	}
+
+	for _, separator := range []string{"\n\n---\n\n", "\r\n\r\n---\r\n\r\n"} {
+		if index := strings.Index(content, separator); index >= 0 {
+			return strings.TrimSpace(content[index+len(separator):])
+		}
+	}
+	return content
 }
 
 func toolFeedbackExplanationFromResponse(

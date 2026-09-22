@@ -2,7 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
-import { type ModelInfo, getModels, setDefaultModel } from "@/api/models"
+import {
+  type ModelInfo,
+  type ModelThinkingLevel,
+  getModels,
+  setChatPreferences,
+} from "@/api/models"
 import { showSaveSuccessOrRestartToast } from "@/lib/restart-required"
 import { refreshGatewayState } from "@/store/gateway"
 
@@ -26,6 +31,8 @@ export function useChatModels({ isConnected }: UseChatModelsOptions) {
   const [modelList, setModelList] = useState<ModelInfo[]>([])
   const [defaultModelName, setDefaultModelName] = useState("")
   const [settingDefault, setSettingDefault] = useState(false)
+  const [settingThinkingLevel, setSettingThinkingLevel] = useState(false)
+  const [thinkingLevel, setThinkingLevel] = useState<ModelThinkingLevel>("off")
   const setDefaultRequestIdRef = useRef(0)
   const loadModelsRequestIdRef = useRef(0)
   const setDefaultQueueRef = useRef<Promise<void>>(Promise.resolve())
@@ -42,7 +49,8 @@ export function useChatModels({ isConnected }: UseChatModelsOptions) {
       const data = await getModels()
       if (requestId !== loadModelsRequestIdRef.current) return
       setModelList(data.models)
-      syncDefaultModelName(data.default_model)
+      syncDefaultModelName(data.chat_model_name || data.default_model)
+      setThinkingLevel(data.chat_thinking_level ?? "off")
     } catch {
       // silently fail
     }
@@ -67,13 +75,14 @@ export function useChatModels({ isConnected }: UseChatModelsOptions) {
         .catch(() => {})
         .then(async () => {
           if (requestId !== setDefaultRequestIdRef.current) return
-          await setDefaultModel(modelName)
+          await setChatPreferences({ model_name: modelName })
           if (requestId !== setDefaultRequestIdRef.current) return
           const data = await getModels()
           if (requestId !== setDefaultRequestIdRef.current) return
 
           setModelList(data.models)
-          syncDefaultModelName(data.default_model)
+          syncDefaultModelName(data.chat_model_name || data.default_model)
+          setThinkingLevel(data.chat_thinking_level ?? "off")
           const gateway = await refreshGatewayState({ force: true })
           if (requestId !== setDefaultRequestIdRef.current) return
           showSaveSuccessOrRestartToast(
@@ -144,6 +153,33 @@ export function useChatModels({ isConnected }: UseChatModelsOptions) {
     [defaultSelectableModels],
   )
 
+  const chatModels = useMemo(
+    () =>
+      defaultSelectableModels.filter(
+        (model) =>
+          model.available &&
+          !/(?:^|[-_])(tts|asr)(?:$|[-_])/i.test(model.model_name),
+      ),
+    [defaultSelectableModels],
+  )
+
+  const handleSetThinkingLevel = useCallback(
+    async (level: ModelThinkingLevel) => {
+      if (!defaultModelName || level === thinkingLevel) return
+      setSettingThinkingLevel(true)
+      try {
+        await setChatPreferences({ thinking_level: level })
+        await loadModels()
+        toast.success(`思考强度已设为${level}`)
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "思考强度设置失败")
+      } finally {
+        setSettingThinkingLevel(false)
+      }
+    },
+    [defaultModelName, loadModels, thinkingLevel],
+  )
+
   return {
     defaultModelName,
     hasAvailableModels,
@@ -152,5 +188,9 @@ export function useChatModels({ isConnected }: UseChatModelsOptions) {
     localModels,
     settingDefault,
     handleSetDefault,
+    chatModels,
+    thinkingLevel,
+    settingThinkingLevel,
+    handleSetThinkingLevel,
   }
 }

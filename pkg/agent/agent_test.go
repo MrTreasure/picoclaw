@@ -2818,6 +2818,22 @@ func TestToolFeedbackExplanationFromResponse_DoesNotUseReasoningContent(t *testi
 	}
 }
 
+func TestToolFeedbackExplanationFromMessages_HidesDynamicContext(t *testing.T) {
+	messages := []providers.Message{{
+		Role: "user",
+		Content: "## Current Time\n2026-09-22 19:07 (Tuesday)\n\n" +
+			"## Runtime\nlinux amd64, Go go1.26.5\n\n" +
+			"## Current Session\nChannel: pico\nChat ID: pico:test\n\n" +
+			"## Current Sender\nCurrent sender: pico-user\n\n---\n\n" +
+			"检查服务状态",
+	}}
+
+	want := utils.ToolFeedbackContinuationHint + ": 检查服务状态"
+	if got := toolFeedbackExplanationFromMessages(messages); got != want {
+		t.Fatalf("toolFeedbackExplanationFromMessages() = %q, want %q", got, want)
+	}
+}
+
 func TestToolFeedbackExplanationForToolCall_DoesNotTruncateLongExplanation(t *testing.T) {
 	explanation := "Read README.md first to confirm the current project structure before editing the config example."
 	response := &providers.LLMResponse{

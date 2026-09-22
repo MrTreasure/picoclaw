@@ -59,6 +59,8 @@ interface ModelsListResponse {
   default_provider: string
   fallback_chain: string[]
   provider_options: ModelProviderOption[]
+  chat_model_name?: string
+  chat_thinking_level?: ModelThinkingLevel
 }
 
 export interface ModelReferenceRename {
@@ -134,6 +136,22 @@ export async function setDefaultModel(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model_name: modelName }),
+  })
+
+  await refreshGatewayState()
+  return response
+}
+
+export type ModelThinkingLevel = "off" | "low" | "medium" | "high" | "xhigh"
+
+export async function setChatPreferences(preferences: {
+  model_name?: string
+  thinking_level?: ModelThinkingLevel
+}): Promise<ModelActionResponse> {
+  const response = await request<ModelActionResponse>("/api/chat/preferences", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(preferences),
   })
 
   await refreshGatewayState()

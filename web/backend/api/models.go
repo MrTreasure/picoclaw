@@ -27,11 +27,134 @@ func (h *Handler) registerModelRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/models/catalog/{id}", h.handleDeleteCatalog)
 	mux.HandleFunc("POST /api/models", h.handleAddModel)
 	mux.HandleFunc("POST /api/models/default", h.handleSetDefaultModel)
+	mux.HandleFunc("POST /api/chat/preferences", h.handleSetChatPreferences)
 	mux.HandleFunc("PUT /api/models/default-chain", h.handleUpdateDefaultChain)
 	mux.HandleFunc("PUT /api/models/{index}", h.handleUpdateModel)
 	mux.HandleFunc("DELETE /api/models/{index}", h.handleDeleteModel)
 	mux.HandleFunc("POST /api/models/{index}/test", h.handleTestModel)
 	mux.HandleFunc("POST /api/models/test-inline", h.handleTestInlineModel)
+}
+
+type chatPreferencesRequest struct {
+	ModelName     string `json:"model_name,omitempty"`
+	ThinkingLevel string `json:"thinking_level,omitempty"`
+}
+
+func validModelThinkingLevel(level string) bool {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "off", "low", "medium", "high", "xhigh":
+		return true
+	default:
+		return false
+	}
+}
+
+func picoChatAgentIndex(cfg *config.Config) int {
+	if cfg == nil {
+		return -1
+	}
+	if cfg.Agents.Dispatch != nil {
+		for _, rule := range cfg.Agents.Dispatch.Rules {
+			if !strings.EqualFold(strings.TrimSpace(rule.When.Channel), "pico") {
+				continue
+			}
+			for index := range cfg.Agents.List {
+				if cfg.Agents.List[index].ID == rule.Agent {
+					return index
+				}
+			}
+		}
+	}
+	for index := range cfg.Agents.List {
+		if cfg.Agents.List[index].Default {
+			return index
+		}
+	}
+	return -1
+}
+
+func picoChatPreferences(cfg *config.Config) (string, string) {
+	modelName := strings.TrimSpace(cfg.Agents.Defaults.GetModelName())
+	thinkingLevel := "off"
+	if index := picoChatAgentIndex(cfg); index >= 0 {
+		agentCfg := cfg.Agents.List[index]
+		if agentCfg.Model != nil && strings.TrimSpace(agentCfg.Model.Primary) != "" {
+			modelName = strings.TrimSpace(agentCfg.Model.Primary)
+		}
+		if validModelThinkingLevel(agentCfg.ThinkingLevel) {
+			thinkingLevel = strings.ToLower(strings.TrimSpace(agentCfg.ThinkingLevel))
+		}
+	}
+	return modelName, thinkingLevel
+}
+
+// handleSetChatPreferences changes the Agent that actually receives Pico chat
+// traffic. This installation dispatches Pico to pico-stream, whose overrides
+// take precedence over global model defaults.
+func (h *Handler) handleSetChatPreferences(w http.ResponseWriter, r *http.Request) {
+	var req chatPreferencesRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid JSON: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	req.ModelName = strings.TrimSpace(req.ModelName)
+	req.ThinkingLevel = strings.ToLower(strings.TrimSpace(req.ThinkingLevel))
+	if req.ModelName == "" && req.ThinkingLevel == "" {
+		http.Error(w, "model_name or thinking_level is required", http.StatusBadRequest)
+		return
+	}
+	if req.ThinkingLevel != "" && !validModelThinkingLevel(req.ThinkingLevel) {
+		http.Error(w, "thinking_level must be one of: off, low, medium, high, xhigh", http.StatusBadRequest)
+		return
+	}
+
+	h.configMu.Lock()
+	defer h.configMu.Unlock()
+
+	cfg, err := config.LoadConfig(h.configPath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to load config: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	agentIndex := picoChatAgentIndex(cfg)
+	if agentIndex < 0 {
+		http.Error(w, "Pico chat agent is not configured", http.StatusConflict)
+		return
+	}
+	if req.ModelName != "" {
+		found := false
+		for _, model := range cfg.ModelList {
+			if model != nil && strings.TrimSpace(model.ModelName) == req.ModelName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			http.Error(w, fmt.Sprintf("Model %q not found", req.ModelName), http.StatusNotFound)
+			return
+		}
+		if cfg.Agents.List[agentIndex].Model == nil {
+			cfg.Agents.List[agentIndex].Model = &config.AgentModelConfig{}
+		}
+		cfg.Agents.List[agentIndex].Model.Primary = req.ModelName
+	}
+	if req.ThinkingLevel != "" {
+		cfg.Agents.List[agentIndex].ThinkingLevel = req.ThinkingLevel
+	}
+	if err := config.SaveConfig(h.configPath, cfg); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to save config: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	modelName, thinkingLevel := picoChatPreferences(cfg)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":         "success",
+		"model_name":     modelName,
+		"thinking_level": thinkingLevel,
+	})
 }
 
 // modelResponse is the JSON structure returned for each model in the list.
@@ -645,14 +768,17 @@ func (h *Handler) handleListModels(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	chatModelName, chatThinkingLevel := picoChatPreferences(cfg)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"models":           models,
-		"total":            len(models),
-		"default_model":    defaultModel,
-		"default_provider": defaultChainProvider(cfg),
-		"fallback_chain":   fallbackChain,
-		"provider_options": modelProviderOptionsForResponse(),
+		"models":              models,
+		"total":               len(models),
+		"default_model":       defaultModel,
+		"default_provider":    defaultChainProvider(cfg),
+		"fallback_chain":      fallbackChain,
+		"provider_options":    modelProviderOptionsForResponse(),
+		"chat_model_name":     chatModelName,
+		"chat_thinking_level": chatThinkingLevel,
 	})
 }
 

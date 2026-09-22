@@ -1,6 +1,5 @@
 import {
   IconAdjustments,
-  IconAtom,
   IconChevronRight,
   IconFileText,
   IconKey,
@@ -53,7 +52,6 @@ const groups = [
     title: "对话",
     items: [
       { label: "新建会话", to: "/", icon: IconMessagePlus, action: "new" },
-      { label: "模型与显示", to: "/models", icon: IconAtom },
     ],
   },
   {

@@ -1,6 +1,6 @@
 import { IconArrowDown } from "@tabler/icons-react"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { useAtomValue } from "jotai"
+import { useAtom } from "jotai"
 import {
   type ChangeEvent,
   type ClipboardEvent,
@@ -110,7 +110,9 @@ export function ChatPage() {
   const [input, setInput] = useState("")
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [isDragActive, setIsDragActive] = useState(false)
-  const assistantDetailVisibility = useAtomValue(assistantDetailVisibilityAtom)
+  const [assistantDetailVisibility, setAssistantDetailVisibility] = useAtom(
+    assistantDetailVisibilityAtom,
+  )
 
   const {
     messages,
@@ -127,9 +129,16 @@ export function ChatPage() {
   const { state: gwState } = useGateway()
   const isGatewayRunning = gwState === "running"
 
-  const { defaultModelName, hasAvailableModels } = useChatModels({
-    isConnected: isGatewayRunning,
-  })
+  const {
+    defaultModelName,
+    hasAvailableModels,
+    chatModels,
+    thinkingLevel,
+    settingDefault,
+    settingThinkingLevel,
+    handleSetDefault,
+    handleSetThinkingLevel,
+  } = useChatModels({ isConnected: isGatewayRunning })
   const hasDefaultModel = Boolean(defaultModelName)
   const inputDisabledReason = resolveChatInputDisabledReason({
     hasDefaultModel,
@@ -380,6 +389,13 @@ export function ChatPage() {
       <ChatControls
         defaultModelName={defaultModelName}
         connectionState={connectionState}
+        models={chatModels}
+        thinkingLevel={thinkingLevel}
+        detailVisibility={assistantDetailVisibility}
+        disabled={settingDefault || settingThinkingLevel}
+        onModelChange={(modelName) => void handleSetDefault(modelName)}
+        onThinkingLevelChange={(level) => void handleSetThinkingLevel(level)}
+        onDetailVisibilityChange={setAssistantDetailVisibility}
       />
 
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">

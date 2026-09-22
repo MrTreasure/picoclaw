@@ -22,6 +22,17 @@ export function AppLayout({ children }: { children: ReactNode }) {
       )
     },
   })
+  const showMobileTabBar = useRouterState({
+    select: (state) => {
+      const path = state.location.pathname
+      return (
+        path === "/sessions" ||
+        path.startsWith("/tasks") ||
+        path.startsWith("/me") ||
+        path.startsWith("/documents/")
+      )
+    },
+  })
 
   return (
     <TooltipProvider>
@@ -46,7 +57,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
             </main>
           </div>
         </div>
-        {isMobileShell && <MobileTabBar />}
+        {isMobileShell && showMobileTabBar && <MobileTabBar />}
         <Toaster position="bottom-center" />
         <TourGuide />
       </SidebarProvider>

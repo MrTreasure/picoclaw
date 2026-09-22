@@ -38,6 +38,61 @@ func resetModelProbeHooks(t *testing.T) {
 	})
 }
 
+func TestHandleSetChatPreferencesUpdatesDispatchedPicoAgent(t *testing.T) {
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	cfg.ModelList = []*config.ModelConfig{
+		{ModelName: "model-a", Provider: "openai", Model: "model-a"},
+		{ModelName: "model-b", Provider: "openai", Model: "model-b"},
+	}
+	cfg.Agents.List = []config.AgentConfig{
+		{ID: "main", Default: true},
+		{
+			ID:            "pico-stream",
+			Model:         &config.AgentModelConfig{Primary: "model-a"},
+			ThinkingLevel: "off",
+		},
+	}
+	cfg.Agents.Dispatch = &config.DispatchConfig{Rules: []config.DispatchRule{{
+		Agent: "pico-stream",
+		When:  config.DispatchSelector{Channel: "pico"},
+	}}}
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/chat/preferences",
+		bytes.NewBufferString(`{"model_name":"model-b","thinking_level":"high"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	updated, err := config.LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() after update error = %v", err)
+	}
+	if got := updated.Agents.List[1].Model.Primary; got != "model-b" {
+		t.Fatalf("Pico agent model = %q, want model-b", got)
+	}
+	if got := updated.Agents.List[1].ThinkingLevel; got != "high" {
+		t.Fatalf("Pico agent thinking_level = %q, want high", got)
+	}
+}
+
 func addModelAndLoadLatest(t *testing.T, configPath string, body string) *config.ModelConfig {
 	t.Helper()
 
