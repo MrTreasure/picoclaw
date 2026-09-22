@@ -4,15 +4,23 @@ import { Toaster } from "sonner"
 
 import { AppHeader } from "@/components/app-header"
 import { AppSidebar } from "@/components/app-sidebar"
+import { MobileTabBar } from "@/components/mobile-tab-bar"
 import { TourGuide } from "@/components/tour/tour-guide"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
 export function AppLayout({ children }: { children: ReactNode }) {
-  const isChatShell = useRouterState({
-    select: (state) =>
-      state.location.pathname === "/" ||
-      state.location.pathname === "/sessions",
+  const isMobileShell = useRouterState({
+    select: (state) => {
+      const path = state.location.pathname
+      return (
+        path === "/" ||
+        path.startsWith("/sessions") ||
+        path.startsWith("/tasks") ||
+        path.startsWith("/me") ||
+        path.startsWith("/documents/")
+      )
+    },
   })
 
   return (
@@ -24,10 +32,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
         >
           跳到主要内容
         </a>
-        {!isChatShell && <AppHeader />}
+        {!isMobileShell && <AppHeader />}
 
         <div className="flex flex-1 overflow-hidden">
-          {!isChatShell && <AppSidebar />}
+          {!isMobileShell && <AppSidebar />}
           <div className="flex w-full flex-col overflow-hidden">
             <main
               id="main-content"
@@ -38,6 +46,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
             </main>
           </div>
         </div>
+        {isMobileShell && <MobileTabBar />}
         <Toaster position="bottom-center" />
         <TourGuide />
       </SidebarProvider>

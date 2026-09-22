@@ -16,6 +16,7 @@ import {
 export interface ChatAttachment {
   type: "image" | "audio" | "video" | "file"
   url: string
+  mediaRef?: string
   filename?: string
   contentType?: string
 }

@@ -25,6 +25,7 @@ import (
 // registerSessionRoutes binds session list and detail endpoints to the ServeMux.
 func (h *Handler) registerSessionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sessions", h.handleListSessions)
+	mux.HandleFunc("DELETE /api/sessions/task-runs", h.handleDeleteTaskRunSessions)
 	mux.HandleFunc("GET /api/sessions/{id}", h.handleGetSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", h.handleDeleteSession)
 }
@@ -221,6 +222,9 @@ func weixinSessionRefFromMeta(meta memory.SessionMeta) (picoJSONLSessionRef, boo
 	if len(meta.Scope) == 0 || strings.TrimSpace(meta.Key) == "" {
 		return picoJSONLSessionRef{}, false
 	}
+	if strings.HasPrefix(strings.TrimSpace(meta.Key), "agent:cron-") {
+		return picoJSONLSessionRef{}, false
+	}
 	var scope session.SessionScope
 	if err := json.Unmarshal(meta.Scope, &scope); err != nil ||
 		!strings.EqualFold(strings.TrimSpace(scope.Channel), "weixin") {
@@ -230,6 +234,35 @@ func weixinSessionRefFromMeta(meta memory.SessionMeta) (picoJSONLSessionRef, boo
 		ID:  weixinSessionIDPrefix + meta.Key,
 		Key: meta.Key,
 	}, true
+}
+
+func (h *Handler) handleDeleteTaskRunSessions(w http.ResponseWriter, _ *http.Request) {
+	dir, err := h.sessionsDir()
+	if err != nil {
+		http.Error(w, "failed to resolve sessions directory", http.StatusInternalServerError)
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil && !os.IsNotExist(err) {
+		http.Error(w, "failed to read sessions directory", http.StatusInternalServerError)
+		return
+	}
+	deleted := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), "agent_cron-") {
+			continue
+		}
+		if !strings.HasSuffix(entry.Name(), ".jsonl") && !strings.HasSuffix(entry.Name(), ".meta.json") {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !os.IsNotExist(err) {
+			http.Error(w, "failed to delete task run sessions", http.StatusInternalServerError)
+			return
+		}
+		deleted++
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]int{"deleted_files": deleted})
 }
 
 func (h *Handler) findWeixinJSONLSessions(dir string) ([]picoJSONLSessionRef, error) {
@@ -1139,6 +1172,19 @@ func (h *Handler) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	removed := false
+	if ref, err := h.findWeixinJSONLSession(dir, sessionID); err == nil {
+		base := filepath.Join(dir, sanitizeSessionKey(ref.Key))
+		for _, path := range []string{base + ".jsonl", base + ".meta.json"} {
+			if err := os.Remove(path); err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				http.Error(w, "failed to delete session", http.StatusInternalServerError)
+				return
+			}
+			removed = true
+		}
+	}
 	if ref, err := h.findPicoJSONLSession(dir, sessionID); err == nil {
 		base := filepath.Join(dir, sanitizeSessionKey(ref.Key))
 		for _, path := range []string{base + ".jsonl", base + ".meta.json"} {

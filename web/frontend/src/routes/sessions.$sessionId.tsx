@@ -103,7 +103,7 @@ function WeixinSessionPage() {
             variant="ghost"
             size="icon"
             className="size-12 rounded-full"
-            onClick={() => void navigate({ to: "/sessions" })}
+            onClick={() => void navigate({ to: "/sessions", replace: true })}
             aria-label="返回会话列表"
           >
             <IconArrowLeft className="size-6" aria-hidden="true" />

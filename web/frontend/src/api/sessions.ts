@@ -99,3 +99,13 @@ export async function deleteSession(id: string): Promise<void> {
     throw new Error(`Failed to delete session ${id}: ${res.status}`)
   }
 }
+
+export async function clearTaskRunSessions(): Promise<number> {
+  const res = await launcherFetch("/api/sessions/task-runs", {
+    method: "DELETE",
+  })
+  if (!res.ok)
+    throw new Error(`Failed to clear task run sessions: ${res.status}`)
+  const body = (await res.json()) as { deleted_files?: number }
+  return body.deleted_files ?? 0
+}

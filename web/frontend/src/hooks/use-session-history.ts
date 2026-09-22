@@ -109,6 +109,29 @@ export function useSessionHistory({
     [activeSessionId, onDeletedActiveSession, sessions, t],
   )
 
+  const handleDeleteSessions = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) return false
+      try {
+        await Promise.all(ids.map((id) => deleteSession(id)))
+        const deletedIds = new Set(ids)
+        setSessions((previous) =>
+          previous.filter((session) => !deletedIds.has(session.id)),
+        )
+        setOffset((previous) => Math.max(previous - ids.length, 0))
+        if (deletedIds.has(activeSessionId)) onDeletedActiveSession()
+        toast.success(`已删除 ${ids.length} 段会话`)
+        return true
+      } catch (err) {
+        console.error("Failed to delete sessions:", err)
+        toast.error(t("chat.sessionDeleteFailed"))
+        void loadSessions(true)
+        return false
+      }
+    },
+    [activeSessionId, loadSessions, onDeletedActiveSession, t],
+  )
+
   return {
     sessions,
     hasMore,
@@ -117,5 +140,6 @@ export function useSessionHistory({
     observerRef,
     loadSessions,
     handleDeleteSession,
+    handleDeleteSessions,
   }
 }

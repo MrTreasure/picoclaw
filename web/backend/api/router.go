@@ -87,6 +87,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// Session history
 	h.registerSessionRoutes(mux)
+	h.registerCronRoutes(mux)
+	h.registerWorkspaceDocumentRoutes(mux)
 
 	// OAuth login and credential management
 	h.registerOAuthRoutes(mux)

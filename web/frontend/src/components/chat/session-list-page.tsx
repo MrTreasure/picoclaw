@@ -4,13 +4,13 @@ import {
   IconMessagePlus,
   IconSearch,
   IconTrash,
+  IconX,
 } from "@tabler/icons-react"
 import { useNavigate } from "@tanstack/react-router"
 import dayjs from "dayjs"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 
-import type { SessionSummary } from "@/api/sessions"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,9 +31,10 @@ export function SessionListPage() {
   const navigate = useNavigate()
   const { activeSessionId, switchSession, newChat } = usePicoChat()
   const [query, setQuery] = useState("")
-  const [pendingDelete, setPendingDelete] = useState<SessionSummary | null>(
-    null,
-  )
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const longPressTriggeredRef = useRef(false)
   const loadedRef = useRef(false)
   const {
     sessions,
@@ -42,7 +43,7 @@ export function SessionListPage() {
     loadErrorMessage,
     observerRef,
     loadSessions,
-    handleDeleteSession,
+    handleDeleteSessions,
   } = useSessionHistory({
     activeSessionId,
     onDeletedActiveSession: newChat,
@@ -64,41 +65,93 @@ export function SessionListPage() {
     )
   }, [query, sessions])
 
+  const selectionMode = selectedIds.size > 0
+
+  const toggleSelection = (sessionId: string) => {
+    setSelectedIds((previous) => {
+      const next = new Set(previous)
+      if (next.has(sessionId)) next.delete(sessionId)
+      else next.add(sessionId)
+      return next
+    })
+  }
+
+  const beginLongPress = (sessionId: string) => {
+    longPressTriggeredRef.current = false
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTriggeredRef.current = true
+      toggleSelection(sessionId)
+      navigator.vibrate?.(35)
+    }, 520)
+  }
+
+  const cancelLongPress = () => {
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current)
+    longPressTimerRef.current = null
+  }
+
   const openSession = async (sessionId: string) => {
     const session = sessions.find((item) => item.id === sessionId)
     if (session?.channel === "weixin") {
       await navigate({
         to: "/sessions/$sessionId",
         params: { sessionId },
+        replace: true,
       })
       return
     }
     await switchSession(sessionId)
-    await navigate({ to: "/" })
+    await navigate({ to: "/", replace: true })
   }
 
   const createSession = async () => {
     await newChat()
-    await navigate({ to: "/" })
+    await navigate({ to: "/", replace: true })
   }
 
   return (
     <div className="bg-background flex h-full min-h-0 flex-col">
       <header className="border-border/70 bg-background/92 flex h-[calc(4rem+env(safe-area-inset-top))] shrink-0 items-end border-b px-4 pb-1 backdrop-blur-xl">
         <div className="flex h-14 w-full items-center justify-between">
-          <div className="size-12" aria-hidden="true" />
-          <h1 className="text-xl font-semibold tracking-tight">
-            {t("navigation.chat")}
-          </h1>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-12 rounded-full"
-            onClick={() => void createSession()}
-            aria-label={t("chat.newChat")}
-          >
-            <IconMessagePlus className="size-6" aria-hidden="true" />
-          </Button>
+          {selectionMode ? (
+            <>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-12 rounded-full"
+                onClick={() => setSelectedIds(new Set())}
+                aria-label="取消选择"
+              >
+                <IconX className="size-6" />
+              </Button>
+              <h1 className="text-lg font-semibold">
+                已选择 {selectedIds.size} 项
+              </h1>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-destructive size-12 rounded-full"
+                onClick={() => setConfirmBulkDelete(true)}
+                aria-label="删除所选会话"
+              >
+                <IconTrash className="size-5" />
+              </Button>
+            </>
+          ) : (
+            <>
+              <div className="size-12" aria-hidden="true" />
+              <h1 className="text-xl font-semibold tracking-tight">会话</h1>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-12 rounded-full"
+                onClick={() => void createSession()}
+                aria-label={t("chat.newChat")}
+              >
+                <IconMessagePlus className="size-6" aria-hidden="true" />
+              </Button>
+            </>
+          )}
         </div>
       </header>
 
@@ -150,8 +203,25 @@ export function SessionListPage() {
                 >
                   <button
                     type="button"
-                    className="focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left focus-visible:ring-2 focus-visible:outline-none"
-                    onClick={() => void openSession(session.id)}
+                    className={`focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left focus-visible:ring-2 focus-visible:outline-none ${selectedIds.has(session.id) ? "bg-secondary/10 ring-secondary ring-2" : ""}`}
+                    onPointerDown={() => beginLongPress(session.id)}
+                    onPointerUp={cancelLongPress}
+                    onPointerCancel={cancelLongPress}
+                    onPointerLeave={cancelLongPress}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      cancelLongPress()
+                      if (!selectedIds.has(session.id))
+                        toggleSelection(session.id)
+                    }}
+                    onClick={() => {
+                      if (longPressTriggeredRef.current) {
+                        longPressTriggeredRef.current = false
+                        return
+                      }
+                      if (selectionMode) toggleSelection(session.id)
+                      else void openSession(session.id)
+                    }}
                   >
                     <span
                       className={`flex size-14 shrink-0 items-center justify-center rounded-2xl ${isWeixin ? "bg-emerald-500/15 text-emerald-400" : isActive ? "bg-accent text-accent-foreground" : "bg-muted text-muted-foreground"}`}
@@ -185,7 +255,7 @@ export function SessionListPage() {
                       </span>
                       {isWeixin && (
                         <span className="mt-1 block text-xs font-medium text-emerald-400">
-                          微信记录 · 只读
+                          微信记录
                         </span>
                       )}
                       {isActive && (
@@ -195,17 +265,6 @@ export function SessionListPage() {
                       )}
                     </span>
                   </button>
-                  {!isWeixin && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive size-12 rounded-full"
-                      onClick={() => setPendingDelete(session)}
-                      aria-label={t("chat.deleteSession")}
-                    >
-                      <IconTrash className="size-5" aria-hidden="true" />
-                    </Button>
-                  )}
                 </div>
               )
             })}
@@ -223,18 +282,17 @@ export function SessionListPage() {
       </main>
 
       <AlertDialog
-        open={pendingDelete !== null}
+        open={confirmBulkDelete}
         onOpenChange={(open) => {
-          if (!open) setPendingDelete(null)
+          setConfirmBulkDelete(open)
         }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("chat.deleteSessionTitle")}</AlertDialogTitle>
+            <AlertDialogTitle>删除所选会话？</AlertDialogTitle>
             <AlertDialogDescription>
-              {t("chat.deleteSessionDescription", {
-                title: pendingDelete?.title ?? "",
-              })}
+              将永久删除 {selectedIds.size}{" "}
+              段会话记录，包括所选微信记录。此操作无法撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -242,8 +300,11 @@ export function SessionListPage() {
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => {
-                if (pendingDelete) void handleDeleteSession(pendingDelete.id)
-                setPendingDelete(null)
+                const ids = [...selectedIds]
+                setConfirmBulkDelete(false)
+                void handleDeleteSessions(ids).then((deleted) => {
+                  if (deleted) setSelectedIds(new Set())
+                })
               }}
             >
               {t("chat.deleteSession")}

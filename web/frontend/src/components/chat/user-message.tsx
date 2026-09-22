@@ -1,3 +1,4 @@
+import { IconDownload, IconFile } from "@tabler/icons-react"
 import { memo } from "react"
 import { useTranslation } from "react-i18next"
 
@@ -23,6 +24,9 @@ export const UserMessage = memo(function UserMessage({
   const imageAttachments = attachments.filter(
     (attachment) => attachment.type === "image",
   )
+  const fileAttachments = attachments.filter(
+    (attachment) => attachment.type !== "image",
+  )
   const formattedTimestamp =
     timestamp !== "" ? formatMessageTime(timestamp) : ""
 
@@ -40,6 +44,28 @@ export const UserMessage = memo(function UserMessage({
               alt={attachment.filename || t("chat.uploadedImage")}
               className="max-h-72 max-w-full object-cover"
             />
+          ))}
+        </div>
+      )}
+
+      {fileAttachments.length > 0 && (
+        <div className="flex max-w-[86%] flex-col items-end gap-2 sm:max-w-[72%]">
+          {fileAttachments.map((attachment, index) => (
+            <a
+              key={`${attachment.url}-${index}`}
+              href={attachment.url}
+              download={attachment.filename}
+              className="bg-accent text-accent-foreground flex min-h-14 max-w-full items-center gap-3 rounded-2xl rounded-tr-[5px] px-3 py-2.5"
+            >
+              <IconFile className="size-6 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                {attachment.filename || "文件"}
+              </span>
+              <IconDownload
+                className="size-4 shrink-0 opacity-60"
+                aria-hidden="true"
+              />
+            </a>
           ))}
         </div>
       )}

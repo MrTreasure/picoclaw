@@ -1,7 +1,6 @@
 import { IconArrowDown } from "@tabler/icons-react"
-import { useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { useAtom } from "jotai"
+import { useAtomValue } from "jotai"
 import {
   type ChangeEvent,
   type ClipboardEvent,
@@ -23,6 +22,7 @@ import { ChatEmptyState } from "@/components/chat/chat-empty-state"
 import { TypingIndicator } from "@/components/chat/typing-indicator"
 import { UserMessage } from "@/components/chat/user-message"
 import { Button } from "@/components/ui/button"
+import { CHAT_FILE_ACCEPT, uploadChatFiles } from "@/features/chat/file-upload"
 import {
   CHAT_IMAGE_ACCEPT,
   buildChatImageAttachments,
@@ -98,9 +98,11 @@ function resolveChatInputDisabledReason({
 
 export function ChatPage() {
   const { t } = useTranslation()
-  const navigate = useNavigate()
   const scrollRef = useRef<HTMLDivElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const galleryInputRef = useRef<HTMLInputElement>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
+  const documentInputRef = useRef<HTMLInputElement>(null)
+  const draftMessageIdRef = useRef(`msg-${crypto.randomUUID()}`)
   const dragDepthRef = useRef(0)
   const loadingOlderRef = useRef(false)
   const didInitialScrollRef = useRef(false)
@@ -108,9 +110,7 @@ export function ChatPage() {
   const [input, setInput] = useState("")
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [isDragActive, setIsDragActive] = useState(false)
-  const [assistantDetailVisibility, setAssistantDetailVisibility] = useAtom(
-    assistantDetailVisibilityAtom,
-  )
+  const assistantDetailVisibility = useAtomValue(assistantDetailVisibilityAtom)
 
   const {
     messages,
@@ -122,21 +122,14 @@ export function ChatPage() {
     isLoadingOlderMessages,
     loadOlderMessages,
     sendMessage,
-    newChat,
   } = usePicoChat()
 
   const { state: gwState } = useGateway()
   const isGatewayRunning = gwState === "running"
 
-  const {
-    defaultModelName,
-    hasAvailableModels,
-    apiKeyModels,
-    oauthModels,
-    localModels,
-    settingDefault,
-    handleSetDefault,
-  } = useChatModels({ isConnected: isGatewayRunning })
+  const { defaultModelName, hasAvailableModels } = useChatModels({
+    isConnected: isGatewayRunning,
+  })
   const hasDefaultModel = Boolean(defaultModelName)
   const inputDisabledReason = resolveChatInputDisabledReason({
     hasDefaultModel,
@@ -177,31 +170,6 @@ export function ChatPage() {
     loadingOlderRef.current = false
     setIsAtBottom(true)
   }, [activeSessionId])
-
-  useEffect(() => {
-    const currentState = window.history.state as Record<string, unknown> | null
-    if (currentState?.museChatGuard !== true) {
-      window.history.replaceState(
-        { ...currentState, museChatBase: true },
-        "",
-        window.location.href,
-      )
-      window.history.pushState(
-        { ...currentState, museChatGuard: true },
-        "",
-        window.location.href,
-      )
-    }
-
-    const handleBack = (event: PopStateEvent) => {
-      const state = event.state as Record<string, unknown> | null
-      if (window.location.pathname === "/" && state?.museChatBase === true) {
-        void navigate({ to: "/sessions", replace: true })
-      }
-    }
-    window.addEventListener("popstate", handleBack)
-    return () => window.removeEventListener("popstate", handleBack)
-  }, [navigate])
 
   const syncScrollState = (element: HTMLDivElement) => {
     const { clientHeight, scrollHeight, scrollTop } = element
@@ -266,16 +234,28 @@ export function ChatPage() {
       sendMessage({
         content: input,
         attachments,
+        messageId: draftMessageIdRef.current,
       })
     ) {
       setInput("")
       setAttachments([])
+      draftMessageIdRef.current = `msg-${crypto.randomUUID()}`
     }
   }
 
-  const handleAddImages = () => {
+  const handleOpenGallery = () => {
     if (!canCompose) return
-    fileInputRef.current?.click()
+    galleryInputRef.current?.click()
+  }
+
+  const handleOpenCamera = () => {
+    if (!canCompose) return
+    cameraInputRef.current?.click()
+  }
+
+  const handleOpenFiles = () => {
+    if (!canCompose) return
+    documentInputRef.current?.click()
   }
 
   const handleRemoveAttachment = (index: number) => {
@@ -304,6 +284,23 @@ export function ChatPage() {
     }
 
     await appendImageFiles(files)
+  }
+
+  const handleDocumentSelection = async (
+    event: ChangeEvent<HTMLInputElement>,
+  ) => {
+    const files = Array.from(event.target.files ?? [])
+    event.target.value = ""
+    if (files.length === 0) return
+
+    const uploaded = await uploadChatFiles(
+      files,
+      activeSessionId,
+      draftMessageIdRef.current,
+    )
+    if (uploaded.length > 0) {
+      setAttachments((previous) => [...previous, ...uploaded])
+    }
   }
 
   const resetDragState = () => {
@@ -378,22 +375,10 @@ export function ChatPage() {
 
   const canSubmit =
     canInput && (Boolean(input.trim()) || attachments.length > 0)
-  const isGenerating =
-    isTyping || messages.some((message) => message.streaming === true)
-
   return (
     <div className="bg-background/95 relative flex h-full min-h-0 flex-col overflow-hidden">
       <ChatControls
         defaultModelName={defaultModelName}
-        apiKeyModels={apiKeyModels}
-        oauthModels={oauthModels}
-        localModels={localModels}
-        settingDefault={settingDefault}
-        onSetDefault={handleSetDefault}
-        detailVisibility={assistantDetailVisibility}
-        onDetailVisibilityChange={setAssistantDetailVisibility}
-        onNewChat={newChat}
-        onBack={() => window.history.back()}
         connectionState={connectionState}
       />
 
@@ -485,19 +470,44 @@ export function ChatPage() {
       </div>
 
       <input
-        ref={fileInputRef}
+        ref={galleryInputRef}
         type="file"
         accept={CHAT_IMAGE_ACCEPT}
         multiple
         className="hidden"
         onChange={handleImageSelection}
       />
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={handleImageSelection}
+      />
+      <input
+        ref={documentInputRef}
+        type="file"
+        accept={CHAT_FILE_ACCEPT}
+        multiple
+        className="hidden"
+        onChange={handleDocumentSelection}
+      />
 
       <ChatComposer
         input={input}
         attachments={attachments}
         onInputChange={setInput}
-        onAddImages={handleAddImages}
+        onOpenGallery={handleOpenGallery}
+        onOpenCamera={handleOpenCamera}
+        onOpenFiles={handleOpenFiles}
+        onCompactContext={() => {
+          sendMessage({ content: "/compact", attachments: [] })
+        }}
+        onClearContext={() => {
+          sendMessage({ content: "/clear", attachments: [] })
+        }}
+        onSelectSkill={(name) => setInput(`/use ${name} `)}
         onPaste={handleComposerPaste}
         onDragEnter={handleComposerDragEnter}
         onDragLeave={handleComposerDragLeave}
@@ -515,7 +525,6 @@ export function ChatPage() {
         }}
         inputDisabledReason={null}
         canSend={canSubmit}
-        isGenerating={isGenerating}
         isDragActive={isDragActive}
         contextUsage={contextUsage}
       />

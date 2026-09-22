@@ -565,11 +565,13 @@ export async function loadOlderChatMessages(): Promise<boolean> {
 interface SendChatMessageInput {
   content: string
   attachments?: ChatAttachment[]
+  messageId?: string
 }
 
 export function sendChatMessage({
   content,
   attachments = [],
+  messageId,
 }: SendChatMessageInput) {
   if (!wsRef || wsRef.readyState !== WebSocket.OPEN) {
     console.warn("WebSocket not connected")
@@ -578,7 +580,7 @@ export function sendChatMessage({
 
   const normalizedContent = content.trim()
   const normalizedAttachments = attachments
-    .filter((attachment) => attachment.type === "image" && attachment.url)
+    .filter((attachment) => attachment.url || attachment.mediaRef)
     .map((attachment) => ({ ...attachment }))
 
   if (!normalizedContent && normalizedAttachments.length === 0) {
@@ -586,7 +588,7 @@ export function sendChatMessage({
   }
 
   const socket = wsRef
-  const id = `msg-${++msgIdCounter}-${Date.now()}`
+  const id = messageId || `msg-${++msgIdCounter}-${Date.now()}`
 
   updateChatStore((prev) => ({
     messages: [
@@ -606,7 +608,14 @@ export function sendChatMessage({
   try {
     const payload: Record<string, unknown> = {
       content: normalizedContent,
-      media: normalizedAttachments.map((attachment) => attachment.url),
+      media: normalizedAttachments
+        .filter(
+          (attachment) => attachment.type === "image" && !attachment.mediaRef,
+        )
+        .map((attachment) => attachment.url),
+      media_refs: normalizedAttachments
+        .map((attachment) => attachment.mediaRef)
+        .filter((ref): ref is string => Boolean(ref)),
     }
 
     socket.send(

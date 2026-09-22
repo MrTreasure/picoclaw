@@ -395,6 +395,24 @@ func (al *AgentLoop) buildCommandsRuntime(
 			return al.contextManager.Clear(ctx, opts.SessionKey)
 		}
 
+		rt.CompactContext = func() error {
+			if opts == nil {
+				return fmt.Errorf("process options not available")
+			}
+			ensureSessionMetadata(
+				agent.Sessions,
+				opts.Dispatch.SessionKey,
+				opts.Dispatch.SessionScope,
+				opts.Dispatch.SessionAliases,
+			)
+			compactCtx := withSessionProviderRequestMetadata(ctx, agent.ID, opts.SessionKey)
+			return al.contextManager.Compact(compactCtx, &CompactRequest{
+				SessionKey: opts.SessionKey,
+				Reason:     ContextCompressReasonTurnThreshold,
+				Budget:     agent.ContextWindow,
+			})
+		}
+
 		rt.AskSideQuestion = func(ctx context.Context, question string) (string, error) {
 			return al.askSideQuestion(ctx, agent, opts, question)
 		}

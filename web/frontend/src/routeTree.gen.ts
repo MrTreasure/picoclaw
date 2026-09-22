@@ -9,8 +9,10 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as SessionsRouteImport } from './routes/sessions'
 import { Route as ModelsRouteImport } from './routes/models'
+import { Route as MeRouteImport } from './routes/me'
 import { Route as LogsRouteImport } from './routes/logs'
 import { Route as LauncherSetupRouteImport } from './routes/launcher-setup'
 import { Route as LauncherLoginRouteImport } from './routes/launcher-login'
@@ -20,12 +22,18 @@ import { Route as AgentRouteImport } from './routes/agent'
 import { Route as ChannelsRouteRouteImport } from './routes/channels/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions.$sessionId'
+import { Route as DocumentsNameRouteImport } from './routes/documents.$name'
 import { Route as ConfigRawRouteImport } from './routes/config.raw'
 import { Route as ChannelsNameRouteImport } from './routes/channels/$name'
 import { Route as AgentToolsRouteImport } from './routes/agent/tools'
 import { Route as AgentSkillsRouteImport } from './routes/agent/skills'
 import { Route as AgentHubRouteImport } from './routes/agent/hub'
 
+const TasksRoute = TasksRouteImport.update({
+  id: '/tasks',
+  path: '/tasks',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SessionsRoute = SessionsRouteImport.update({
   id: '/sessions',
   path: '/sessions',
@@ -34,6 +42,11 @@ const SessionsRoute = SessionsRouteImport.update({
 const ModelsRoute = ModelsRouteImport.update({
   id: '/models',
   path: '/models',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MeRoute = MeRouteImport.update({
+  id: '/me',
+  path: '/me',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LogsRoute = LogsRouteImport.update({
@@ -81,6 +94,11 @@ const SessionsSessionIdRoute = SessionsSessionIdRouteImport.update({
   path: '/$sessionId',
   getParentRoute: () => SessionsRoute,
 } as any)
+const DocumentsNameRoute = DocumentsNameRouteImport.update({
+  id: '/documents/$name',
+  path: '/documents/$name',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConfigRawRoute = ConfigRawRouteImport.update({
   id: '/raw',
   path: '/raw',
@@ -116,13 +134,16 @@ export interface FileRoutesByFullPath {
   '/launcher-login': typeof LauncherLoginRoute
   '/launcher-setup': typeof LauncherSetupRoute
   '/logs': typeof LogsRoute
+  '/me': typeof MeRoute
   '/models': typeof ModelsRoute
   '/sessions': typeof SessionsRouteWithChildren
+  '/tasks': typeof TasksRoute
   '/agent/hub': typeof AgentHubRoute
   '/agent/skills': typeof AgentSkillsRoute
   '/agent/tools': typeof AgentToolsRoute
   '/channels/$name': typeof ChannelsNameRoute
   '/config/raw': typeof ConfigRawRoute
+  '/documents/$name': typeof DocumentsNameRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
 }
 export interface FileRoutesByTo {
@@ -134,13 +155,16 @@ export interface FileRoutesByTo {
   '/launcher-login': typeof LauncherLoginRoute
   '/launcher-setup': typeof LauncherSetupRoute
   '/logs': typeof LogsRoute
+  '/me': typeof MeRoute
   '/models': typeof ModelsRoute
   '/sessions': typeof SessionsRouteWithChildren
+  '/tasks': typeof TasksRoute
   '/agent/hub': typeof AgentHubRoute
   '/agent/skills': typeof AgentSkillsRoute
   '/agent/tools': typeof AgentToolsRoute
   '/channels/$name': typeof ChannelsNameRoute
   '/config/raw': typeof ConfigRawRoute
+  '/documents/$name': typeof DocumentsNameRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
 }
 export interface FileRoutesById {
@@ -153,13 +177,16 @@ export interface FileRoutesById {
   '/launcher-login': typeof LauncherLoginRoute
   '/launcher-setup': typeof LauncherSetupRoute
   '/logs': typeof LogsRoute
+  '/me': typeof MeRoute
   '/models': typeof ModelsRoute
   '/sessions': typeof SessionsRouteWithChildren
+  '/tasks': typeof TasksRoute
   '/agent/hub': typeof AgentHubRoute
   '/agent/skills': typeof AgentSkillsRoute
   '/agent/tools': typeof AgentToolsRoute
   '/channels/$name': typeof ChannelsNameRoute
   '/config/raw': typeof ConfigRawRoute
+  '/documents/$name': typeof DocumentsNameRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
 }
 export interface FileRouteTypes {
@@ -173,13 +200,16 @@ export interface FileRouteTypes {
     | '/launcher-login'
     | '/launcher-setup'
     | '/logs'
+    | '/me'
     | '/models'
     | '/sessions'
+    | '/tasks'
     | '/agent/hub'
     | '/agent/skills'
     | '/agent/tools'
     | '/channels/$name'
     | '/config/raw'
+    | '/documents/$name'
     | '/sessions/$sessionId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -191,13 +221,16 @@ export interface FileRouteTypes {
     | '/launcher-login'
     | '/launcher-setup'
     | '/logs'
+    | '/me'
     | '/models'
     | '/sessions'
+    | '/tasks'
     | '/agent/hub'
     | '/agent/skills'
     | '/agent/tools'
     | '/channels/$name'
     | '/config/raw'
+    | '/documents/$name'
     | '/sessions/$sessionId'
   id:
     | '__root__'
@@ -209,13 +242,16 @@ export interface FileRouteTypes {
     | '/launcher-login'
     | '/launcher-setup'
     | '/logs'
+    | '/me'
     | '/models'
     | '/sessions'
+    | '/tasks'
     | '/agent/hub'
     | '/agent/skills'
     | '/agent/tools'
     | '/channels/$name'
     | '/config/raw'
+    | '/documents/$name'
     | '/sessions/$sessionId'
   fileRoutesById: FileRoutesById
 }
@@ -228,12 +264,22 @@ export interface RootRouteChildren {
   LauncherLoginRoute: typeof LauncherLoginRoute
   LauncherSetupRoute: typeof LauncherSetupRoute
   LogsRoute: typeof LogsRoute
+  MeRoute: typeof MeRoute
   ModelsRoute: typeof ModelsRoute
   SessionsRoute: typeof SessionsRouteWithChildren
+  TasksRoute: typeof TasksRoute
+  DocumentsNameRoute: typeof DocumentsNameRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/tasks': {
+      id: '/tasks'
+      path: '/tasks'
+      fullPath: '/tasks'
+      preLoaderRoute: typeof TasksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/sessions': {
       id: '/sessions'
       path: '/sessions'
@@ -246,6 +292,13 @@ declare module '@tanstack/react-router' {
       path: '/models'
       fullPath: '/models'
       preLoaderRoute: typeof ModelsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/me': {
+      id: '/me'
+      path: '/me'
+      fullPath: '/me'
+      preLoaderRoute: typeof MeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/logs': {
@@ -310,6 +363,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/sessions/$sessionId'
       preLoaderRoute: typeof SessionsSessionIdRouteImport
       parentRoute: typeof SessionsRoute
+    }
+    '/documents/$name': {
+      id: '/documents/$name'
+      path: '/documents/$name'
+      fullPath: '/documents/$name'
+      preLoaderRoute: typeof DocumentsNameRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/config/raw': {
       id: '/config/raw'
@@ -407,8 +467,11 @@ const rootRouteChildren: RootRouteChildren = {
   LauncherLoginRoute: LauncherLoginRoute,
   LauncherSetupRoute: LauncherSetupRoute,
   LogsRoute: LogsRoute,
+  MeRoute: MeRoute,
   ModelsRoute: ModelsRoute,
   SessionsRoute: SessionsRouteWithChildren,
+  TasksRoute: TasksRoute,
+  DocumentsNameRoute: DocumentsNameRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
