@@ -38,6 +38,9 @@ func TestAndroidDeviceLoginBearerWebGrantAndRevoke(t *testing.T) {
 	mux.HandleFunc("GET /api/sessions", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"device_id": middleware.LauncherDeviceID(r)})
 	})
+	mux.HandleFunc("POST /pico/upload", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"device_id": middleware.LauncherDeviceID(r)})
+	})
 	handler := middleware.LauncherDashboardAuth(middleware.LauncherDashboardAuthConfig{
 		ExpectedCookie: "browser-session",
 		DeviceAuth:     store,
@@ -64,6 +67,13 @@ func TestAndroidDeviceLoginBearerWebGrantAndRevoke(t *testing.T) {
 	handler.ServeHTTP(protected, req)
 	if protected.Code != http.StatusOK {
 		t.Fatalf("bearer status %d: %s", protected.Code, protected.Body.String())
+	}
+	upload := httptest.NewRecorder()
+	uploadReq := httptest.NewRequest(http.MethodPost, "/pico/upload", nil)
+	uploadReq.Header.Set("Authorization", "Bearer "+credential.Token)
+	handler.ServeHTTP(upload, uploadReq)
+	if upload.Code != http.StatusOK {
+		t.Fatalf("upload bearer status %d: %s", upload.Code, upload.Body.String())
 	}
 	denied := httptest.NewRecorder()
 	deniedReq := httptest.NewRequest(http.MethodGet, "/api/protected", nil)
