@@ -486,6 +486,11 @@ func setupAndStartServices(
 
 	runningServices.authToken = authToken
 	runningServices.HealthServer = health.NewServer(listenResult.ProbeHost, cfg.Gateway.Port, authToken)
+	runningServices.HealthServer.SetNotifyFunc(
+		func(ctx context.Context, channel, to, content string) error {
+			return runningServices.ChannelManager.SendToChannelSync(ctx, channel, to, content)
+		},
+	)
 
 	var listenAddr string
 	if len(listenResult.Listeners) > 0 {

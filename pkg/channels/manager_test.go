@@ -436,6 +436,41 @@ func TestSendWithRetry_Success(t *testing.T) {
 	}
 }
 
+func TestSendToChannelSyncReportsDeliveryResult(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		manager := newTestManager()
+		channel := &mockChannel{}
+		manager.channels["weixin"] = channel
+		manager.workers["weixin"] = &channelWorker{
+			ch:      channel,
+			limiter: rate.NewLimiter(rate.Inf, 1),
+		}
+
+		if err := manager.SendToChannelSync(t.Context(), "weixin", "owner", "done"); err != nil {
+			t.Fatal(err)
+		}
+		if len(channel.sentMessages) != 1 || channel.sentMessages[0].ChatID != "owner" {
+			t.Fatalf("sent messages = %#v", channel.sentMessages)
+		}
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		manager := newTestManager()
+		channel := &mockChannel{sendFn: func(context.Context, bus.OutboundMessage) error {
+			return ErrSendFailed
+		}}
+		manager.channels["weixin"] = channel
+		manager.workers["weixin"] = &channelWorker{
+			ch:      channel,
+			limiter: rate.NewLimiter(rate.Inf, 1),
+		}
+
+		if err := manager.SendToChannelSync(t.Context(), "weixin", "owner", "done"); err == nil {
+			t.Fatal("expected delivery failure")
+		}
+	})
+}
+
 func TestSendWithRetryPublishesOutboundRuntimeEvents(t *testing.T) {
 	eventBus := runtimeevents.NewBus()
 	defer func() {

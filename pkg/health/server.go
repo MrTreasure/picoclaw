@@ -20,6 +20,7 @@ type Server struct {
 	checks     map[string]Check
 	startTime  time.Time
 	reloadFunc func() error
+	notifyFunc func(context.Context, string, string, string) error
 	authToken  string // optional bearer token for protected endpoints
 }
 
@@ -49,6 +50,7 @@ func NewServer(host string, port int, token string) *Server {
 	mux.HandleFunc("/health", s.healthHandler)
 	mux.HandleFunc("/ready", s.readyHandler)
 	mux.HandleFunc("/reload", s.reloadHandler)
+	mux.HandleFunc("/internal/notify", s.notifyHandler)
 
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	s.server = &http.Server{
@@ -117,6 +119,15 @@ func (s *Server) SetReloadFunc(fn func() error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reloadFunc = fn
+}
+
+// SetNotifyFunc configures direct delivery through the gateway's running
+// channel manager. The HTTP endpoint remains protected by the ephemeral token
+// stored in the owner-only PID file.
+func (s *Server) SetNotifyFunc(fn func(context.Context, string, string, string) error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.notifyFunc = fn
 }
 
 func (s *Server) reloadHandler(w http.ResponseWriter, r *http.Request) {
@@ -231,6 +242,7 @@ func (s *Server) RegisterOnMux(mux HandlerMux) {
 	mux.HandleFunc("/health", s.healthHandler)
 	mux.HandleFunc("/ready", s.readyHandler)
 	mux.HandleFunc("/reload", s.reloadHandler)
+	mux.HandleFunc("/internal/notify", s.notifyHandler)
 }
 
 func statusString(ok bool) string {

@@ -25,6 +25,7 @@ import (
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/mcp"
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/migrate"
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/model"
+	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/notify"
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/onboard"
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/skills"
 	"github.com/sipeed/picoclaw/cmd/picoclaw/internal/status"
@@ -139,6 +140,7 @@ picoclaw --no-color status`,
 		migrate.NewMigrateCommand(),
 		skills.NewSkillsCommand(),
 		model.NewModelCommand(),
+		notify.NewNotifyCommand(),
 		updater.NewUpdateCommand("picoclaw"),
 		version.NewVersionCommand(),
 	)

@@ -2132,3 +2132,37 @@ func (m *Manager) SendToChannel(ctx context.Context, channelName, chatID, conten
 	_, err := channel.Send(ctx, msg)
 	return err
 }
+
+// SendToChannelSync delivers a direct notification through an already running
+// channel and reports failure to the caller. It is intended for authenticated
+// local control requests that need delivery confirmation rather than queueing.
+func (m *Manager) SendToChannelSync(ctx context.Context, channelName, chatID, content string) error {
+	m.mu.RLock()
+	_, exists := m.channels[channelName]
+	w, workerExists := m.workers[channelName]
+	m.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("channel %s not found", channelName)
+	}
+	if !workerExists || w == nil {
+		return fmt.Errorf("channel %s has no active worker", channelName)
+	}
+
+	msg := bus.NormalizeOutboundMessage(bus.OutboundMessage{
+		Context: bus.NewOutboundContext(channelName, chatID, ""),
+		Content: content,
+	})
+	maxLen := 0
+	if provider, ok := w.ch.(MessageLengthProvider); ok {
+		maxLen = provider.MaxMessageLength()
+	}
+	for _, chunk := range m.splitOutboundMessageChunks(channelName, msg, maxLen) {
+		chunkMessage := msg
+		chunkMessage.Content = chunk
+		if _, sent := m.sendWithRetry(ctx, channelName, w, chunkMessage); !sent {
+			return fmt.Errorf("channel %s delivery failed", channelName)
+		}
+	}
+	return nil
+}
