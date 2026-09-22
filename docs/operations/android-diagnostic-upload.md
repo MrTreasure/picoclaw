@@ -6,7 +6,7 @@
 scripts/muse-diagnostic-qr.sh
 ```
 
-在另一块屏幕上打开生成的 PNG，然后在 MuseC137 Android 的“设置 → 扫码上传诊断日志”扫描。
+在另一块屏幕上打开生成的 SVG，然后在 MuseC137 Android 的“设置 → 扫码上传诊断日志”扫描。
 上传需要应用现有设备令牌；二维码只用于关联工单，不包含凭据。服务端文件保存到
 `/vol1/picoclaw/home/android-diagnostics/`，文件名包含二维码输出的 ticket。
 

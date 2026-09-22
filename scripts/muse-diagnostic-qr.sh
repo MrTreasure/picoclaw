@@ -11,12 +11,13 @@ import secrets
 import sys
 
 import qrcode
+import qrcode.image.svg
 
 output_dir = sys.argv[1]
 ticket = base64.urlsafe_b64encode(secrets.token_bytes(15)).decode().rstrip("=")
 payload = f"musec137://diagnostics/upload?ticket={ticket}"
-path = os.path.join(output_dir, f"{ticket}.png")
-qrcode.make(payload).save(path)
+path = os.path.join(output_dir, f"{ticket}.svg")
+qrcode.make(payload, image_factory=qrcode.image.svg.SvgPathImage).save(path)
 os.chmod(path, 0o644)
 print(f"ticket={ticket}")
 print(f"qr={path}")
