@@ -1,0 +1,232 @@
+import {
+  IconMessageCircle,
+  IconMessagePlus,
+  IconSearch,
+  IconTrash,
+} from "@tabler/icons-react"
+import { useNavigate } from "@tanstack/react-router"
+import dayjs from "dayjs"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { useTranslation } from "react-i18next"
+
+import type { SessionSummary } from "@/api/sessions"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { usePicoChat } from "@/hooks/use-pico-chat"
+import { useSessionHistory } from "@/hooks/use-session-history"
+
+export function SessionListPage() {
+  const { t } = useTranslation()
+  const navigate = useNavigate()
+  const { activeSessionId, switchSession, newChat } = usePicoChat()
+  const [query, setQuery] = useState("")
+  const [pendingDelete, setPendingDelete] = useState<SessionSummary | null>(
+    null,
+  )
+  const loadedRef = useRef(false)
+  const {
+    sessions,
+    hasMore,
+    loadError,
+    loadErrorMessage,
+    observerRef,
+    loadSessions,
+    handleDeleteSession,
+  } = useSessionHistory({
+    activeSessionId,
+    onDeletedActiveSession: newChat,
+  })
+
+  useEffect(() => {
+    if (loadedRef.current) return
+    loadedRef.current = true
+    void loadSessions(true)
+  }, [loadSessions])
+
+  const filteredSessions = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase()
+    if (!normalizedQuery) return sessions
+    return sessions.filter((session) =>
+      `${session.title} ${session.preview}`
+        .toLocaleLowerCase()
+        .includes(normalizedQuery),
+    )
+  }, [query, sessions])
+
+  const openSession = async (sessionId: string) => {
+    await switchSession(sessionId)
+    await navigate({ to: "/" })
+  }
+
+  const createSession = async () => {
+    await newChat()
+    await navigate({ to: "/" })
+  }
+
+  return (
+    <div className="bg-background flex h-full min-h-0 flex-col">
+      <header className="border-border/70 bg-background/92 flex h-[calc(4rem+env(safe-area-inset-top))] shrink-0 items-end border-b px-4 pb-1 backdrop-blur-xl">
+        <div className="flex h-14 w-full items-center justify-between">
+          <div className="size-12" aria-hidden="true" />
+          <h1 className="text-xl font-semibold tracking-tight">
+            {t("navigation.chat")}
+          </h1>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-12 rounded-full"
+            onClick={() => void createSession()}
+            aria-label={t("chat.newChat")}
+          >
+            <IconMessagePlus className="size-6" aria-hidden="true" />
+          </Button>
+        </div>
+      </header>
+
+      <main className="min-h-0 flex-1 overflow-y-auto pb-[env(safe-area-inset-bottom)]">
+        <div className="mx-auto w-full max-w-3xl px-3 py-3 sm:px-6">
+          <label className="bg-card border-border/70 focus-within:border-ring mb-3 flex min-h-12 items-center gap-3 rounded-2xl border px-4 transition-colors">
+            <IconSearch
+              className="text-muted-foreground size-5 shrink-0"
+              aria-hidden="true"
+            />
+            <span className="sr-only">搜索会话</span>
+            <Input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索会话"
+              className="h-11 border-0 bg-transparent px-0 text-base shadow-none focus-visible:ring-0 dark:bg-transparent"
+            />
+          </label>
+
+          {loadError && (
+            <div className="border-destructive/40 bg-destructive/10 text-destructive mb-3 flex min-h-12 items-center justify-between rounded-xl border px-4 text-sm">
+              <span>{loadErrorMessage}</span>
+              <Button variant="ghost" onClick={() => void loadSessions(true)}>
+                重试
+              </Button>
+            </div>
+          )}
+
+          {!loadError && filteredSessions.length === 0 && (
+            <div className="text-muted-foreground flex flex-col items-center px-6 py-20 text-center">
+              <div className="bg-muted mb-5 flex size-16 items-center justify-center rounded-2xl">
+                <IconMessageCircle className="size-8" aria-hidden="true" />
+              </div>
+              <p className="text-foreground text-lg font-semibold">
+                {query ? "没有匹配的会话" : t("chat.noHistory")}
+              </p>
+              <p className="mt-2 text-sm">点击右上角开始一段新对话</p>
+            </div>
+          )}
+
+          <div className="border-border/70 bg-card overflow-hidden rounded-2xl border">
+            {filteredSessions.map((session, index) => {
+              const isActive = session.id === activeSessionId
+              return (
+                <div
+                  key={session.id}
+                  className={`group flex min-h-23 items-center gap-3 px-3 py-3 sm:px-4 ${index > 0 ? "border-border/60 border-t" : ""}`}
+                >
+                  <button
+                    type="button"
+                    className="focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left focus-visible:ring-2 focus-visible:outline-none"
+                    onClick={() => void openSession(session.id)}
+                  >
+                    <span
+                      className={`flex size-14 shrink-0 items-center justify-center rounded-2xl ${isActive ? "bg-accent text-accent-foreground" : "bg-muted text-muted-foreground"}`}
+                    >
+                      <IconMessageCircle
+                        className="size-7"
+                        aria-hidden="true"
+                      />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center justify-between gap-3">
+                        <span className="truncate text-[17px] font-semibold">
+                          {session.title || "新对话"}
+                        </span>
+                        <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+                          {dayjs(session.updated).format("HH:mm")}
+                        </span>
+                      </span>
+                      <span className="text-muted-foreground mt-1 block truncate text-sm">
+                        {session.preview ||
+                          t("chat.messagesCount", {
+                            count: session.message_count,
+                          })}
+                      </span>
+                      {isActive && (
+                        <span className="text-secondary mt-1 block text-xs font-medium">
+                          当前会话
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive size-12 rounded-full"
+                    onClick={() => setPendingDelete(session)}
+                    aria-label={t("chat.deleteSession")}
+                  >
+                    <IconTrash className="size-5" aria-hidden="true" />
+                  </Button>
+                </div>
+              )
+            })}
+          </div>
+
+          {hasMore && sessions.length > 0 && !query && (
+            <div
+              ref={observerRef}
+              className="text-muted-foreground py-5 text-center text-sm"
+            >
+              {t("chat.loadingMore")}
+            </div>
+          )}
+        </div>
+      </main>
+
+      <AlertDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("chat.deleteSessionTitle")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("chat.deleteSessionDescription", {
+                title: pendingDelete?.title ?? "",
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (pendingDelete) void handleDeleteSession(pendingDelete.id)
+                setPendingDelete(null)
+              }}
+            >
+              {t("chat.deleteSession")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}

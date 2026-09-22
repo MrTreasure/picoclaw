@@ -1,17 +1,16 @@
 import {
   IconAdjustments,
+  IconArrowLeft,
   IconMessagePlus,
   IconSettings,
 } from "@tabler/icons-react"
 import { Link } from "@tanstack/react-router"
-import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import type { ModelInfo } from "@/api/models"
-import type { SessionSummary } from "@/api/sessions"
 import { ModelSelector } from "@/components/chat/model-selector"
 import { PushNotificationControl } from "@/components/chat/push-notification-control"
-import { SessionHistoryMenu } from "@/components/chat/session-history-menu"
 import { Button } from "@/components/ui/button"
 import {
   Popover,
@@ -37,16 +36,8 @@ interface ChatControlsProps {
   onSetDefault: (modelName: string) => void
   detailVisibility: AssistantDetailVisibility
   onDetailVisibilityChange: (value: AssistantDetailVisibility) => void
-  sessions: SessionSummary[]
-  activeSessionId: string
-  hasMoreSessions: boolean
-  historyLoadError: boolean
-  historyLoadErrorMessage: string
-  historyObserverRef: RefObject<HTMLDivElement | null>
-  onHistoryOpenChange: (open: boolean) => void
-  onSwitchSession: (sessionId: string) => void
-  onDeleteSession: (sessionId: string) => void
   onNewChat: () => void
+  onBack: () => void
   connectionState: ConnectionState
 }
 
@@ -99,18 +90,16 @@ export function ChatControls(props: ChatControlsProps) {
   return (
     <div className="border-border/70 bg-background/92 absolute inset-x-0 top-0 z-40 flex h-[calc(4rem+env(safe-area-inset-top))] items-end border-b px-2 pb-1 backdrop-blur-xl md:px-4">
       <div className="flex h-14 w-full items-center justify-between">
-        <SessionHistoryMenu
-          compact
-          sessions={props.sessions}
-          activeSessionId={props.activeSessionId}
-          hasMore={props.hasMoreSessions}
-          loadError={props.historyLoadError}
-          loadErrorMessage={props.historyLoadErrorMessage}
-          observerRef={props.historyObserverRef}
-          onOpenChange={props.onHistoryOpenChange}
-          onSwitchSession={props.onSwitchSession}
-          onDeleteSession={props.onDeleteSession}
-        />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-12 rounded-full"
+          onClick={props.onBack}
+          aria-label={t("chat.history")}
+          title={t("chat.history")}
+        >
+          <IconArrowLeft className="size-6" aria-hidden="true" />
+        </Button>
 
         <button
           type="button"

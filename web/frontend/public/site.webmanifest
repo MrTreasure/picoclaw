@@ -10,8 +10,8 @@
   "display_override": ["window-controls-overlay", "standalone"],
   "orientation": "any",
   "categories": ["productivity", "utilities"],
-  "theme_color": "#171717",
-  "background_color": "#171717",
+  "theme_color": "#0f0f10",
+  "background_color": "#0f0f10",
   "icons": [
     {
       "src": "/web-app-manifest-192x192.png?v=musec137-5",

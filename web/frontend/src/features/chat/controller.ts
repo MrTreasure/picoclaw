@@ -14,6 +14,7 @@ import {
   clearStoredSessionId,
   generateSessionId,
   readStoredSessionId,
+  writeStoredSessionId,
 } from "@/features/chat/state"
 import { invalidateSocket, isCurrentSocket } from "@/features/chat/websocket"
 import i18n from "@/i18n"
@@ -36,14 +37,70 @@ let unsubscribeGateway: (() => void) | null = null
 let hydratePromise: Promise<void> | null = null
 let connectionGeneration = 0
 let reconnectTimer: number | null = null
+let probeTimer: number | null = null
 let reconnectAttempts = 0
 let shouldMaintainConnection = false
+let lastPongAt = 0
 
 function clearReconnectTimer() {
   if (reconnectTimer !== null) {
     window.clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
+}
+
+function clearProbeTimer() {
+  if (probeTimer !== null) {
+    window.clearTimeout(probeTimer)
+    probeTimer = null
+  }
+}
+
+function reconnectStaleSocket() {
+  if (
+    !shouldMaintainConnection ||
+    store.get(gatewayAtom).status !== "running"
+  ) {
+    return
+  }
+  connectionGeneration += 1
+  clearReconnectTimer()
+  clearProbeTimer()
+  const socket = wsRef
+  wsRef = null
+  isConnecting = false
+  invalidateSocket(socket)
+  updateChatStore({ connectionState: "connecting" })
+  void connectChat()
+}
+
+function probeActiveConnection() {
+  if (document.visibilityState === "hidden") return
+  const socket = wsRef
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    reconnectStaleSocket()
+    return
+  }
+
+  const startedAt = Date.now()
+  try {
+    socket.send(
+      JSON.stringify({ type: "ping", session_id: activeSessionIdRef }),
+    )
+  } catch {
+    reconnectStaleSocket()
+    return
+  }
+
+  clearProbeTimer()
+  probeTimer = window.setTimeout(() => {
+    probeTimer = null
+    if (lastPongAt < startedAt) reconnectStaleSocket()
+  }, 4_000)
+}
+
+function handlePageResume() {
+  if (document.visibilityState === "visible") probeActiveConnection()
 }
 
 function shouldReconnectFor(generation: number, sessionId: string): boolean {
@@ -108,6 +165,7 @@ async function reconcileSessionAfterConnect({
 
 function setActiveSessionId(sessionId: string) {
   activeSessionIdRef = sessionId
+  writeStoredSessionId(sessionId)
   updateChatStore({ activeSessionId: sessionId })
 }
 
@@ -118,6 +176,7 @@ function disconnectChatInternal({
 }) {
   connectionGeneration += 1
   clearReconnectTimer()
+  clearProbeTimer()
 
   if (clearDesiredConnection) {
     shouldMaintainConnection = false
@@ -190,6 +249,7 @@ export async function connectChat() {
       updateChatStore({ connectionState: "connected" })
       isConnecting = false
       reconnectAttempts = 0
+      lastPongAt = Date.now()
       void reconcileSessionAfterConnect({ socket, generation, sessionId })
     }
 
@@ -209,6 +269,10 @@ export async function connectChat() {
 
       try {
         const message = JSON.parse(event.data) as PicoMessage
+        if (message.type === "pong") {
+          lastPongAt = Date.now()
+          clearProbeTimer()
+        }
         queuePicoMessage(message, sessionId)
       } catch {
         console.warn("Non-JSON message from pico:", event.data)
@@ -230,10 +294,11 @@ export async function connectChat() {
       }
       wsRef = null
       isConnecting = false
-      updateChatStore({
-        connectionState: "disconnected",
-        isTyping: false,
-      })
+      updateChatStore(
+        document.visibilityState === "hidden"
+          ? { isTyping: false }
+          : { connectionState: "connecting", isTyping: false },
+      )
       scheduleReconnect(generation, sessionId)
     }
 
@@ -251,7 +316,7 @@ export async function connectChat() {
         return
       }
       isConnecting = false
-      updateChatStore({ connectionState: "error" })
+      updateChatStore({ connectionState: "connecting" })
       scheduleReconnect(generation, sessionId)
     }
 
@@ -482,6 +547,9 @@ export function initializeChatStore() {
   }
 
   unsubscribeGateway = store.sub(gatewayAtom, syncConnectionWithGateway)
+  document.addEventListener("visibilitychange", handlePageResume)
+  window.addEventListener("pageshow", handlePageResume)
+  window.addEventListener("online", handlePageResume)
 
   // Start the status request and history hydration together. The active
   // session ID is known before either request begins, and hydrateActiveSession
@@ -504,6 +572,9 @@ export function initializeChatStore() {
 export function teardownChatStore() {
   unsubscribeGateway?.()
   unsubscribeGateway = null
+  document.removeEventListener("visibilitychange", handlePageResume)
+  window.removeEventListener("pageshow", handlePageResume)
+  window.removeEventListener("online", handlePageResume)
   initialized = false
   cancelQueuedPicoMessages()
   disconnectChat()

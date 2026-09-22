@@ -1,6 +1,7 @@
-const CACHE_VERSION = "musec137-shell-v8"
+const CACHE_VERSION = "musec137-shell-v9"
 const APP_SHELL = [
   "/",
+  "/sessions",
   "/offline.html",
   "/site.webmanifest?v=musec137-5",
   "/favicon-96x96.png?v=musec137-5",

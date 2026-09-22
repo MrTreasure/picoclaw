@@ -9,8 +9,10 @@ import { SidebarProvider } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 
 export function AppLayout({ children }: { children: ReactNode }) {
-  const isChat = useRouterState({
-    select: (state) => state.location.pathname === "/",
+  const isChatShell = useRouterState({
+    select: (state) =>
+      state.location.pathname === "/" ||
+      state.location.pathname === "/sessions",
   })
 
   return (
@@ -22,10 +24,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
         >
           跳到主要内容
         </a>
-        {!isChat && <AppHeader />}
+        {!isChatShell && <AppHeader />}
 
         <div className="flex flex-1 overflow-hidden">
-          {!isChat && <AppSidebar />}
+          {!isChatShell && <AppSidebar />}
           <div className="flex w-full flex-col overflow-hidden">
             <main
               id="main-content"

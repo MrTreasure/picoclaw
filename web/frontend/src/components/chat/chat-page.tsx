@@ -1,4 +1,5 @@
 import { IconArrowDown } from "@tabler/icons-react"
+import { useNavigate } from "@tanstack/react-router"
 import { useAtom } from "jotai"
 import {
   type ChangeEvent,
@@ -29,7 +30,6 @@ import {
 import { useChatModels } from "@/hooks/use-chat-models"
 import { useGateway } from "@/hooks/use-gateway"
 import { usePicoChat } from "@/hooks/use-pico-chat"
-import { useSessionHistory } from "@/hooks/use-session-history"
 import type { ConnectionState } from "@/store/chat"
 import type { ChatAttachment } from "@/store/chat"
 import {
@@ -96,6 +96,7 @@ function resolveChatInputDisabledReason({
 
 export function ChatPage() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dragDepthRef = useRef(0)
@@ -111,10 +112,8 @@ export function ChatPage() {
     messages,
     connectionState,
     isTyping,
-    activeSessionId,
     contextUsage,
     sendMessage,
-    switchSession,
     newChat,
   } = usePicoChat()
 
@@ -137,19 +136,38 @@ export function ChatPage() {
     gatewayState: gwState,
   })
   const canInput = inputDisabledReason === null
+  const isTransientConnectionState =
+    inputDisabledReason === "websocketConnecting" ||
+    inputDisabledReason === "websocketDisconnected" ||
+    inputDisabledReason === "websocketError"
+  const canCompose = canInput || isTransientConnectionState
+  const composerDisabledReason = isTransientConnectionState
+    ? null
+    : inputDisabledReason
 
-  const {
-    sessions,
-    hasMore,
-    loadError,
-    loadErrorMessage,
-    observerRef,
-    loadSessions,
-    handleDeleteSession,
-  } = useSessionHistory({
-    activeSessionId,
-    onDeletedActiveSession: newChat,
-  })
+  useEffect(() => {
+    const currentState = window.history.state as Record<string, unknown> | null
+    if (currentState?.museChatGuard !== true) {
+      window.history.replaceState(
+        { ...currentState, museChatBase: true },
+        "",
+        window.location.href,
+      )
+      window.history.pushState(
+        { ...currentState, museChatGuard: true },
+        "",
+        window.location.href,
+      )
+    }
+
+    const handleBack = () => {
+      if (window.location.pathname === "/") {
+        void navigate({ to: "/sessions", replace: true })
+      }
+    }
+    window.addEventListener("popstate", handleBack)
+    return () => window.removeEventListener("popstate", handleBack)
+  }, [navigate])
 
   const syncScrollState = (element: HTMLDivElement) => {
     const { clientHeight, scrollHeight, scrollTop } = element
@@ -195,7 +213,7 @@ export function ChatPage() {
   }
 
   const handleAddImages = () => {
-    if (!canInput) return
+    if (!canCompose) return
     fileInputRef.current?.click()
   }
 
@@ -204,7 +222,7 @@ export function ChatPage() {
   }
 
   const appendImageFiles = async (files: readonly File[]) => {
-    if (!canInput || files.length === 0) {
+    if (!canCompose || files.length === 0) {
       return
     }
 
@@ -249,7 +267,7 @@ export function ChatPage() {
     }
 
     event.preventDefault()
-    if (!canInput) {
+    if (!canCompose) {
       return
     }
     dragDepthRef.current += 1
@@ -262,7 +280,7 @@ export function ChatPage() {
     }
 
     event.preventDefault()
-    if (!canInput) {
+    if (!canCompose) {
       resetDragState()
       return
     }
@@ -278,7 +296,7 @@ export function ChatPage() {
     }
 
     event.preventDefault()
-    event.dataTransfer.dropEffect = canInput ? "copy" : "none"
+    event.dataTransfer.dropEffect = canCompose ? "copy" : "none"
   }
 
   const handleComposerDrop = async (event: DragEvent<HTMLDivElement>) => {
@@ -290,7 +308,7 @@ export function ChatPage() {
     const files = getTransferredFiles(event.dataTransfer)
     resetDragState()
 
-    if (!canInput || files.length === 0) {
+    if (!canCompose || files.length === 0) {
       return
     }
 
@@ -313,18 +331,8 @@ export function ChatPage() {
         onSetDefault={handleSetDefault}
         detailVisibility={assistantDetailVisibility}
         onDetailVisibilityChange={setAssistantDetailVisibility}
-        sessions={sessions}
-        activeSessionId={activeSessionId}
-        hasMoreSessions={hasMore}
-        historyLoadError={loadError}
-        historyLoadErrorMessage={loadErrorMessage}
-        historyObserverRef={observerRef}
-        onHistoryOpenChange={(open) => {
-          if (open) void loadSessions(true)
-        }}
-        onSwitchSession={switchSession}
-        onDeleteSession={handleDeleteSession}
         onNewChat={newChat}
+        onBack={() => window.history.back()}
         connectionState={connectionState}
       />
 
@@ -421,7 +429,7 @@ export function ChatPage() {
             setInput("")
           }
         }}
-        inputDisabledReason={inputDisabledReason}
+        inputDisabledReason={composerDisabledReason}
         canSend={canSubmit}
         isGenerating={isGenerating}
         isDragActive={isDragActive}

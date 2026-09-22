@@ -42,7 +42,12 @@ export function getInitialActiveSessionId(): string {
     writeStoredSessionId(linkedSession.trim())
     return linkedSession.trim()
   }
-  return readStorageValue() || generateSessionId()
+  const storedSession = readStorageValue()
+  if (storedSession) return storedSession
+
+  const generatedSession = generateSessionId()
+  writeStoredSessionId(generatedSession)
+  return generatedSession
 }
 
 export function normalizeUnixTimestamp(timestamp: number): number {
