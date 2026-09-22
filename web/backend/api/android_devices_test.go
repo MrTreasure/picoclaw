@@ -3,9 +3,13 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/sipeed/picoclaw/web/backend/deviceauth"
@@ -18,6 +22,40 @@ func (s *androidTestPasswordStore) IsInitialized(context.Context) (bool, error) 
 func (s *androidTestPasswordStore) SetPassword(context.Context, string) error   { return nil }
 func (s *androidTestPasswordStore) VerifyPassword(_ context.Context, value string) (bool, error) {
 	return value == s.password, nil
+}
+
+func TestAndroidReleaseManifestAndDownload(t *testing.T) {
+	releaseDir := t.TempDir()
+	apk := []byte("signed-apk-fixture")
+	if err := os.WriteFile(filepath.Join(releaseDir, "MuseC137-0.3.0.apk"), apk, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(apk)
+	manifest := fmt.Sprintf(`{"version_code":3,"version_name":"0.3.0","filename":"MuseC137-0.3.0.apk","sha256":"%x","size":%d,"notes":"test","published_at":"2026-09-22T12:00:00+08:00"}`, hash, len(apk))
+	if err := os.WriteFile(filepath.Join(releaseDir, "latest.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	RegisterAndroidDeviceRoutes(mux, AndroidDeviceRouteOpts{ReleaseDir: releaseDir})
+	latest := httptest.NewRecorder()
+	mux.ServeHTTP(latest, httptest.NewRequest(http.MethodGet, "/api/android/releases/latest", nil))
+	if latest.Code != http.StatusOK {
+		t.Fatalf("latest status = %d: %s", latest.Code, latest.Body.String())
+	}
+	var got androidRelease
+	if err := json.Unmarshal(latest.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.DownloadURL != "/api/android/releases/download" || got.VersionCode != 3 {
+		t.Fatalf("unexpected release: %+v", got)
+	}
+
+	download := httptest.NewRecorder()
+	mux.ServeHTTP(download, httptest.NewRequest(http.MethodGet, got.DownloadURL, nil))
+	if download.Code != http.StatusOK || !bytes.Equal(download.Body.Bytes(), apk) {
+		t.Fatalf("download status=%d body=%q", download.Code, download.Body.Bytes())
+	}
 }
 
 func TestAndroidDeviceLoginBearerWebGrantAndRevoke(t *testing.T) {

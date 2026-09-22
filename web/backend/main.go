@@ -654,6 +654,7 @@ func main() {
 		PasswordStore: passwordStore,
 		DeviceStore:   deviceStore,
 		WebGrants:     webGrants,
+		ReleaseDir:    filepath.Join(picoHome, "android-releases"),
 	})
 
 	// API Routes (e.g. /api/status)

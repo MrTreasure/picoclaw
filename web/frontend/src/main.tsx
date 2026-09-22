@@ -10,7 +10,7 @@ import { routeTree } from "./routeTree.gen"
 
 const queryClient = new QueryClient()
 
-if ("serviceWorker" in navigator && import.meta.env.PROD) {
+if ("serviceWorker" in navigator && import.meta.env.PROD && !navigator.userAgent.includes("MuseC137-Android")) {
   window.addEventListener("load", () => {
     void navigator.serviceWorker.register("/sw.js", { scope: "/" })
   })
