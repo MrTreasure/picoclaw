@@ -1194,10 +1194,7 @@ func (c *WeixinChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMess
 	}
 
 	toUserID := normalizeWeixinUserID(msg.ChatID)
-	contextToken := ""
-	if v, ok := c.contextTokens.Load(toUserID); ok {
-		contextToken, _ = v.(string)
-	}
+	contextToken := c.loadContextToken(toUserID)
 	if contextToken == "" {
 		return nil, fmt.Errorf(
 			"weixin send media: missing context token for chat %s: %w",

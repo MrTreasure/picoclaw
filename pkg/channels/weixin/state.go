@@ -246,10 +246,7 @@ func (c *WeixinChannel) getTypingTicket(ctx context.Context, userID string) (str
 	retryDelay := entry.retryDelay
 	c.typingMu.Unlock()
 
-	contextToken := ""
-	if v, ok := c.contextTokens.Load(userID); ok {
-		contextToken, _ = v.(string)
-	}
+	contextToken := c.loadContextToken(userID)
 
 	resp, err := c.api.GetConfig(ctx, GetConfigReq{
 		IlinkUserID:  userID,

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,6 +30,28 @@ func TestIsContextTokenRejected(t *testing.T) {
 	}
 	if isContextTokenRejected(fmt.Errorf("sendmessage failed: ret=-14 errcode=0 errmsg=expired")) {
 		t.Fatal("session-expired errors must use the existing pause path")
+	}
+}
+
+func TestNormalizeWeixinUserIDPreservesCase(t *testing.T) {
+	const userID = "  o9cq80_cRvT-d8OqRgUMIPSvILvc@im.wechat  "
+	const want = "o9cq80_cRvT-d8OqRgUMIPSvILvc@im.wechat"
+	if got := normalizeWeixinUserID(userID); got != want {
+		t.Fatalf("normalizeWeixinUserID() = %q, want %q", got, want)
+	}
+}
+
+func TestLoadContextTokenSupportsLegacyLowercaseKey(t *testing.T) {
+	channel := &WeixinChannel{}
+	const userID = "o9cq80_cRvT-d8OqRgUMIPSvILvc@im.wechat"
+	channel.contextTokens.Store(strings.ToLower(userID), "legacy-token")
+	if got := channel.loadContextToken(userID); got != "legacy-token" {
+		t.Fatalf("loadContextToken() = %q, want legacy-token", got)
+	}
+
+	channel.contextTokens.Store(userID, "exact-token")
+	if got := channel.loadContextToken(userID); got != "exact-token" {
+		t.Fatalf("loadContextToken() = %q, want exact-token", got)
 	}
 }
 

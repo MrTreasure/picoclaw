@@ -150,7 +150,34 @@ func (c *WeixinChannel) persistContextTokens() {
 }
 
 func normalizeWeixinUserID(userID string) string {
-	return strings.ToLower(strings.TrimSpace(userID))
+	// iLink user IDs are opaque and case-sensitive. Only trim transport
+	// whitespace; lower-casing turns a valid recipient into a different ID.
+	return strings.TrimSpace(userID)
+}
+
+func legacyWeixinUserIDKey(userID string) string {
+	return strings.ToLower(normalizeWeixinUserID(userID))
+}
+
+func (c *WeixinChannel) loadContextToken(userID string) string {
+	userID = normalizeWeixinUserID(userID)
+	if value, ok := c.contextTokens.Load(userID); ok {
+		if token, ok := value.(string); ok && token != "" {
+			return token
+		}
+	}
+
+	// Versions that briefly normalized IDs to lower case persisted tokens
+	// under that key. Keep a read-only compatibility lookup so upgrading does
+	// not require a fresh inbound message; all new writes preserve the ID.
+	legacyKey := legacyWeixinUserIDKey(userID)
+	if legacyKey != userID {
+		if value, ok := c.contextTokens.Load(legacyKey); ok {
+			token, _ := value.(string)
+			return token
+		}
+	}
+	return ""
 }
 
 func (c *WeixinChannel) restoreInboundState() {
@@ -633,10 +660,7 @@ func (c *WeixinChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]st
 	toUserID := normalizeWeixinUserID(msg.ChatID)
 
 	// Retrieve context_token from our per-user map (stored on last inbound)
-	contextToken := ""
-	if ct, ok := c.contextTokens.Load(toUserID); ok {
-		contextToken, _ = ct.(string)
-	}
+	contextToken := c.loadContextToken(toUserID)
 
 	// If we don't have a context token for this user, we cannot send a valid reply.
 	// Treat this as a non-temporary error so the manager doesn't keep retrying.
