@@ -263,6 +263,54 @@ func cancelConfiguredStreamingLLM(ctx context.Context, exec *turnExecution) {
 	publisher.Cancel(ctx)
 }
 
+type committedStreamingParts struct {
+	content   bool
+	reasoning bool
+}
+
+// commitConfiguredStreamingBeforeTool keeps already-visible model output in
+// place while the tool loop continues. Cancel would emit message.delete and
+// make the chat bubble flash away before the same content is republished.
+func commitConfiguredStreamingBeforeTool(
+	ctx context.Context,
+	ts *turnState,
+	exec *turnExecution,
+) committedStreamingParts {
+	var committed committedStreamingParts
+	if exec == nil || exec.streamingPublisher == nil {
+		return committed
+	}
+	publisher := exec.streamingPublisher
+	exec.streamingPublisher = nil
+
+	if publisher.ReasoningPublished() {
+		committed.reasoning = true
+		if err := publisher.FinalizeReasoning(ctx, responseReasoningContent(exec.response)); err != nil {
+			logger.WarnCF("agent", "Failed to finalize streamed pico reasoning before tool call", map[string]any{
+				"channel": ts.channel,
+				"chat_id": ts.chatID,
+				"error":   err.Error(),
+			})
+		}
+	}
+	if publisher.Published() {
+		committed.content = true
+		if err := publisher.Finalize(ctx, exec.response.Content, nil); err != nil {
+			logger.WarnCF("agent", "Failed to finalize streamed pico content before tool call", map[string]any{
+				"channel": ts.channel,
+				"chat_id": ts.chatID,
+				"error":   err.Error(),
+			})
+		}
+		publisher.ClearFinalizedStreamMarker()
+		return committed
+	}
+	if !committed.reasoning {
+		publisher.Cancel(ctx)
+	}
+	return committed
+}
+
 func (p *Pipeline) configuredStreamingEligible(ts *turnState, exec *turnExecution) bool {
 	if p == nil || ts == nil || exec == nil || p.Bus == nil {
 		logger.DebugCF("agent", "configured streaming not used", map[string]any{

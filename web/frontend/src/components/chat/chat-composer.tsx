@@ -16,6 +16,7 @@ import {
   type ClipboardEvent as ReactClipboardEvent,
   type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  useEffect,
   useRef,
   useState,
 } from "react"
@@ -101,6 +102,7 @@ export function ChatComposer({
   const [skillPickerOpen, setSkillPickerOpen] = useState(false)
   const [skills, setSkills] = useState<SkillSupportItem[]>([])
   const [skillsLoading, setSkillsLoading] = useState(false)
+  const [skillsError, setSkillsError] = useState(false)
   const disabledMessage =
     inputDisabledReason === null
       ? null
@@ -130,16 +132,35 @@ export function ChatComposer({
     action()
   }
 
-  const openSkillPicker = async () => {
-    setSkillPickerOpen(true)
+  const loadSkills = async () => {
     if (skills.length > 0 || skillsLoading) return
     setSkillsLoading(true)
+    setSkillsError(false)
     try {
       const response = await getSkills()
       setSkills(response.skills)
+    } catch {
+      setSkillsError(true)
     } finally {
       setSkillsLoading(false)
     }
+  }
+
+  const openSkillPicker = () => {
+    setSkillPickerOpen(true)
+    void loadSkills()
+  }
+
+  useEffect(() => {
+    if (menuOpen) void loadSkills()
+    // Opening the menu is the prefetch boundary; state changes inside
+    // loadSkills must not restart the request.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuOpen])
+
+  const handleMenuOpenChange = (open: boolean) => {
+    setMenuOpen(open)
+    if (!open) setSkillPickerOpen(false)
   }
 
   const selectSkill = (name: string) => {
@@ -287,7 +308,7 @@ export function ChatComposer({
                   <IconArrowUp className="size-5" aria-hidden="true" />
                 </Button>
               ) : canInput ? (
-                <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+                <Popover open={menuOpen} onOpenChange={handleMenuOpenChange}>
                   <PopoverTrigger asChild>
                     <Button
                       type="button"
@@ -331,6 +352,20 @@ export function ChatComposer({
                             <IconLoader2 className="size-4 animate-spin" />
                             正在加载技能
                           </div>
+                        ) : skillsError ? (
+                          <div className="flex min-h-28 flex-col items-center justify-center gap-3 text-center">
+                            <p className="text-muted-foreground text-sm">
+                              技能加载失败
+                            </p>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="rounded-full"
+                              onClick={() => void loadSkills()}
+                            >
+                              重新加载
+                            </Button>
+                          </div>
                         ) : skills.length > 0 ? (
                           <div className="space-y-1">
                             {skills.map((skill) => (
@@ -367,7 +402,8 @@ export function ChatComposer({
                           {
                             label: "技能",
                             icon: IconSparkles,
-                            action: () => void openSkillPicker(),
+                            action: openSkillPicker,
+                            keepOpen: true,
                           },
                         ].map((item) => {
                           const Icon = item.icon
@@ -377,11 +413,15 @@ export function ChatComposer({
                               type="button"
                               className={cn(
                                 "focus-visible:ring-ring flex min-h-20 flex-col items-center justify-center gap-2 rounded-xl px-1 text-xs transition-colors focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-35",
-                                item.destructive
+                                "destructive" in item && item.destructive
                                   ? "text-destructive enabled:hover:bg-destructive/10"
                                   : "text-foreground enabled:hover:bg-muted",
                               )}
-                              onClick={() => runMenuAction(item.action)}
+                              onClick={() =>
+                                "keepOpen" in item && item.keepOpen
+                                  ? item.action()
+                                  : runMenuAction(item.action)
+                              }
                             >
                               <span className="bg-muted/80 flex size-11 items-center justify-center rounded-xl">
                                 <Icon className="size-5" aria-hidden="true" />

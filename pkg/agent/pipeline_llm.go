@@ -651,7 +651,7 @@ func (p *Pipeline) CallLLM(
 			})
 		return ControlBreak, nil
 	}
-	cancelConfiguredStreamingLLM(turnCtx, exec)
+	committedStream := commitConfiguredStreamingBeforeTool(turnCtx, ts, exec)
 
 	// Tool-call path: normalize and prepare for tool execution
 	exec.normalizedToolCalls = make([]providers.ToolCall, 0, len(exec.response.ToolCalls))
@@ -716,12 +716,20 @@ func (p *Pipeline) CallLLM(
 		ts.ingestMessage(turnCtx, al, assistantMsg)
 	}
 	if shouldPublishPicoToolCallInterim {
+		interimReasoning := reasoningContent
+		interimContent := exec.response.Content
+		if committedStream.reasoning {
+			interimReasoning = ""
+		}
+		if committedStream.content {
+			interimContent = ""
+		}
 		al.publishPicoToolCallInterim(
 			turnCtx,
 			ts,
 			exec.llmModelName,
-			reasoningContent,
-			exec.response.Content,
+			interimReasoning,
+			interimContent,
 			assistantMsg.ToolCalls,
 		)
 	}

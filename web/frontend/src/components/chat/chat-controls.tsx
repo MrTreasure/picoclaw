@@ -1,4 +1,5 @@
-import { IconSettings } from "@tabler/icons-react"
+import { IconArrowLeft, IconSettings } from "@tabler/icons-react"
+import { Link } from "@tanstack/react-router"
 
 import type { ModelInfo, ModelThinkingLevel } from "@/api/models"
 import { Button } from "@/components/ui/button"
@@ -61,6 +62,17 @@ export function ChatControls({
   return (
     <header className="border-border/70 bg-background/92 absolute inset-x-0 top-0 z-40 flex h-[calc(4rem+env(safe-area-inset-top))] items-end border-b px-4 pb-1 backdrop-blur-xl">
       <div className="flex h-14 w-full items-center justify-center">
+        <Button
+          asChild
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="absolute bottom-1 left-2 size-12 rounded-full"
+        >
+          <Link to="/sessions" aria-label="返回会话列表">
+            <IconArrowLeft className="size-6" aria-hidden="true" />
+          </Link>
+        </Button>
         <div className="flex min-w-0 flex-col items-center justify-center text-center">
           <span className="flex max-w-full items-center gap-2 text-[17px] leading-5 font-semibold tracking-tight">
             <span className="truncate">MuseC137</span>

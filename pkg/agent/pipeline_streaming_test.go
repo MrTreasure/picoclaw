@@ -1088,15 +1088,15 @@ func TestConfiguredStreamingToolCallsUseCompleteStreamResponse(t *testing.T) {
 	if provider.chatCalls != 0 {
 		t.Fatalf("Chat calls = %d, want 0", provider.chatCalls)
 	}
-	if streamer.canceled != 1 {
-		t.Fatalf("streamer canceled = %d, want 1 for non-final tool-call response", streamer.canceled)
+	if streamer.canceled != 0 {
+		t.Fatalf("streamer canceled = %d, want 0 so visible tool-call text remains stable", streamer.canceled)
 	}
-	if len(streamer.finalized) != 1 || streamer.finalized[0] != "tool call handled" {
-		t.Fatalf("stream finalized = %v, want [tool call handled]", streamer.finalized)
+	if len(streamer.finalized) != 2 || streamer.finalized[0] != "need a tool" || streamer.finalized[1] != "tool call handled" {
+		t.Fatalf("stream finalized = %v, want [need a tool, tool call handled]", streamer.finalized)
 	}
 }
 
-func TestConfiguredStreamingResponseHandledToolCancelsProvisionalText(t *testing.T) {
+func TestConfiguredStreamingResponseHandledToolKeepsVisiblePrelude(t *testing.T) {
 	cfg := newConfiguredStreamingTestConfig(t, true, true, nil)
 	streamer := &recordingStreamer{}
 	msgBus := bus.NewMessageBus()
@@ -1123,11 +1123,11 @@ func TestConfiguredStreamingResponseHandledToolCancelsProvisionalText(t *testing
 	if got != "" {
 		t.Fatalf("response = %q, want empty response after handled delivery", got)
 	}
-	if streamer.canceled != 1 {
-		t.Fatalf("streamer canceled = %d, want 1", streamer.canceled)
+	if streamer.canceled != 0 {
+		t.Fatalf("streamer canceled = %d, want 0", streamer.canceled)
 	}
-	if len(streamer.finalized) != 0 {
-		t.Fatalf("stream finalized = %v, want provisional text retracted", streamer.finalized)
+	if len(streamer.finalized) != 1 || streamer.finalized[0] != "Preparing the voice reply." {
+		t.Fatalf("stream finalized = %v, want visible prelude retained", streamer.finalized)
 	}
 }
 

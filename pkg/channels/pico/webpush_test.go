@@ -1,6 +1,7 @@
 package pico
 
 import (
+	"context"
 	"testing"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
@@ -37,6 +38,25 @@ func TestValidWebPushSubscription(t *testing.T) {
 				t.Fatalf("validWebPushSubscription() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestNotifyFinalSkipsWebPushForLiveSession(t *testing.T) {
+	t.Parallel()
+
+	ch := &PicoChannel{
+		webPush: &picoPushService{
+			subscriptions: make(map[string]webpush.Subscription),
+		},
+		sessionConnections: map[string]map[string]*picoConn{
+			"live-session": {
+				"connection-1": {id: "connection-1", sessionID: "live-session"},
+			},
+		},
+	}
+
+	if err := ch.notifyFinal(context.Background(), "pico:live-session", "final answer"); err != nil {
+		t.Fatalf("notifyFinal() error = %v, want live WebSocket to bypass Web Push", err)
 	}
 }
 

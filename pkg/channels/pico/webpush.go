@@ -284,8 +284,14 @@ func (c *PicoChannel) notifyFinal(ctx context.Context, chatID, body string) erro
 	if c.webPush == nil {
 		return nil
 	}
+	sessionID := strings.TrimPrefix(chatID, "pico:")
+	// A live WebSocket already received the final message. Avoid blocking that
+	// foreground delivery on an obsolete or unreachable push subscription.
+	if len(c.sessionConnectionsSnapshot(sessionID)) > 0 {
+		return nil
+	}
 	sent, err := c.webPush.notify(ctx, pushPayload(chatID, body))
-	if sent || len(c.sessionConnectionsSnapshot(strings.TrimPrefix(chatID, "pico:"))) > 0 {
+	if sent {
 		return nil
 	}
 	if err != nil {
