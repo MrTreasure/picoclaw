@@ -18,6 +18,19 @@ export interface CronJob {
     lastStatus?: string
     lastError?: string
   }
+  createdAtMs?: number
+  updatedAtMs?: number
+  deleteAfterRun?: boolean
+}
+
+export async function deleteCronJob(id: string): Promise<void> {
+  const response = await launcherFetch(
+    `/api/cron/jobs/${encodeURIComponent(id)}`,
+    {
+      method: "DELETE",
+    },
+  )
+  if (!response.ok) throw new Error(`status ${response.status}`)
 }
 
 export async function getCronJobs(): Promise<CronJob[]> {

@@ -491,6 +491,13 @@ func setupAndStartServices(
 			return runningServices.ChannelManager.SendToChannelSync(ctx, channel, to, content)
 		},
 	)
+	runningServices.HealthServer.SetCronDeleteFunc(func(jobID string) error {
+		err := runningServices.CronService.DeleteJob(jobID)
+		if errors.Is(err, cron.ErrJobNotFound) {
+			return health.ErrCronJobNotFound
+		}
+		return err
+	})
 
 	var listenAddr string
 	if len(listenResult.Listeners) > 0 {

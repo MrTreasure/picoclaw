@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -524,13 +525,32 @@ func sameInt64(a, b *int64) bool {
 }
 
 func (cs *CronService) RemoveJob(jobID string) bool {
+	return cs.DeleteJob(jobID) == nil
+}
+
+// DeleteJob removes a job from both the in-memory scheduler and its persisted
+// store. If persistence fails, the in-memory store is restored so a caller
+// never observes a successful deletion that will reappear after restart.
+func (cs *CronService) DeleteJob(jobID string) error {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
-	return cs.removeJobUnsafe(jobID)
+	return cs.deleteJobUnsafe(jobID)
 }
 
 func (cs *CronService) removeJobUnsafe(jobID string) bool {
+	if err := cs.deleteJobUnsafe(jobID); err != nil {
+		if !errors.Is(err, ErrJobNotFound) {
+			log.Printf("[cron] failed to remove job: %v", err)
+		}
+		return false
+	}
+	return true
+}
+
+var ErrJobNotFound = errors.New("job not found")
+
+func (cs *CronService) deleteJobUnsafe(jobID string) error {
 	before := len(cs.store.Jobs)
 	var jobs []CronJob
 	for _, job := range cs.store.Jobs {
@@ -538,18 +558,18 @@ func (cs *CronService) removeJobUnsafe(jobID string) bool {
 			jobs = append(jobs, job)
 		}
 	}
-	cs.store.Jobs = jobs
-	removed := len(cs.store.Jobs) < before
-
-	if removed {
-		if err := cs.saveStoreUnsafe(); err != nil {
-			log.Printf("[cron] failed to save store after remove: %v", err)
-		}
+	if len(jobs) == before {
+		return ErrJobNotFound
 	}
 
+	previous := cs.store.Jobs
+	cs.store.Jobs = jobs
+	if err := cs.saveStoreUnsafe(); err != nil {
+		cs.store.Jobs = previous
+		return fmt.Errorf("save store after remove: %w", err)
+	}
 	cs.notify()
-
-	return removed
+	return nil
 }
 
 func (cs *CronService) EnableJob(jobID string, enabled bool) *CronJob {

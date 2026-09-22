@@ -14,14 +14,15 @@ import (
 )
 
 type Server struct {
-	server     *http.Server
-	mu         sync.RWMutex
-	ready      bool
-	checks     map[string]Check
-	startTime  time.Time
-	reloadFunc func() error
-	notifyFunc func(context.Context, string, string, string) error
-	authToken  string // optional bearer token for protected endpoints
+	server         *http.Server
+	mu             sync.RWMutex
+	ready          bool
+	checks         map[string]Check
+	startTime      time.Time
+	reloadFunc     func() error
+	notifyFunc     func(context.Context, string, string, string) error
+	cronDeleteFunc func(string) error
+	authToken      string // optional bearer token for protected endpoints
 }
 
 type Check struct {
@@ -51,6 +52,7 @@ func NewServer(host string, port int, token string) *Server {
 	mux.HandleFunc("/ready", s.readyHandler)
 	mux.HandleFunc("/reload", s.reloadHandler)
 	mux.HandleFunc("/internal/notify", s.notifyHandler)
+	mux.HandleFunc("/internal/cron/jobs/", s.cronJobHandler)
 
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	s.server = &http.Server{
@@ -128,6 +130,14 @@ func (s *Server) SetNotifyFunc(fn func(context.Context, string, string, string) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.notifyFunc = fn
+}
+
+// SetCronDeleteFunc configures authenticated task deletion against the running
+// scheduler rather than editing its backing file behind its back.
+func (s *Server) SetCronDeleteFunc(fn func(string) error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cronDeleteFunc = fn
 }
 
 func (s *Server) reloadHandler(w http.ResponseWriter, r *http.Request) {
@@ -243,6 +253,7 @@ func (s *Server) RegisterOnMux(mux HandlerMux) {
 	mux.HandleFunc("/ready", s.readyHandler)
 	mux.HandleFunc("/reload", s.reloadHandler)
 	mux.HandleFunc("/internal/notify", s.notifyHandler)
+	mux.HandleFunc("/internal/cron/jobs/", s.cronJobHandler)
 }
 
 func statusString(ok bool) string {

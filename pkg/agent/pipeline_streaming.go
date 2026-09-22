@@ -138,13 +138,18 @@ func (p *Pipeline) tryConfiguredStreamingLLM(
 	}
 	if streamErr != nil {
 		if !publisher.Published() {
-			logger.WarnCF("agent", "ChatStream failed before visible output; retrying with Chat", map[string]any{
+			logFields := map[string]any{
 				"agent_id": ts.agent.ID,
 				"channel":  ts.channel,
 				"model":    exec.llmModel,
 				"error":    streamErr.Error(),
-			})
+			}
 			publisher.Cancel(ctx)
+			if len(exec.activeCandidates) > 1 {
+				logger.WarnCF("agent", "ChatStream failed before visible output; entering model fallback chain", logFields)
+				return nil, false, nil
+			}
+			logger.WarnCF("agent", "ChatStream failed before visible output; retrying with Chat", logFields)
 			fallbackResponse, err := exec.activeProvider.Chat(
 				ctx,
 				messagesForCall,
@@ -285,14 +290,11 @@ func (p *Pipeline) configuredStreamingEligible(ts *turnState, exec *turnExecutio
 		})
 		return false
 	}
-	if len(exec.activeCandidates) != 1 {
-		logger.DebugCF("agent", "configured streaming not used", map[string]any{
-			"agent_id":   ts.agent.ID,
-			"channel":    ts.channel,
-			"model":      exec.activeModel,
-			"candidates": len(exec.activeCandidates),
-			"reason":     "fallback_candidates_enabled",
-		})
+	// Stream the primary candidate even when fallback models are configured.
+	// A fallback is still safe before the first visible chunk; after output is
+	// visible, the turn must stay on the primary candidate to avoid mixing two
+	// model responses in one message.
+	if len(exec.activeCandidates) == 0 {
 		return false
 	}
 	if exec.activeModelConfig == nil || !exec.activeModelConfig.Streaming.Enabled {
