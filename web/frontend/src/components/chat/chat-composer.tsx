@@ -192,19 +192,20 @@ export function ChatComposer({
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
-              {canInput && isGenerating ? (
+              {canInput && isGenerating && (
                 <Button
                   type="button"
                   size="icon"
-                  variant="destructive"
-                  className="size-12 rounded-full transition-colors"
+                  variant="outline"
+                  className="text-destructive hover:bg-destructive/10 hover:text-destructive border-border size-12 rounded-full bg-transparent shadow-none transition-colors"
                   onClick={onStop}
                   aria-label={t("chat.stopGeneration")}
                   title={t("chat.stopGeneration")}
                 >
                   <IconPlayerStopFilled className="size-4" aria-hidden="true" />
                 </Button>
-              ) : canInput ? (
+              )}
+              {canInput && (
                 <span tabIndex={!canSend ? 0 : undefined}>
                   <Button
                     type="button"
@@ -217,7 +218,7 @@ export function ChatComposer({
                     <IconArrowUp className="size-5" aria-hidden="true" />
                   </Button>
                 </span>
-              ) : null}
+              )}
             </div>
           </div>
         </div>
