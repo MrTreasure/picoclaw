@@ -24,8 +24,8 @@ export function ChatEmptyState({
 
   if (!hasAvailableModels) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 opacity-70">
-        <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-500">
+      <div className="flex flex-col items-center justify-center px-6 py-20">
+        <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400">
           <IconRobotOff className="h-8 w-8" />
         </div>
         <h3 className="mb-2 text-xl font-medium">
@@ -43,7 +43,7 @@ export function ChatEmptyState({
 
   if (!defaultModelName) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 opacity-70">
+      <div className="flex flex-col items-center justify-center px-6 py-20">
         <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-500">
           <IconStar className="h-8 w-8" />
         </div>
@@ -59,7 +59,7 @@ export function ChatEmptyState({
 
   if (!isConnected) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 opacity-70">
+      <div className="flex flex-col items-center justify-center px-6 py-20">
         <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-500">
           <IconPlugConnectedX className="h-8 w-8" />
         </div>
@@ -74,8 +74,8 @@ export function ChatEmptyState({
   }
 
   return (
-    <div className="flex flex-col items-center justify-center py-20 opacity-70">
-      <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-500">
+    <div className="flex flex-col items-center justify-center px-6 py-20">
+      <div className="bg-accent text-accent-foreground mb-6 flex h-16 w-16 items-center justify-center rounded-2xl">
         <IconRobot className="h-8 w-8" />
       </div>
       <h3 className="mb-2 text-xl font-medium">{t("chat.welcome")}</h3>

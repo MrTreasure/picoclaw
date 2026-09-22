@@ -1,8 +1,6 @@
 import {
   IconBrain,
-  IconCheck,
   IconChevronDown,
-  IconCopy,
   IconDownload,
   IconFileText,
   IconLoader2,
@@ -22,8 +20,6 @@ import {
   MarkdownCodeBlock,
   MessageCodeBlock,
 } from "@/components/chat/message-code-block"
-import { Button } from "@/components/ui/button"
-import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard"
 import { formatMessageTime } from "@/hooks/use-pico-chat"
 import { cn } from "@/lib/utils"
 import {
@@ -52,7 +48,6 @@ export const AssistantMessage = memo(function AssistantMessage({
   isStreaming = false,
 }: AssistantMessageProps) {
   const { t } = useTranslation()
-  const { copy, isCopied } = useCopyToClipboard()
   const isThought = kind === "thought"
   const isToolCalls = kind === "tool_calls"
   const isToolFeedback = kind === "tool_feedback"
@@ -74,9 +69,6 @@ export const AssistantMessage = memo(function AssistantMessage({
   const collapsedLabel = isThought
     ? t("chat.reasoningLabel")
     : t("chat.toolCallsLabel")
-  const copyMessageLabel = isCopied
-    ? t("chat.copiedLabel")
-    : t("chat.copyMessage")
   const trimmedModelName = modelName?.trim() ?? ""
   const actionContent =
     content.trim() ||
@@ -134,10 +126,10 @@ export const AssistantMessage = memo(function AssistantMessage({
       {(hasText || isCollapsedBlock || hasToolCalls) && (
         <div
           className={cn(
-            "relative overflow-hidden rounded-xl border",
+            "relative max-w-[94%] overflow-hidden rounded-2xl rounded-tl-[5px] border sm:max-w-[86%]",
             isCollapsedBlock
               ? "border-border/30 bg-muted/20 text-muted-foreground dark:border-border/20 dark:bg-muted/10"
-              : "bg-card text-card-foreground border-border/60",
+              : "bg-card text-card-foreground border-border/80",
           )}
         >
           {isCollapsedBlock && (
@@ -273,25 +265,6 @@ export const AssistantMessage = memo(function AssistantMessage({
                 </ReactMarkdown>
               )}
             </div>
-          )}
-
-          {!isCollapsedBlock && hasText && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className={cn(
-                "bg-background/50 hover:bg-background/80 absolute top-2 right-2 h-7 w-7 opacity-0 transition-opacity group-hover:opacity-100",
-              )}
-              onClick={() => void copy(content)}
-              aria-label={copyMessageLabel}
-              title={copyMessageLabel}
-            >
-              {isCopied ? (
-                <IconCheck className="h-4 w-4 text-green-500" />
-              ) : (
-                <IconCopy className="text-muted-foreground h-4 w-4" />
-              )}
-            </Button>
           )}
         </div>
       )}

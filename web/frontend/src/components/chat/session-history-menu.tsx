@@ -34,6 +34,7 @@ interface SessionHistoryMenuProps {
   onOpenChange: (open: boolean) => void
   onSwitchSession: (sessionId: string) => void
   onDeleteSession: (sessionId: string) => void
+  compact?: boolean
 }
 
 export function SessionHistoryMenu({
@@ -46,6 +47,7 @@ export function SessionHistoryMenu({
   onOpenChange,
   onSwitchSession,
   onDeleteSession,
+  compact = false,
 }: SessionHistoryMenuProps) {
   const { t } = useTranslation()
   const [pendingDelete, setPendingDelete] = useState<SessionSummary | null>(
@@ -56,13 +58,29 @@ export function SessionHistoryMenu({
     <>
       <DropdownMenu onOpenChange={onOpenChange}>
         <DropdownMenuTrigger asChild>
-          <Button variant="secondary" className="h-11 w-full gap-2">
-            <IconHistory className="size-4" />
-            <span>{t("chat.history")}</span>
+          <Button
+            variant="ghost"
+            size={compact ? "icon" : "default"}
+            className={
+              compact
+                ? "size-12 rounded-full"
+                : "h-12 w-full justify-start gap-3 rounded-xl px-4"
+            }
+            aria-label={compact ? t("chat.history") : undefined}
+          >
+            <IconHistory className="size-5" aria-hidden="true" />
+            {!compact && <span>{t("chat.history")}</span>}
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-72">
-          <ScrollArea className="max-h-[300px]">
+        <DropdownMenuContent
+          align={compact ? "start" : "end"}
+          sideOffset={8}
+          className="border-border/80 w-[min(23rem,calc(100vw-1rem))] rounded-2xl p-2 shadow-2xl"
+        >
+          <div className="px-3 py-2 text-sm font-semibold">
+            {t("chat.history")}
+          </div>
+          <ScrollArea className="max-h-[min(60dvh,32rem)]">
             {loadError && (
               <DropdownMenuItem disabled>
                 <span className="text-destructive text-xs">
@@ -80,8 +98,10 @@ export function SessionHistoryMenu({
               sessions.map((session) => (
                 <DropdownMenuItem
                   key={session.id}
-                  className={`group relative my-0.5 flex flex-col items-start gap-0.5 pr-8 ${
-                    session.id === activeSessionId ? "bg-accent" : ""
+                  className={`group relative my-1 min-h-16 flex-col items-start justify-center gap-1 rounded-xl py-2 pr-13 pl-3 ${
+                    session.id === activeSessionId
+                      ? "bg-accent text-accent-foreground"
+                      : ""
                   }`}
                   onClick={() => onSwitchSession(session.id)}
                 >

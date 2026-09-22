@@ -1,7 +1,7 @@
 import {
   IconArrowUp,
-  IconPhotoPlus,
   IconPlayerStopFilled,
+  IconPlus,
   IconX,
 } from "@tabler/icons-react"
 import {
@@ -99,12 +99,12 @@ export function ChatComposer({
   }
 
   return (
-    <div className="before:bg-background pointer-events-none relative z-10 -mt-4 shrink-0 [scrollbar-gutter:stable] overflow-y-auto px-2 pb-[calc(.5rem+env(safe-area-inset-bottom))] before:pointer-events-none before:absolute before:inset-x-0 before:top-4 before:bottom-0 before:content-[''] md:px-8 md:pb-5 lg:px-24 xl:px-48">
-      <div className="pointer-events-auto mx-auto flex max-w-[1000px] flex-col items-end">
+    <div className="border-border/70 bg-card relative z-10 shrink-0 border-t px-2 pt-2 pb-[calc(.5rem+env(safe-area-inset-bottom))] md:px-8 md:pt-3 md:pb-4 lg:px-24 xl:px-48">
+      <div className="mx-auto flex max-w-[900px] flex-col items-end">
         <div
           className={cn(
-            "bg-card border-border/60 relative flex w-full flex-col rounded-[22px] border p-2 shadow-sm transition-colors",
-            isDragActive && "border-violet-400/70 bg-violet-500/5",
+            "relative flex w-full flex-col transition-colors",
+            isDragActive && "bg-accent/50 ring-ring/70 rounded-xl ring-2",
           )}
           onDragEnter={onDragEnter}
           onDragLeave={onDragLeave}
@@ -145,55 +145,59 @@ export function ChatComposer({
             </div>
           )}
 
-          <div className="flex items-end gap-1">
+          <div className="flex items-end gap-1.5">
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               size="icon"
-              className="text-muted-foreground hover:text-foreground size-11 shrink-0 rounded-full"
+              className="text-foreground border-border hover:bg-muted size-12 shrink-0 rounded-full bg-transparent shadow-none"
               onClick={onAddImages}
               disabled={!canInput}
               aria-label={t("chat.attachImage")}
               title={t("chat.attachImage")}
             >
-              <IconPhotoPlus className="size-5" aria-hidden="true" />
+              <IconPlus className="size-6" aria-hidden="true" />
             </Button>
 
-            <TextareaAutosize
-              value={input}
-              onChange={(e) => onInputChange(e.target.value)}
-              onCompositionStart={() => {
-                composingRef.current = true
-              }}
-              onCompositionEnd={() => {
-                composingRef.current = false
-              }}
-              onPaste={onPaste}
-              onKeyDown={handleKeyDown}
-              placeholder={placeholder}
-              disabled={!canInput}
-              title={disabledMessage || undefined}
-              className={cn(
-                "placeholder:text-muted-foreground/50 min-h-11 min-w-0 flex-1 resize-none border-0 bg-transparent px-1.5 py-2.5 text-[15px] leading-6 shadow-none transition-colors focus-visible:ring-0 focus-visible:outline-none dark:bg-transparent",
-                !canInput && "cursor-not-allowed",
+            <div className="bg-muted/80 focus-within:border-ring/70 focus-within:bg-background flex min-h-12 min-w-0 flex-1 items-end rounded-xl border border-transparent px-1 transition-colors">
+              <TextareaAutosize
+                value={input}
+                onChange={(e) => onInputChange(e.target.value)}
+                onCompositionStart={() => {
+                  composingRef.current = true
+                }}
+                onCompositionEnd={() => {
+                  composingRef.current = false
+                }}
+                onPaste={onPaste}
+                onKeyDown={handleKeyDown}
+                placeholder={placeholder}
+                disabled={!canInput}
+                title={disabledMessage || undefined}
+                className={cn(
+                  "placeholder:text-muted-foreground/65 min-h-11 min-w-0 flex-1 resize-none border-0 bg-transparent px-3 py-2.5 text-base leading-6 shadow-none focus-visible:ring-0 focus-visible:outline-none",
+                  !canInput && "cursor-not-allowed",
+                )}
+                minRows={1}
+                maxRows={6}
+              />
+              {contextUsage && (
+                <div className="mb-0.5 shrink-0">
+                  <ContextUsageRing
+                    usage={contextUsage}
+                    onDetailClick={onContextDetail}
+                  />
+                </div>
               )}
-              minRows={1}
-              maxRows={6}
-            />
+            </div>
 
             <div className="flex shrink-0 items-center gap-1">
-              {contextUsage && (
-                <ContextUsageRing
-                  usage={contextUsage}
-                  onDetailClick={onContextDetail}
-                />
-              )}
               {canInput && isGenerating ? (
                 <Button
                   type="button"
                   size="icon"
                   variant="destructive"
-                  className="size-11 rounded-full transition-transform active:scale-95"
+                  className="size-12 rounded-full transition-colors"
                   onClick={onStop}
                   aria-label={t("chat.stopGeneration")}
                   title={t("chat.stopGeneration")}
@@ -205,7 +209,7 @@ export function ChatComposer({
                   <Button
                     type="button"
                     size="icon"
-                    className="size-11 rounded-full bg-violet-500 text-white transition-transform hover:bg-violet-600 active:scale-95"
+                    className="bg-secondary text-secondary-foreground hover:bg-secondary/85 size-12 rounded-full shadow-none transition-colors"
                     onClick={onSend}
                     disabled={!canSend}
                     aria-label={t("chat.sendMessage")}

@@ -98,7 +98,7 @@ export function AppHeader() {
   }
 
   return (
-    <header className="bg-background/95 supports-backdrop-filter:bg-background/60 border-b-border/50 sticky top-0 z-50 flex h-14 shrink-0 items-center justify-between border-b px-4 backdrop-blur">
+    <header className="bg-card/92 border-border/70 sticky top-0 z-50 flex h-16 shrink-0 items-center justify-between border-b px-4 backdrop-blur-xl">
       <div className="flex items-center gap-2">
         <SidebarTrigger className="text-muted-foreground hover:bg-accent hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg sm:hidden [&>svg]:size-5">
           <IconMenu2 />
@@ -109,7 +109,7 @@ export function AppHeader() {
             to="/"
           >
             <img
-              className="size-9 rounded-xl shadow-sm ring-1 ring-black/10"
+              className="ring-border size-9 rounded-xl ring-1"
               src="/web-app-manifest-192x192.png"
               alt=""
             />

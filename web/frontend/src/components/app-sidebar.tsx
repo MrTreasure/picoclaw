@@ -173,11 +173,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   }, [channelItems])
 
   return (
-    <Sidebar
-      {...props}
-      className="bg-background border-r-border/20 border-r pt-3"
-    >
-      <SidebarContent className="bg-background">
+    <Sidebar {...props} className="bg-card border-r-border/70 border-r pt-3">
+      <SidebarContent className="bg-card">
         {navGroups.map((group) => (
           <Collapsible
             key={group.label}
@@ -208,7 +205,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                             data-tour={
                               item.url === "/models" ? "models-nav" : undefined
                             }
-                            className={`h-9 px-3 ${isActive ? "bg-accent/80 text-foreground font-medium" : "text-muted-foreground hover:bg-muted/60"}`}
+                            className={`h-11 rounded-xl px-3 ${isActive ? "bg-accent text-accent-foreground font-semibold" : "text-muted-foreground hover:bg-muted"}`}
                           >
                             <Link to={item.url}>
                               <item.icon

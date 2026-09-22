@@ -1,10 +1,7 @@
-import { IconCheck, IconCopy } from "@tabler/icons-react"
 import { memo } from "react"
 import { useTranslation } from "react-i18next"
 
 import { MessageActions } from "@/components/chat/message-actions"
-import { Button } from "@/components/ui/button"
-import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard"
 import { formatMessageTime } from "@/hooks/use-pico-chat"
 import { cn } from "@/lib/utils"
 import type { ChatAttachment } from "@/store/chat"
@@ -21,15 +18,11 @@ export const UserMessage = memo(function UserMessage({
   timestamp = "",
 }: UserMessageProps) {
   const { t } = useTranslation()
-  const { copy, isCopied } = useCopyToClipboard()
   const hasText = content.trim().length > 0
   const isCommand = content.trim().startsWith("/")
   const imageAttachments = attachments.filter(
     (attachment) => attachment.type === "image",
   )
-  const copyMessageLabel = isCopied
-    ? t("chat.copiedLabel")
-    : t("chat.copyMessage")
   const formattedTimestamp =
     timestamp !== "" ? formatMessageTime(timestamp) : ""
 
@@ -52,13 +45,13 @@ export const UserMessage = memo(function UserMessage({
       )}
 
       {hasText && (
-        <div className="relative max-w-[82%] sm:max-w-[70%]">
+        <div className="relative max-w-[86%] sm:max-w-[72%]">
           <div
             className={cn(
               "wrap-break-word whitespace-pre-wrap",
               isCommand
-                ? "rounded-xl border border-zinc-200 bg-transparent px-3.5 py-2.5 font-mono text-[14px] text-zinc-800 dark:border-zinc-800/60 dark:bg-[#121212] dark:text-zinc-200 dark:shadow-sm"
-                : "rounded-2xl rounded-tr-sm bg-violet-500 px-4 py-2.5 text-[15px] leading-relaxed text-white shadow-sm",
+                ? "border-border bg-card text-card-foreground rounded-xl border px-3.5 py-2.5 font-mono text-[14px]"
+                : "bg-accent text-accent-foreground rounded-2xl rounded-tr-[5px] px-4 py-2.5 text-[15px] leading-relaxed",
             )}
           >
             {isCommand ? (
@@ -72,26 +65,6 @@ export const UserMessage = memo(function UserMessage({
               content
             )}
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className={cn(
-              "bg-background/75 hover:bg-background absolute top-2 right-2 h-7 w-7 opacity-0 shadow-xs transition-opacity group-hover:opacity-100",
-              isCommand
-                ? "text-zinc-700 dark:text-zinc-200"
-                : "text-violet-700 dark:text-violet-100",
-            )}
-            onClick={() => void copy(content)}
-            aria-label={copyMessageLabel}
-            title={copyMessageLabel}
-          >
-            {isCopied ? (
-              <IconCheck className="h-4 w-4 text-green-500" />
-            ) : (
-              <IconCopy className="h-4 w-4" />
-            )}
-          </Button>
         </div>
       )}
 

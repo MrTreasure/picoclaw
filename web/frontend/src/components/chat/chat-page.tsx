@@ -325,15 +325,16 @@ export function ChatPage() {
         onSwitchSession={switchSession}
         onDeleteSession={handleDeleteSession}
         onNewChat={newChat}
+        connectionState={connectionState}
       />
 
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="h-full [scrollbar-gutter:stable] overflow-y-auto px-3 pt-[max(4rem,calc(env(safe-area-inset-top)+3.75rem))] pb-3 md:px-8 lg:px-24 xl:px-48"
+          className="h-full [scrollbar-gutter:stable] overflow-y-auto px-3 pt-[calc(4.75rem+env(safe-area-inset-top))] pb-3 md:px-8 lg:px-24 xl:px-48"
         >
-          <div className="mx-auto flex w-full max-w-250 flex-col gap-4 pb-5">
+          <div className="mx-auto flex w-full max-w-225 flex-col gap-3 pb-5 md:gap-4">
             {messages.length === 0 && !isTyping && (
               <ChatEmptyState
                 hasAvailableModels={hasAvailableModels}

@@ -18,10 +18,10 @@ export function useTheme() {
       root.classList.remove("dark")
     }
     root.style.colorScheme = theme
-    root.style.backgroundColor = theme === "dark" ? "#171717" : "#ffffff"
+    root.style.backgroundColor = theme === "dark" ? "#0f0f10" : "#f6f7f6"
     document
       .querySelector('meta[name="theme-color"]')
-      ?.setAttribute("content", theme === "dark" ? "#171717" : "#ffffff")
+      ?.setAttribute("content", theme === "dark" ? "#0f0f10" : "#f6f7f6")
     localStorage.setItem("theme", theme)
   }, [theme])
 
