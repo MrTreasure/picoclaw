@@ -68,6 +68,32 @@ func TestLauncherDashboardAuth_AllowsPublicPaths(t *testing.T) {
 	}
 }
 
+func TestDeviceBearerPathAllowed_NativeManagementIsNarrow(t *testing.T) {
+	tests := []struct {
+		method string
+		path   string
+		want   bool
+	}{
+		{http.MethodGet, "/api/gateway/status", true},
+		{http.MethodGet, "/api/gateway/logs", true},
+		{http.MethodGet, "/api/skills", true},
+		{http.MethodGet, "/api/skills/example", true},
+		{http.MethodGet, "/api/tools", true},
+		{http.MethodPut, "/api/tools/web_search/state", true},
+		{http.MethodPost, "/api/models/default", true},
+		{http.MethodGet, "/api/config", false},
+		{http.MethodPost, "/api/gateway/restart", false},
+		{http.MethodPost, "/api/skills/install", false},
+		{http.MethodPut, "/api/tools/web-search-config", false},
+		{http.MethodDelete, "/api/models/0", false},
+	}
+	for _, tc := range tests {
+		if got := deviceBearerPathAllowed(tc.method, tc.path); got != tc.want {
+			t.Errorf("deviceBearerPathAllowed(%q, %q) = %v, want %v", tc.method, tc.path, got, tc.want)
+		}
+	}
+}
+
 func TestLauncherDashboardAuth_QueryTokenDoesNotAuthenticate(t *testing.T) {
 	cfg := LauncherDashboardAuthConfig{ExpectedCookie: "deadbeef"}
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

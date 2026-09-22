@@ -165,7 +165,7 @@ func LauncherDashboardAuth(cfg LauncherDashboardAuthConfig, next http.Handler) h
 			next.ServeHTTP(w, r)
 			return
 		}
-		if deviceBearerPathAllowed(p) {
+		if deviceBearerPathAllowed(r.Method, p) {
 			if deviceID, ok := validLauncherDeviceAuth(r, cfg); ok {
 				ctx := context.WithValue(r.Context(), launcherDeviceIDContextKey{}, deviceID)
 				next.ServeHTTP(w, r.WithContext(ctx))
@@ -176,13 +176,24 @@ func LauncherDashboardAuth(cfg LauncherDashboardAuthConfig, next http.Handler) h
 	})
 }
 
-func deviceBearerPathAllowed(p string) bool {
+func deviceBearerPathAllowed(method, p string) bool {
 	if p == "/pico/ws" || p == "/pico/upload" || strings.HasPrefix(p, "/pico/media/") {
 		return true
 	}
-	return p == "/api/sessions" || strings.HasPrefix(p, "/api/sessions/") ||
-		p == "/api/models" || strings.HasPrefix(p, "/api/models/") ||
-		strings.HasPrefix(p, "/api/android/")
+	if p == "/api/sessions" || strings.HasPrefix(p, "/api/sessions/") ||
+		strings.HasPrefix(p, "/api/android/") {
+		return true
+	}
+	if (method == http.MethodGet && p == "/api/models") ||
+		(method == http.MethodPost && p == "/api/models/default") {
+		return true
+	}
+	if method == http.MethodGet {
+		return p == "/api/gateway/status" || p == "/api/gateway/logs" ||
+			p == "/api/skills" || strings.HasPrefix(p, "/api/skills/") ||
+			p == "/api/tools" || p == "/api/system/version"
+	}
+	return method == http.MethodPut && strings.HasPrefix(p, "/api/tools/") && strings.HasSuffix(p, "/state")
 }
 
 func handleLauncherAndroidWebLogin(w http.ResponseWriter, r *http.Request, cfg LauncherDashboardAuthConfig) {
