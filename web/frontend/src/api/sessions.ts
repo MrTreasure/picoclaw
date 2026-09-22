@@ -2,6 +2,7 @@ import { launcherFetch } from "@/api/http"
 
 export interface SessionSummary {
   id: string
+  channel: "pico" | "weixin"
   title: string
   preview: string
   message_count: number
@@ -11,6 +12,7 @@ export interface SessionSummary {
 
 export interface SessionDetail {
   id: string
+  channel?: "pico" | "weixin"
   messages: {
     role: "user" | "assistant"
     content: string
@@ -53,11 +55,13 @@ export interface SessionHistoryPageOptions {
 export async function getSessions(
   offset: number = 0,
   limit: number = 20,
+  channel?: "pico" | "weixin",
 ): Promise<SessionSummary[]> {
   const params = new URLSearchParams({
     offset: offset.toString(),
     limit: limit.toString(),
   })
+  if (channel) params.set("channel", channel)
 
   const res = await launcherFetch(`/api/sessions?${params.toString()}`)
   if (!res.ok) {

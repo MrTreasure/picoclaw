@@ -17,8 +17,9 @@ import (
 // LauncherDashboardCookieName is the HttpOnly cookie set after a successful password login.
 const LauncherDashboardCookieName = "picoclaw_launcher_auth"
 
-// launcherDashboardSessionMaxAgeSec is the dashboard session cookie lifetime (31 days).
-const launcherDashboardSessionMaxAgeSec = 31 * 24 * 3600
+// launcherDashboardSessionMaxAgeSec keeps trusted personal devices signed in
+// for one year. Explicit logout and password/session-key failures still revoke it.
+const launcherDashboardSessionMaxAgeSec = 365 * 24 * 3600
 
 const (
 	launcherSessionCookieBytes = 32

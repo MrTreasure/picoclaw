@@ -469,7 +469,7 @@ export async function hydrateActiveSession() {
       // is then persisted normally for all later reconnects.
       if (!cached && currentState.messages.length === 0) {
         try {
-          const [latestSession] = await getSessions(0, 1)
+          const [latestSession] = await getSessions(0, 1, "pico")
           if (latestSession && latestSession.id !== storedSessionId) {
             const latestPage = await loadSessionMessages(latestSession.id)
             disconnectChatInternal({ clearDesiredConnection: false })

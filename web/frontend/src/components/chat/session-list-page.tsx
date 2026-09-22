@@ -1,4 +1,5 @@
 import {
+  IconBrandWechat,
   IconMessageCircle,
   IconMessagePlus,
   IconSearch,
@@ -64,6 +65,14 @@ export function SessionListPage() {
   }, [query, sessions])
 
   const openSession = async (sessionId: string) => {
+    const session = sessions.find((item) => item.id === sessionId)
+    if (session?.channel === "weixin") {
+      await navigate({
+        to: "/sessions/$sessionId",
+        params: { sessionId },
+      })
+      return
+    }
     await switchSession(sessionId)
     await navigate({ to: "/" })
   }
@@ -133,6 +142,7 @@ export function SessionListPage() {
           <div className="border-border/70 bg-card overflow-hidden rounded-2xl border">
             {filteredSessions.map((session, index) => {
               const isActive = session.id === activeSessionId
+              const isWeixin = session.channel === "weixin"
               return (
                 <div
                   key={session.id}
@@ -144,12 +154,19 @@ export function SessionListPage() {
                     onClick={() => void openSession(session.id)}
                   >
                     <span
-                      className={`flex size-14 shrink-0 items-center justify-center rounded-2xl ${isActive ? "bg-accent text-accent-foreground" : "bg-muted text-muted-foreground"}`}
+                      className={`flex size-14 shrink-0 items-center justify-center rounded-2xl ${isWeixin ? "bg-emerald-500/15 text-emerald-400" : isActive ? "bg-accent text-accent-foreground" : "bg-muted text-muted-foreground"}`}
                     >
-                      <IconMessageCircle
-                        className="size-7"
-                        aria-hidden="true"
-                      />
+                      {isWeixin ? (
+                        <IconBrandWechat
+                          className="size-7"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <IconMessageCircle
+                          className="size-7"
+                          aria-hidden="true"
+                        />
+                      )}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center justify-between gap-3">
@@ -166,6 +183,11 @@ export function SessionListPage() {
                             count: session.message_count,
                           })}
                       </span>
+                      {isWeixin && (
+                        <span className="mt-1 block text-xs font-medium text-emerald-400">
+                          微信记录 · 只读
+                        </span>
+                      )}
                       {isActive && (
                         <span className="text-secondary mt-1 block text-xs font-medium">
                           当前会话
@@ -173,15 +195,17 @@ export function SessionListPage() {
                       )}
                     </span>
                   </button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive size-12 rounded-full"
-                    onClick={() => setPendingDelete(session)}
-                    aria-label={t("chat.deleteSession")}
-                  >
-                    <IconTrash className="size-5" aria-hidden="true" />
-                  </Button>
+                  {!isWeixin && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive size-12 rounded-full"
+                      onClick={() => setPendingDelete(session)}
+                      aria-label={t("chat.deleteSession")}
+                    >
+                      <IconTrash className="size-5" aria-hidden="true" />
+                    </Button>
+                  )}
                 </div>
               )
             })}

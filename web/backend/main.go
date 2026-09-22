@@ -573,7 +573,7 @@ func main() {
 	}
 	listeners := openResult.Listeners
 
-	dashboardSessionCookie, dashErr := middleware.NewLauncherDashboardSessionCookie()
+	dashboardSessionCookie, dashErr := middleware.LoadOrCreateLauncherDashboardSessionCookie(picoHome)
 	if dashErr != nil {
 		logger.Fatalf("Dashboard auth setup failed: %v", dashErr)
 	}

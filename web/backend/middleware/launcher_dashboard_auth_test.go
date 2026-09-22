@@ -170,8 +170,8 @@ func TestLauncherDashboardAuth_LocalAutoLogin(t *testing.T) {
 	if len(cookies) != 1 || cookies[0].Name != LauncherDashboardCookieName || cookies[0].Value != cookieVal {
 		t.Fatalf("cookies = %#v", cookies)
 	}
-	if cookies[0].MaxAge != 31*24*3600 {
-		t.Fatalf("session cookie MaxAge = %d, want 31 days", cookies[0].MaxAge)
+	if cookies[0].MaxAge != launcherDashboardSessionMaxAgeSec {
+		t.Fatalf("session cookie MaxAge = %d, want %d", cookies[0].MaxAge, launcherDashboardSessionMaxAgeSec)
 	}
 
 	rec = httptest.NewRecorder()

@@ -41,6 +41,7 @@ type sessionFile struct {
 // sessionListItem is a lightweight summary returned by GET /api/sessions.
 type sessionListItem struct {
 	ID           string `json:"id"`
+	Channel      string `json:"channel"`
 	Title        string `json:"title"`
 	Preview      string `json:"preview"`
 	MessageCount int    `json:"message_count"`
@@ -212,6 +213,63 @@ type picoJSONLSessionRef struct {
 	ID      string
 	Key     string
 	Updated time.Time
+}
+
+const weixinSessionIDPrefix = "weixin:"
+
+func weixinSessionRefFromMeta(meta memory.SessionMeta) (picoJSONLSessionRef, bool) {
+	if len(meta.Scope) == 0 || strings.TrimSpace(meta.Key) == "" {
+		return picoJSONLSessionRef{}, false
+	}
+	var scope session.SessionScope
+	if err := json.Unmarshal(meta.Scope, &scope); err != nil ||
+		!strings.EqualFold(strings.TrimSpace(scope.Channel), "weixin") {
+		return picoJSONLSessionRef{}, false
+	}
+	return picoJSONLSessionRef{
+		ID:  weixinSessionIDPrefix + meta.Key,
+		Key: meta.Key,
+	}, true
+}
+
+func (h *Handler) findWeixinJSONLSessions(dir string) ([]picoJSONLSessionRef, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]picoJSONLSessionRef, 0)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta.json") {
+			continue
+		}
+		meta, readErr := h.readSessionMeta(filepath.Join(dir, entry.Name()), "")
+		if readErr != nil {
+			continue
+		}
+		ref, ok := weixinSessionRefFromMeta(meta)
+		if !ok {
+			continue
+		}
+		ref.Updated = meta.UpdatedAt
+		refs = append(refs, ref)
+	}
+	return refs, nil
+}
+
+func (h *Handler) findWeixinJSONLSession(dir, sessionID string) (picoJSONLSessionRef, error) {
+	if !strings.HasPrefix(sessionID, weixinSessionIDPrefix) {
+		return picoJSONLSessionRef{}, os.ErrNotExist
+	}
+	refs, err := h.findWeixinJSONLSessions(dir)
+	if err != nil {
+		return picoJSONLSessionRef{}, err
+	}
+	for _, ref := range refs {
+		if ref.ID == sessionID {
+			return ref, nil
+		}
+	}
+	return picoJSONLSessionRef{}, os.ErrNotExist
 }
 
 type picoLegacySessionRef struct {
@@ -420,7 +478,7 @@ func (h *Handler) findLegacyPicoSession(dir, sessionID string) (picoLegacySessio
 	return picoLegacySessionRef{}, os.ErrNotExist
 }
 
-func buildSessionListItem(sessionID string, sess sessionFile, toolFeedbackMaxArgsLength int) sessionListItem {
+func buildSessionListItem(sessionID, channel string, sess sessionFile, toolFeedbackMaxArgsLength int) sessionListItem {
 	transcript := visibleSessionMessages(sess.Messages, toolFeedbackMaxArgsLength)
 
 	preview := ""
@@ -441,6 +499,7 @@ func buildSessionListItem(sessionID string, sess sessionFile, toolFeedbackMaxArg
 
 	return sessionListItem{
 		ID:           sessionID,
+		Channel:      channel,
 		Title:        title,
 		Preview:      preview,
 		MessageCount: len(transcript),
@@ -878,7 +937,18 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			seen[ref.ID] = struct{}{}
-			items = append(items, buildSessionListItem(ref.ID, sess, toolFeedbackMaxArgsLength))
+			items = append(items, buildSessionListItem(ref.ID, "pico", sess, toolFeedbackMaxArgsLength))
+		}
+	}
+
+	if refs, findErr := h.findWeixinJSONLSessions(dir); findErr == nil {
+		for _, ref := range refs {
+			sess, loadErr := h.readJSONLSession(dir, ref.Key)
+			if loadErr != nil || isEmptySession(sess) {
+				continue
+			}
+			seen[ref.ID] = struct{}{}
+			items = append(items, buildSessionListItem(ref.ID, "weixin", sess, toolFeedbackMaxArgsLength))
 		}
 	}
 
@@ -892,7 +962,7 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			seen[ref.ID] = struct{}{}
-			items = append(items, buildSessionListItem(ref.ID, sess, toolFeedbackMaxArgsLength))
+			items = append(items, buildSessionListItem(ref.ID, "pico", sess, toolFeedbackMaxArgsLength))
 		}
 	}
 
@@ -913,6 +983,15 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 	if val, err := strconv.Atoi(limitStr); err == nil && val > 0 {
 		limit = val
+	}
+	if channel := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("channel"))); channel != "" {
+		filtered := items[:0]
+		for _, item := range items {
+			if item.Channel == channel {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
 	}
 
 	totalItems := len(items)
@@ -948,6 +1027,14 @@ func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ref, refErr := h.findPicoJSONLSession(dir, sessionID)
+	channel := "pico"
+	if refErr != nil {
+		if weixinRef, weixinErr := h.findWeixinJSONLSession(dir, sessionID); weixinErr == nil {
+			ref = weixinRef
+			refErr = nil
+			channel = "weixin"
+		}
+	}
 	var sess sessionFile
 	err = refErr
 	if refErr == nil {
@@ -1023,6 +1110,7 @@ func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"id":             sessionID,
+		"channel":        channel,
 		"messages":       messages,
 		"message_offset": messageOffset,
 		"message_total":  totalMessages,
@@ -1064,7 +1152,6 @@ func (h *Handler) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 			removed = true
 		}
 	}
-
 	if legacyRef, err := h.findLegacyPicoSession(dir, sessionID); err == nil {
 		if err := os.Remove(legacyRef.Path); err != nil {
 			if !os.IsNotExist(err) {

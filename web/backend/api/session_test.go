@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -118,6 +119,59 @@ func TestHandleListSessions_JSONLStorage(t *testing.T) {
 	}
 	if items[0].Preview != "Explain why the history API is empty after migration." {
 		t.Fatalf("items[0].Preview = %q", items[0].Preview)
+	}
+}
+
+func TestHandleListSessions_IncludesWeixinHistory(t *testing.T) {
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+
+	dir := sessionsTestDir(t, configPath)
+	store, err := memory.NewJSONLStore(dir)
+	if err != nil {
+		t.Fatalf("NewJSONLStore() error = %v", err)
+	}
+	key := session.BuildOpaqueSessionKey("weixin-history")
+	if err := store.AddFullMessage(nil, key, providers.Message{Role: "user", Content: "微信里的问题"}); err != nil {
+		t.Fatal(err)
+	}
+	scope, err := json.Marshal(session.SessionScope{
+		Version:    1,
+		AgentID:    "main",
+		Channel:    "weixin",
+		Account:    "default",
+		Dimensions: []string{"chat"},
+		Values:     map[string]string{"chat": "direct:test-user@im.wechat"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertSessionMeta(nil, key, scope, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions?channel=weixin", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var items []sessionListItem
+	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Channel != "weixin" || items[0].ID != weixinSessionIDPrefix+key {
+		t.Fatalf("items = %#v", items)
+	}
+
+	detail := httptest.NewRecorder()
+	detailReq := httptest.NewRequest(http.MethodGet, "/api/sessions/"+url.PathEscape(items[0].ID)+"?limit=40", nil)
+	mux.ServeHTTP(detail, detailReq)
+	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), `"channel":"weixin"`) {
+		t.Fatalf("detail status = %d body=%s", detail.Code, detail.Body.String())
 	}
 }
 
