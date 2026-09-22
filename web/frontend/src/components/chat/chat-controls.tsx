@@ -1,5 +1,5 @@
 import { IconArrowLeft, IconSettings } from "@tabler/icons-react"
-import { Link } from "@tanstack/react-router"
+import { useNavigate } from "@tanstack/react-router"
 
 import type { ModelInfo, ModelThinkingLevel } from "@/api/models"
 import { Button } from "@/components/ui/button"
@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import type { AssistantDetailVisibility } from "@/features/chat/detail-visibility"
+import { returnToSessions } from "@/lib/edge-swipe"
 import { cn } from "@/lib/utils"
 import type { ConnectionState } from "@/store/chat"
 
@@ -42,6 +43,7 @@ export function ChatControls({
   onThinkingLevelChange,
   onDetailVisibilityChange,
 }: ChatControlsProps) {
+  const navigate = useNavigate()
   const thinkingLabels: Record<ModelThinkingLevel, string> = {
     off: "思考关闭",
     low: "低",
@@ -63,15 +65,18 @@ export function ChatControls({
     <header className="border-border/70 bg-background/92 absolute inset-x-0 top-0 z-40 flex h-[calc(4rem+env(safe-area-inset-top))] items-end border-b px-4 pb-1 backdrop-blur-xl">
       <div className="flex h-14 w-full items-center justify-center">
         <Button
-          asChild
           type="button"
           variant="ghost"
           size="icon"
           className="absolute bottom-1 left-2 size-12 rounded-full"
+          onClick={() =>
+            returnToSessions(() => {
+              void navigate({ to: "/sessions", replace: true })
+            })
+          }
+          aria-label="返回会话列表"
         >
-          <Link to="/sessions" aria-label="返回会话列表">
-            <IconArrowLeft className="size-6" aria-hidden="true" />
-          </Link>
+          <IconArrowLeft className="size-6" aria-hidden="true" />
         </Button>
         <div className="flex min-w-0 flex-col items-center justify-center text-center">
           <span className="flex max-w-full items-center gap-2 text-[17px] leading-5 font-semibold tracking-tight">

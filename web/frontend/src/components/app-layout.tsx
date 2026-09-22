@@ -4,6 +4,7 @@ import { Toaster } from "sonner"
 
 import { AppHeader } from "@/components/app-header"
 import { AppSidebar } from "@/components/app-sidebar"
+import { MobileEdgeSwipe } from "@/components/mobile-edge-swipe"
 import { MobileTabBar } from "@/components/mobile-tab-bar"
 import { TourGuide } from "@/components/tour/tour-guide"
 import { SidebarProvider } from "@/components/ui/sidebar"
@@ -58,6 +59,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
           </div>
         </div>
         {isMobileShell && showMobileTabBar && <MobileTabBar />}
+        {isMobileShell && <MobileEdgeSwipe />}
         <Toaster position="bottom-center" />
         <TourGuide />
       </SidebarProvider>

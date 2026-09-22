@@ -25,6 +25,10 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { usePicoChat } from "@/hooks/use-pico-chat"
 import { useSessionHistory } from "@/hooks/use-session-history"
+import {
+  clearChatNavigationOrigin,
+  markChatOpenedFromSessions,
+} from "@/lib/edge-swipe"
 
 export function SessionListPage() {
   const { t } = useTranslation()
@@ -48,6 +52,10 @@ export function SessionListPage() {
     activeSessionId,
     onDeletedActiveSession: newChat,
   })
+
+  useEffect(() => {
+    clearChatNavigationOrigin()
+  }, [])
 
   useEffect(() => {
     if (loadedRef.current) return
@@ -96,17 +104,18 @@ export function SessionListPage() {
       await navigate({
         to: "/sessions/$sessionId",
         params: { sessionId },
-        replace: true,
       })
       return
     }
     await switchSession(sessionId)
-    await navigate({ to: "/", replace: true })
+    markChatOpenedFromSessions()
+    await navigate({ to: "/" })
   }
 
   const createSession = async () => {
     await newChat()
-    await navigate({ to: "/", replace: true })
+    markChatOpenedFromSessions()
+    await navigate({ to: "/" })
   }
 
   return (
