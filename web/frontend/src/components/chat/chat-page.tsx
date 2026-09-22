@@ -160,8 +160,9 @@ export function ChatPage() {
       )
     }
 
-    const handleBack = () => {
-      if (window.location.pathname === "/") {
+    const handleBack = (event: PopStateEvent) => {
+      const state = event.state as Record<string, unknown> | null
+      if (window.location.pathname === "/" && state?.museChatBase === true) {
         void navigate({ to: "/sessions", replace: true })
       }
     }
