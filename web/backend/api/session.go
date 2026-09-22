@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -671,10 +672,15 @@ func sessionAttachmentURL(attachment providers.Attachment) (string, bool) {
 		return "", false
 	}
 	if strings.HasPrefix(ref, "media://") {
-		// Persisted session history must only expose durable attachment locations.
-		// media:// refs depend on the live in-memory MediaStore and may stop
-		// resolving after a restart or cleanup, so omit them from reopened history.
-		return "", false
+		refID := strings.TrimSpace(strings.TrimPrefix(ref, "media://"))
+		if refID == "" || strings.Contains(refID, "/") {
+			return "", false
+		}
+		// The Pico media endpoint resolves live MediaStore references and applies
+		// the same device/session authentication as real-time attachments. Keep
+		// the attachment visible when a client reopens the conversation while the
+		// configured media retention window is still active.
+		return "/pico/media/" + url.PathEscape(refID), true
 	}
 	return ref, true
 }

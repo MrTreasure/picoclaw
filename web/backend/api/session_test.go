@@ -390,7 +390,7 @@ func TestDetailSessionMessages_SplitsInternalMessageMarker(t *testing.T) {
 	}
 }
 
-func TestHandleGetSession_HidesHandledToolAttachmentsBackedByMediaRefs(t *testing.T) {
+func TestHandleGetSession_ExposesHandledToolAttachmentsBackedByMediaRefs(t *testing.T) {
 	configPath, cleanup := setupOAuthTestEnv(t)
 	defer cleanup()
 
@@ -438,11 +438,14 @@ func TestHandleGetSession_HidesHandledToolAttachmentsBackedByMediaRefs(t *testin
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
 
-	if len(resp.Messages) != 1 {
-		t.Fatalf("len(resp.Messages) = %d, want 1", len(resp.Messages))
+	if len(resp.Messages) != 2 {
+		t.Fatalf("len(resp.Messages) = %d, want 2", len(resp.Messages))
 	}
 	if resp.Messages[0].Role != "user" || resp.Messages[0].Content != "send me the report" {
-		t.Fatalf("message = %#v, want only user request", resp.Messages[0])
+		t.Fatalf("message = %#v, want user request", resp.Messages[0])
+	}
+	if got := resp.Messages[1]; got.Role != "assistant" || got.Content != "" || len(got.Attachments) != 1 || got.Attachments[0].URL != "/pico/media/attachment-1" {
+		t.Fatalf("attachment message = %#v, want authenticated Pico media URL", got)
 	}
 }
 
