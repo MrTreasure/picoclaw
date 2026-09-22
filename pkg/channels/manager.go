@@ -663,7 +663,10 @@ func (m *Manager) GetStreamer(ctx context.Context, channelName, chatID, sessionK
 		m.streamAuxiliaryTombstones.Store(streamKey, time.Now())
 	}
 
-	if m.config != nil && m.config.Agents.Defaults.SplitOnMarker {
+	if m.config != nil && SplitMarkerEnabledForChannel(
+		m.config.Agents.Defaults.SplitOnMarker,
+		channelName,
+	) {
 		return &splitMarkerStreamer{
 			current:     streamer,
 			reasoning:   reasoningStreamerFrom(streamer),
@@ -1501,6 +1504,9 @@ func (m *Manager) finalizedStreamActiveForMessage(channelName string, msg bus.Ou
 // channel-specific length limit. All outbound paths must use this helper so
 // synchronous sends (including the message tool) cannot leak protocol markers.
 func (m *Manager) splitOutboundMessageChunks(channelName string, msg bus.OutboundMessage, maxLen int) []string {
+	if strings.EqualFold(strings.TrimSpace(channelName), "pico") {
+		msg.Content = StripSplitMarkers(msg.Content)
+	}
 	// Stream-final duplicate responses must stay intact so preSend can consume
 	// the whole final message before any marker chunk leaks.
 	if m.finalizedStreamActiveForMessage(channelName, msg) {
@@ -1508,7 +1514,9 @@ func (m *Manager) splitOutboundMessageChunks(channelName string, msg bus.Outboun
 	}
 
 	// Tool feedback must stay a single message, so it skips marker splitting.
-	if m.config != nil && m.config.Agents.Defaults.SplitOnMarker && !outboundMessageIsToolFeedback(msg) {
+	if m.config != nil &&
+		SplitMarkerEnabledForChannel(m.config.Agents.Defaults.SplitOnMarker, channelName) &&
+		!outboundMessageIsToolFeedback(msg) {
 		if markerChunks := SplitByMarker(msg.Content); len(markerChunks) > 1 {
 			chunks := make([]string, 0, len(markerChunks))
 			for _, chunk := range markerChunks {

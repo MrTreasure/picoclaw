@@ -88,10 +88,18 @@ func (p *Pipeline) tryConfiguredStreamingLLM(
 			func(chunk providers.StreamChunk) {
 				recordChunk()
 				if !exec.suppressReasoning && strings.TrimSpace(chunk.ReasoningContent) != "" {
-					publisher.UpdateReasoning(ctx, chunk.ReasoningContent)
+					publisher.UpdateReasoning(ctx, sanitizeSplitMarkerContentForChannel(
+						chunk.ReasoningContent,
+						ts.channel,
+						p.Cfg.Agents.Defaults.SplitOnMarker,
+					))
 				}
 				if strings.TrimSpace(chunk.Content) != "" {
-					publisher.Update(ctx, chunk.Content)
+					publisher.Update(ctx, sanitizeSplitMarkerContentForChannel(
+						chunk.Content,
+						ts.channel,
+						p.Cfg.Agents.Defaults.SplitOnMarker,
+					))
 				}
 			},
 		)
@@ -104,7 +112,11 @@ func (p *Pipeline) tryConfiguredStreamingLLM(
 			exec.llmOpts,
 			func(accumulated string) {
 				recordChunk()
-				publisher.Update(ctx, accumulated)
+				publisher.Update(ctx, sanitizeSplitMarkerContentForChannel(
+					accumulated,
+					ts.channel,
+					p.Cfg.Agents.Defaults.SplitOnMarker,
+				))
 			},
 		)
 	}
@@ -166,6 +178,11 @@ func (p *Pipeline) tryConfiguredStreamingLLM(
 	}
 
 	if response != nil {
+		sanitizeSplitMarkerResponseForChannel(
+			response,
+			ts.channel,
+			p.Cfg.Agents.Defaults.SplitOnMarker,
+		)
 		exec.streamingPublisher = publisher
 	}
 

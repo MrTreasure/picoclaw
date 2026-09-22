@@ -6,11 +6,76 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
-const responseSplitMarker = "<|[SPLIT]|>"
+const responseSplitMarker = channels.MessageSplitMarker
+
+func sanitizeSplitMarkerContentForChannel(content, channel string, enabled bool) string {
+	if content == "" || channels.SplitMarkerEnabledForChannel(enabled, channel) ||
+		!strings.Contains(content, responseSplitMarker) {
+		return stripTrailingSplitMarkerPrefix(content, channel, enabled)
+	}
+	return stripTrailingSplitMarkerPrefix(channels.StripSplitMarkers(content), channel, enabled)
+}
+
+func stripTrailingSplitMarkerPrefix(content, channel string, enabled bool) string {
+	if channels.SplitMarkerEnabledForChannel(enabled, channel) {
+		return content
+	}
+	for length := len(responseSplitMarker) - 1; length > 0; length-- {
+		if strings.HasSuffix(content, responseSplitMarker[:length]) {
+			return strings.TrimSuffix(content, responseSplitMarker[:length])
+		}
+	}
+	return content
+}
+
+func sanitizeSplitMarkerResponseForChannel(
+	response *providers.LLMResponse,
+	channel string,
+	enabled bool,
+) {
+	if response == nil || channels.SplitMarkerEnabledForChannel(enabled, channel) {
+		return
+	}
+	response.Content = sanitizeSplitMarkerContentForChannel(response.Content, channel, enabled)
+	response.Reasoning = sanitizeSplitMarkerContentForChannel(response.Reasoning, channel, enabled)
+	response.ReasoningContent = sanitizeSplitMarkerContentForChannel(
+		response.ReasoningContent,
+		channel,
+		enabled,
+	)
+}
+
+func sanitizeSplitMarkerMessagesForChannel(
+	messages []providers.Message,
+	channel string,
+	enabled bool,
+) []providers.Message {
+	if channels.SplitMarkerEnabledForChannel(enabled, channel) || len(messages) == 0 {
+		return messages
+	}
+	cleaned := append([]providers.Message(nil), messages...)
+	for index := range cleaned {
+		if cleaned[index].Role != "assistant" {
+			continue
+		}
+		cleaned[index].Content = sanitizeSplitMarkerContentForChannel(
+			cleaned[index].Content,
+			channel,
+			enabled,
+		)
+		cleaned[index].ReasoningContent = sanitizeSplitMarkerContentForChannel(
+			cleaned[index].ReasoningContent,
+			channel,
+			enabled,
+		)
+	}
+	return cleaned
+}
 
 // validateSplitMarkerResponse rejects a characteristic model degeneration in
 // which the semantic message delimiter is repeated with no text between most

@@ -544,6 +544,11 @@ func (p *Pipeline) CallLLM(
 	// duplicate the same call in assistant content as "[tool_use: ...]".
 	// Normalize it here, after hooks and before any publishing or persistence.
 	sanitizeLLMResponseToolProtocol(exec.response)
+	sanitizeSplitMarkerResponseForChannel(
+		exec.response,
+		ts.channel,
+		p.Cfg.Agents.Defaults.SplitOnMarker,
+	)
 
 	// Save finishReason and usage on the turn state. Use ts directly (the
 	// authoritative turn state for this call) rather than a context lookup:

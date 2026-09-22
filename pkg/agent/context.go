@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
@@ -230,6 +231,7 @@ func (cb *ContextBuilder) BuildSystemPromptParts() []PromptPart {
 type systemPromptBuildOptions struct {
 	IncludeSkillCatalog bool
 	IncludeToolUseRule  bool
+	IncludeSplitMarker  bool
 	AllowedSkills       []string
 	AllowedTools        []string
 }
@@ -321,7 +323,7 @@ func (cb *ContextBuilder) buildSystemPromptParts(opts systemPromptBuildOptions) 
 	}
 
 	// Multi-Message Sending (if enabled)
-	if cb.splitOnMarker {
+	if opts.IncludeSplitMarker {
 		add(PromptPart{
 			ID:     "context.output_policy.split_on_marker",
 			Layer:  PromptLayerContext,
@@ -398,7 +400,9 @@ func (cb *ContextBuilder) buildSystemPromptForRequest(
 		return "", nil
 	}
 
-	useDefaultCache := !req.SuppressSkillContext &&
+	includeSplitMarker := channels.SplitMarkerEnabledForChannel(cb.splitOnMarker, req.Channel)
+	useDefaultCache := !includeSplitMarker &&
+		!req.SuppressSkillContext &&
 		!req.SuppressToolUseRule &&
 		len(req.AllowedSkills) == 0 &&
 		len(req.AllowedTools) == 0
@@ -418,6 +422,7 @@ func (cb *ContextBuilder) buildSystemPromptForRequest(
 	parts := cb.buildSystemPromptParts(systemPromptBuildOptions{
 		IncludeSkillCatalog: !req.SuppressSkillContext,
 		IncludeToolUseRule:  !req.SuppressToolUseRule,
+		IncludeSplitMarker:  includeSplitMarker,
 		AllowedSkills:       req.AllowedSkills,
 		AllowedTools:        req.AllowedTools,
 	})
@@ -862,6 +867,8 @@ func (cb *ContextBuilder) BuildMessages(
 
 func (cb *ContextBuilder) BuildMessagesFromPrompt(req PromptBuildRequest) []providers.Message {
 	messages := []providers.Message{}
+	req.History = sanitizeSplitMarkerMessagesForChannel(req.History, req.Channel, cb.splitOnMarker)
+	req.Summary = sanitizeSplitMarkerContentForChannel(req.Summary, req.Channel, cb.splitOnMarker)
 	cleanSummary := stripToolUseText(req.Summary)
 
 	// The default static part (identity, bootstrap, skills, memory) is cached

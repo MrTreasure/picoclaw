@@ -15,6 +15,24 @@ import (
 // and send each part as a separate message.
 const MessageSplitMarker = "<|[SPLIT]|>"
 
+// SplitMarkerEnabledForChannel keeps semantic multi-message delivery enabled
+// for chat channels such as Weixin, but disables the internal marker protocol
+// for Pico. Pico is already a streaming UI and must never expose or persist the
+// transport delimiter as visible chat content.
+func SplitMarkerEnabledForChannel(enabled bool, channel string) bool {
+	return enabled && !strings.EqualFold(strings.TrimSpace(channel), "pico")
+}
+
+// StripSplitMarkers renders semantic message parts as ordinary paragraphs.
+// It is the final transport-boundary safeguard for channels such as Pico that
+// do not use the marker protocol.
+func StripSplitMarkers(content string) string {
+	if !strings.Contains(content, MessageSplitMarker) {
+		return content
+	}
+	return strings.Join(SplitByMarker(content), "\n\n")
+}
+
 // SplitByMarker splits a message by the MessageSplitMarker and returns the parts.
 // Empty parts (including from consecutive markers) are filtered out.
 // If no marker is found, returns a single-element slice containing the original content.
