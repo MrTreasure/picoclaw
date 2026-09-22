@@ -2,12 +2,14 @@ package weixin
 
 import (
 	"context"
+	"crypto/md5"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/channels"
@@ -33,6 +35,9 @@ type WeixinChannel struct {
 	pauseUntil        time.Time
 	syncBufPath       string
 	contextTokensPath string
+	inboundStatePath  string
+	inboundStateMu    sync.Mutex
+	inboundState      weixinInboundStateFile
 }
 
 func init() {
@@ -88,6 +93,7 @@ func NewWeixinChannel(
 		typingCache:       make(map[string]typingTicketCacheEntry),
 		syncBufPath:       buildWeixinSyncBufPath(cfg),
 		contextTokensPath: buildWeixinContextTokensPath(cfg),
+		inboundStatePath:  buildWeixinInboundStatePath(cfg),
 	}, nil
 }
 
@@ -96,6 +102,7 @@ func (c *WeixinChannel) Start(ctx context.Context) error {
 	c.ctx, c.cancel = context.WithCancel(ctx)
 	c.SetRunning(true)
 	c.restoreContextTokens()
+	c.restoreInboundState()
 	go c.pollLoop(c.ctx)
 	logger.InfoC("weixin", "Weixin channel started")
 	return nil
@@ -115,7 +122,7 @@ func (c *WeixinChannel) restoreContextTokens() {
 		return
 	}
 	for userID, token := range tokens {
-		c.contextTokens.Store(userID, token)
+		c.contextTokens.Store(normalizeWeixinUserID(userID), token)
 	}
 	logger.InfoCF("weixin", "Restored context tokens from disk", map[string]any{
 		"path":  c.contextTokensPath,
@@ -129,7 +136,7 @@ func (c *WeixinChannel) persistContextTokens() {
 	c.contextTokens.Range(func(k, v any) bool {
 		if userID, ok := k.(string); ok {
 			if token, ok := v.(string); ok {
-				tokens[userID] = token
+				tokens[normalizeWeixinUserID(userID)] = token
 			}
 		}
 		return true
@@ -140,6 +147,113 @@ func (c *WeixinChannel) persistContextTokens() {
 			"error": err.Error(),
 		})
 	}
+}
+
+func normalizeWeixinUserID(userID string) string {
+	return strings.ToLower(strings.TrimSpace(userID))
+}
+
+func (c *WeixinChannel) restoreInboundState() {
+	state, err := loadWeixinInboundState(c.inboundStatePath)
+	if err != nil {
+		logger.WarnCF("weixin", "Failed to load inbound state", map[string]any{"error": err.Error()})
+		state = weixinInboundStateFile{Seen: make(map[string]int64), Quotes: make(map[string]weixinQuoteState)}
+	}
+	c.inboundStateMu.Lock()
+	c.inboundState = state
+	c.pruneInboundStateLocked(time.Now())
+	c.inboundStateMu.Unlock()
+}
+
+func (c *WeixinChannel) pruneInboundStateLocked(now time.Time) {
+	cutoff := now.Add(-30 * 24 * time.Hour).UnixMilli()
+	for id, seenAt := range c.inboundState.Seen {
+		if seenAt < cutoff {
+			delete(c.inboundState.Seen, id)
+		}
+	}
+	for id, quote := range c.inboundState.Quotes {
+		if quote.UpdatedAt < cutoff {
+			delete(c.inboundState.Quotes, id)
+		}
+	}
+}
+
+func (c *WeixinChannel) hasSeenInbound(id string) bool {
+	c.inboundStateMu.Lock()
+	defer c.inboundStateMu.Unlock()
+	if c.inboundState.Seen == nil {
+		c.inboundState.Seen = make(map[string]int64)
+	}
+	_, ok := c.inboundState.Seen[id]
+	return ok
+}
+
+func (c *WeixinChannel) rememberInbound(id, text string, aliases ...string) {
+	c.inboundStateMu.Lock()
+	defer c.inboundStateMu.Unlock()
+	now := time.Now()
+	if c.inboundState.Seen == nil {
+		c.inboundState.Seen = make(map[string]int64)
+	}
+	if c.inboundState.Quotes == nil {
+		c.inboundState.Quotes = make(map[string]weixinQuoteState)
+	}
+	c.pruneInboundStateLocked(now)
+	c.inboundState.Seen[id] = now.UnixMilli()
+	if strings.TrimSpace(text) != "" {
+		quote := weixinQuoteState{Text: text, UpdatedAt: now.UnixMilli()}
+		for _, alias := range aliases {
+			if alias = strings.TrimSpace(alias); alias != "" {
+				c.inboundState.Quotes[alias] = quote
+			}
+		}
+	}
+	if c.inboundStatePath != "" {
+		if err := saveWeixinInboundState(c.inboundStatePath, c.inboundState); err != nil {
+			logger.WarnCF("weixin", "Failed to persist inbound state", map[string]any{"error": err.Error()})
+		}
+	}
+}
+
+func (c *WeixinChannel) rememberQuote(id, text string) {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(text) == "" {
+		return
+	}
+	c.inboundStateMu.Lock()
+	defer c.inboundStateMu.Unlock()
+	if c.inboundState.Quotes == nil {
+		c.inboundState.Quotes = make(map[string]weixinQuoteState)
+	}
+	c.inboundState.Quotes[id] = weixinQuoteState{Text: text, UpdatedAt: time.Now().UnixMilli()}
+	if c.inboundStatePath != "" {
+		_ = saveWeixinInboundState(c.inboundStatePath, c.inboundState)
+	}
+}
+
+func (c *WeixinChannel) quoteText(id string) string {
+	c.inboundStateMu.Lock()
+	defer c.inboundStateMu.Unlock()
+	if c.inboundState.Quotes == nil {
+		return ""
+	}
+	return c.inboundState.Quotes[strings.TrimSpace(id)].Text
+}
+
+func stableWeixinMessageID(msg WeixinMessage) string {
+	for _, candidate := range []string{msg.ClientID, string(msg.MessageID)} {
+		if candidate = strings.TrimSpace(candidate); candidate != "" {
+			return candidate
+		}
+	}
+	for _, item := range msg.ItemList {
+		if id := strings.TrimSpace(string(item.MsgID)); id != "" {
+			return id
+		}
+	}
+	raw, _ := json.Marshal(msg)
+	sum := sha256.Sum256(raw)
+	return "weixin-" + hex.EncodeToString(sum[:12])
 }
 
 func (c *WeixinChannel) Stop(ctx context.Context) error {
@@ -284,14 +398,19 @@ func (c *WeixinChannel) pollLoop(ctx context.Context) {
 
 // handleInboundMessage converts a WeixinMessage to a bus.InboundMessage.
 func (c *WeixinChannel) handleInboundMessage(ctx context.Context, msg WeixinMessage) {
-	fromUserID := msg.FromUserID
+	fromUserID := normalizeWeixinUserID(msg.FromUserID)
 	if fromUserID == "" {
 		return
 	}
 
-	messageID := msg.ClientID
-	if messageID == "" {
-		messageID = uuid.New().String()
+	messageID := stableWeixinMessageID(msg)
+	dedupeID := fromUserID + "\x00" + messageID
+	if c.hasSeenInbound(dedupeID) {
+		logger.DebugCF("weixin", "Ignoring replayed inbound message", map[string]any{
+			"from_user_id": fromUserID,
+			"message_id":   messageID,
+		})
+		return
 	}
 
 	// Build text content from item_list
@@ -338,6 +457,9 @@ func (c *WeixinChannel) handleInboundMessage(ctx context.Context, msg WeixinMess
 	}
 
 	content := strings.Join(parts, "\n")
+	if quoted := c.resolveQuotedText(msg); quoted != "" {
+		content = fmt.Sprintf("[引用消息]\n%s\n\n[当前消息]\n%s", quoted, content)
+	}
 	if content == "" && len(mediaRefs) == 0 {
 		return
 	}
@@ -389,7 +511,108 @@ func (c *WeixinChannel) handleInboundMessage(ctx context.Context, msg WeixinMess
 		}
 	}
 
-	c.HandleInboundContext(ctx, fromUserID, content, mediaRefs, inboundCtx, sender)
+	if err := c.HandleInboundContext(ctx, fromUserID, content, mediaRefs, inboundCtx, sender); err != nil {
+		logger.ErrorCF("weixin", "Failed to publish inbound message", map[string]any{
+			"from_user_id": fromUserID,
+			"message_id":   messageID,
+			"error":        err.Error(),
+		})
+		return
+	}
+	aliases := []string{messageID, string(msg.MessageID), msg.ClientID}
+	for _, item := range msg.ItemList {
+		aliases = append(aliases, string(item.MsgID))
+	}
+	c.rememberInbound(dedupeID, strings.Join(parts, "\n"), aliases...)
+}
+
+func messageItemText(item *MessageItem) string {
+	if item == nil {
+		return ""
+	}
+	if item.TextItem != nil {
+		return strings.TrimSpace(item.TextItem.Text)
+	}
+	if item.VoiceItem != nil {
+		return strings.TrimSpace(item.VoiceItem.Text)
+	}
+	return ""
+}
+
+func (c *WeixinChannel) resolveQuotedText(msg WeixinMessage) string {
+	for i := range msg.ItemList {
+		ref := msg.ItemList[i].RefMsg
+		if ref == nil {
+			continue
+		}
+		if text := messageItemText(ref.MessageItem); text != "" {
+			return text
+		}
+		if text := strings.TrimSpace(ref.Title); text != "" {
+			return text
+		}
+		ids := []string{string(ref.SvrID)}
+		if ref.MessageItem != nil {
+			ids = append(ids, string(ref.MessageItem.MsgID))
+		}
+		for _, id := range ids {
+			if text := c.quoteText(id); text != "" {
+				if ref.PartialText != nil {
+					if partial := resolveWeixinPartialQuote(text, ref.PartialText); partial != "" {
+						return partial
+					}
+				}
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func nthStringIndex(text, value string, occurrence, from int) int {
+	if value == "" || occurrence < 0 {
+		return -1
+	}
+	position := from
+	for current := 0; current <= occurrence; current++ {
+		relative := strings.Index(text[position:], value)
+		if relative < 0 {
+			return -1
+		}
+		position += relative
+		if current < occurrence {
+			position += len(value)
+		}
+	}
+	return position
+}
+
+func resolveWeixinPartialQuote(fullText string, partial *PartialText) string {
+	if partial == nil || fullText == "" || partial.Start == "" || partial.End == "" {
+		return ""
+	}
+	start := nthStringIndex(fullText, partial.Start, partial.StartIndex, 0)
+	if start < 0 {
+		return ""
+	}
+	endCandidates := []int{
+		nthStringIndex(fullText, partial.End, partial.EndIndex, 0),
+		nthStringIndex(fullText, partial.End, partial.EndIndex, start+len(partial.Start)),
+	}
+	for _, end := range endCandidates {
+		if end < start {
+			continue
+		}
+		candidate := fullText[start : end+len(partial.End)]
+		if partial.QuoteMD5 == "" {
+			return candidate
+		}
+		sum := md5.Sum([]byte(candidate))
+		if strings.EqualFold(hex.EncodeToString(sum[:]), partial.QuoteMD5) {
+			return candidate
+		}
+	}
+	return ""
 }
 
 // Send implements channels.Channel by sending a text message to the WeChat user.
@@ -407,7 +630,7 @@ func (c *WeixinChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]st
 
 	// We need a context_token to send a reply. It should be stored in the conversation metadata.
 	// The chat_id is the weixin user_id (from_user_id).
-	toUserID := msg.ChatID
+	toUserID := normalizeWeixinUserID(msg.ChatID)
 
 	// Retrieve context_token from our per-user map (stored on last inbound)
 	contextToken := ""

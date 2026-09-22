@@ -40,6 +40,16 @@ type contextTokensFile struct {
 	Tokens map[string]string `json:"tokens"`
 }
 
+type weixinQuoteState struct {
+	Text      string `json:"text"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
+type weixinInboundStateFile struct {
+	Seen   map[string]int64            `json:"seen"`
+	Quotes map[string]weixinQuoteState `json:"quotes"`
+}
+
 func picoclawHomeDir() string {
 	return config.GetHome()
 }
@@ -59,6 +69,42 @@ func buildWeixinSyncBufPath(cfg *config.WeixinSettings) string {
 
 func buildWeixinContextTokensPath(cfg *config.WeixinSettings) string {
 	return filepath.Join(picoclawHomeDir(), "channels", "weixin", "context-tokens", genWeixinAccountKey(cfg)+".json")
+}
+
+func buildWeixinInboundStatePath(cfg *config.WeixinSettings) string {
+	return filepath.Join(picoclawHomeDir(), "channels", "weixin", "inbound-state", genWeixinAccountKey(cfg)+".json")
+}
+
+func loadWeixinInboundState(path string) (weixinInboundStateFile, error) {
+	state := weixinInboundStateFile{
+		Seen:   make(map[string]int64),
+		Quotes: make(map[string]weixinQuoteState),
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return state, nil
+		}
+		return state, err
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return state, err
+	}
+	if state.Seen == nil {
+		state.Seen = make(map[string]int64)
+	}
+	if state.Quotes == nil {
+		state.Quotes = make(map[string]weixinQuoteState)
+	}
+	return state, nil
+}
+
+func saveWeixinInboundState(path string, state weixinInboundStateFile) error {
+	data, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	return fileutil.WriteFileAtomic(path, data, 0o600)
 }
 
 func loadGetUpdatesBuf(path string) (string, error) {
@@ -186,6 +232,7 @@ func (c *WeixinChannel) ensureSessionActive() error {
 }
 
 func (c *WeixinChannel) getTypingTicket(ctx context.Context, userID string) (string, error) {
+	userID = normalizeWeixinUserID(userID)
 	now := time.Now()
 
 	c.typingMu.Lock()

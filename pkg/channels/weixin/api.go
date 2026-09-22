@@ -7,19 +7,58 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
 	"strconv"
+	"strings"
 )
 
+type NetworkError struct {
+	Kind      string
+	Operation string
+	Err       error
+}
+
+func (e *NetworkError) Error() string {
+	return fmt.Sprintf("%s network error (%s): %v", e.Kind, e.Operation, e.Err)
+}
+
+func (e *NetworkError) Unwrap() error { return e.Err }
+
+func classifyNetworkError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	kind := "unknown"
+	var dnsErr *net.DNSError
+	var netErr net.Error
+	switch {
+	case errors.Is(err, context.Canceled):
+		kind = "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		kind = "timeout"
+	case errors.As(err, &dnsErr):
+		kind = "dns"
+	case strings.Contains(strings.ToLower(err.Error()), "tls") || strings.Contains(strings.ToLower(err.Error()), "certificate"):
+		kind = "tls"
+	case errors.As(err, &netErr) && netErr.Timeout():
+		kind = "timeout"
+	case errors.As(err, &netErr):
+		kind = "tcp"
+	}
+	return &NetworkError{Kind: kind, Operation: operation, Err: err}
+}
+
 const (
-	weixinChannelVersion = "2.1.1"
+	weixinChannelVersion = "2.4.9"
 	weixinIlinkAppID     = "bot"
-	// 2.1.1 encoded as 0x00MMNNPP => 0x00020101 => 131329
-	weixinClientVersion = 131329
+	// 2.4.9 encoded as 0x00MMNNPP => 0x00020409 => 132105
+	weixinClientVersion = 132105
 )
 
 type ApiClient struct {
@@ -100,7 +139,7 @@ func (c *ApiClient) post(ctx context.Context, endpoint string, body any, respons
 
 	resp, err := c.HttpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("http POST %s failed: %w", endpoint, err)
+		return classifyNetworkError("POST "+endpoint, err)
 	}
 	defer resp.Body.Close()
 
@@ -190,7 +229,7 @@ func (c *ApiClient) getQR(ctx context.Context, endpoint string, query map[string
 
 	resp, err := c.HttpClient.Do(req)
 	if err != nil {
-		return err
+		return classifyNetworkError("GET "+endpoint, err)
 	}
 	defer resp.Body.Close()
 

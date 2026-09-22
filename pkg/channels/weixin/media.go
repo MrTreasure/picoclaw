@@ -982,10 +982,11 @@ func (c *WeixinChannel) sendMessageItem(
 	contextToken string,
 	item MessageItem,
 ) error {
+	clientID := "picoclaw-" + uuid.New().String()
 	resp, err := c.api.SendMessage(ctx, SendMessageReq{
 		Msg: WeixinMessage{
 			ToUserID:     toUserID,
-			ClientID:     "picoclaw-" + uuid.New().String(),
+			ClientID:     clientID,
 			MessageType:  MessageTypeBot,
 			MessageState: MessageStateFinish,
 			ItemList:     []MessageItem{item},
@@ -1003,6 +1004,9 @@ func (c *WeixinChannel) sendMessageItem(
 			c.pauseSession("sendmessage", resp.Ret, resp.Errcode, resp.Errmsg)
 		}
 		return fmt.Errorf("sendmessage failed: ret=%d errcode=%d errmsg=%s", resp.Ret, resp.Errcode, resp.Errmsg)
+	}
+	if text := messageItemText(&item); text != "" {
+		c.rememberQuote(clientID, text)
 	}
 	return nil
 }
@@ -1116,6 +1120,7 @@ func (c *WeixinChannel) sendTypingStatus(
 
 // StartTyping implements channels.TypingCapable.
 func (c *WeixinChannel) StartTyping(ctx context.Context, chatID string) (func(), error) {
+	chatID = normalizeWeixinUserID(chatID)
 	if strings.TrimSpace(chatID) == "" {
 		return func() {}, nil
 	}
@@ -1188,14 +1193,15 @@ func (c *WeixinChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMess
 		return nil, err
 	}
 
+	toUserID := normalizeWeixinUserID(msg.ChatID)
 	contextToken := ""
-	if v, ok := c.contextTokens.Load(msg.ChatID); ok {
+	if v, ok := c.contextTokens.Load(toUserID); ok {
 		contextToken, _ = v.(string)
 	}
 	if contextToken == "" {
 		return nil, fmt.Errorf(
 			"weixin send media: missing context token for chat %s: %w",
-			msg.ChatID,
+			toUserID,
 			basechannels.ErrSendFailed,
 		)
 	}
@@ -1217,12 +1223,12 @@ func (c *WeixinChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMess
 
 			kind := outboundMediaKind(part.Type, filename, contentType)
 
-			uploaded, uploadErr := c.uploadLocalFile(ctx, localPath, filename, msg.ChatID, kind)
+			uploaded, uploadErr := c.uploadLocalFile(ctx, localPath, filename, toUserID, kind)
 			if uploadErr != nil {
 				err = uploadErr
 				return
 			}
-			err = c.sendUploadedMedia(ctx, msg.ChatID, contextToken, part.Caption, kind, uploaded)
+			err = c.sendUploadedMedia(ctx, toUserID, contextToken, part.Caption, kind, uploaded)
 		}()
 		if err != nil {
 			logger.ErrorCF("weixin", "Failed to send outbound media", map[string]any{

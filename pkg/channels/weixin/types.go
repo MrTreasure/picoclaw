@@ -1,5 +1,40 @@
 package weixin
 
+import (
+	"bytes"
+	"encoding/json"
+)
+
+// LosslessID accepts both JSON strings and numbers without routing numeric IDs
+// through float64. Recent iLink clients may send quote/message IDs either way.
+type LosslessID string
+
+func (id *LosslessID) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if bytes.Equal(data, []byte("null")) || len(data) == 0 {
+		*id = ""
+		return nil
+	}
+	if data[0] == '"' {
+		var value string
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*id = LosslessID(value)
+		return nil
+	}
+	*id = LosslessID(string(data))
+	return nil
+}
+
+type PartialText struct {
+	Start      string `json:"start,omitempty"`
+	End        string `json:"end,omitempty"`
+	StartIndex int    `json:"startindex,omitempty"`
+	EndIndex   int    `json:"endindex,omitempty"`
+	QuoteMD5   string `json:"quotemd5,omitempty"`
+}
+
 // BaseInfo is attached to every outgoing CGI request
 type BaseInfo struct {
 	ChannelVersion string `json:"channel_version,omitempty"`
@@ -115,6 +150,8 @@ type VideoItem struct {
 type RefMessage struct {
 	MessageItem *MessageItem `json:"message_item,omitempty"`
 	Title       string       `json:"title,omitempty"`
+	SvrID       LosslessID   `json:"svr_id,omitempty"`
+	PartialText *PartialText `json:"partial_text,omitempty"`
 }
 
 type MessageItem struct {
@@ -122,7 +159,7 @@ type MessageItem struct {
 	CreateTimeMs int64       `json:"create_time_ms,omitempty"`
 	UpdateTimeMs int64       `json:"update_time_ms,omitempty"`
 	IsCompleted  bool        `json:"is_completed,omitempty"`
-	MsgID        string      `json:"msg_id,omitempty"`
+	MsgID        LosslessID  `json:"msg_id,omitempty"`
 	RefMsg       *RefMessage `json:"ref_msg,omitempty"`
 	TextItem     *TextItem   `json:"text_item,omitempty"`
 	ImageItem    *ImageItem  `json:"image_item,omitempty"`
@@ -133,7 +170,7 @@ type MessageItem struct {
 
 type WeixinMessage struct {
 	Seq          int           `json:"seq,omitempty"`
-	MessageID    int64         `json:"message_id,omitempty"`
+	MessageID    LosslessID    `json:"message_id,omitempty"`
 	FromUserID   string        `json:"from_user_id,omitempty"`
 	ToUserID     string        `json:"to_user_id,omitempty"`
 	ClientID     string        `json:"client_id,omitempty"`
