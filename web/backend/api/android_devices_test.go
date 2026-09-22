@@ -71,7 +71,7 @@ func TestAndroidDiagnosticUpload(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterAndroidDeviceRoutes(mux, AndroidDeviceRouteOpts{DiagnosticDir: dir})
 	handler := middleware.LauncherDashboardAuth(middleware.LauncherDashboardAuthConfig{ExpectedCookie: "browser", DeviceAuth: store}, mux)
-	req := httptest.NewRequest(http.MethodPost, "/api/android/diagnostics/upload/ticket_1234567890", bytes.NewBufferString(`{"events":[]}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/android/diagnostics/upload", bytes.NewBufferString(`{"events":[]}`))
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
