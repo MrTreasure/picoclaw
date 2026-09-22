@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ type AndroidDeviceRouteOpts struct {
 	DeviceStore   DeviceCredentialStore
 	WebGrants     *deviceauth.GrantStore
 	ReleaseDir    string
+	DiagnosticDir string
 }
 
 type androidDeviceHandlers struct {
@@ -35,6 +37,7 @@ type androidDeviceHandlers struct {
 	deviceStore   DeviceCredentialStore
 	webGrants     *deviceauth.GrantStore
 	releaseDir    string
+	diagnosticDir string
 	loginLimit    *loginRateLimiter
 }
 
@@ -49,6 +52,7 @@ func RegisterAndroidDeviceRoutes(mux *http.ServeMux, opts AndroidDeviceRouteOpts
 		deviceStore:   opts.DeviceStore,
 		webGrants:     opts.WebGrants,
 		releaseDir:    opts.ReleaseDir,
+		diagnosticDir: opts.DiagnosticDir,
 		loginLimit:    newLoginRateLimiter(),
 	}
 	mux.HandleFunc("POST /api/android/devices/login", h.login)
@@ -57,6 +61,43 @@ func RegisterAndroidDeviceRoutes(mux *http.ServeMux, opts AndroidDeviceRouteOpts
 	mux.HandleFunc("POST /api/android/webview-grant", h.issueWebViewGrant)
 	mux.HandleFunc("GET /api/android/releases/latest", h.latestRelease)
 	mux.HandleFunc("GET /api/android/releases/download", h.downloadRelease)
+	mux.HandleFunc("POST /api/android/diagnostics/upload/{ticket}", h.uploadDiagnostics)
+}
+
+var androidDiagnosticTicketPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{16,80}$`)
+
+func (h *androidDeviceHandlers) uploadDiagnostics(w http.ResponseWriter, r *http.Request) {
+	ticket := r.PathValue("ticket")
+	deviceID := middleware.LauncherDeviceID(r)
+	if h.diagnosticDir == "" || deviceID == "" || !androidDiagnosticTicketPattern.MatchString(ticket) {
+		http.Error(w, `{"error":"invalid diagnostic upload"}`, http.StatusBadRequest)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil || !json.Valid(body) {
+		http.Error(w, `{"error":"invalid diagnostic payload"}`, http.StatusBadRequest)
+		return
+	}
+	if err = os.MkdirAll(h.diagnosticDir, 0o700); err != nil {
+		http.Error(w, `{"error":"diagnostic storage unavailable"}`, http.StatusInternalServerError)
+		return
+	}
+	name := fmt.Sprintf("%s-%s-%s.json", time.Now().UTC().Format("20060102T150405.000000000Z"), ticket, sanitizeDiagnosticFilename(deviceID))
+	if err = os.WriteFile(filepath.Join(h.diagnosticDir, name), body, 0o600); err != nil {
+		http.Error(w, `{"error":"diagnostic storage unavailable"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]string{"ticket": ticket, "file": name})
+}
+
+func sanitizeDiagnosticFilename(value string) string {
+	value = regexp.MustCompile(`[^A-Za-z0-9_-]+`).ReplaceAllString(value, "_")
+	if len(value) > 80 {
+		value = value[:80]
+	}
+	return value
 }
 
 type androidRelease struct {

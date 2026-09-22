@@ -58,6 +58,36 @@ func TestAndroidReleaseManifestAndDownload(t *testing.T) {
 	}
 }
 
+func TestAndroidDiagnosticUpload(t *testing.T) {
+	dir := t.TempDir()
+	store, err := deviceauth.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, token, err := store.Create(context.Background(), "diagnostic phone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	RegisterAndroidDeviceRoutes(mux, AndroidDeviceRouteOpts{DiagnosticDir: dir})
+	handler := middleware.LauncherDashboardAuth(middleware.LauncherDashboardAuthConfig{ExpectedCookie: "browser", DeviceAuth: store}, mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/android/diagnostics/upload/ticket_1234567890", bytes.NewBufferString(`{"events":[]}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload status = %d: %s", rec.Code, rec.Body.String())
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("diagnostic files = %d, err=%v", len(entries), err)
+	}
+	stored, err := os.ReadFile(filepath.Join(dir, entries[0].Name()))
+	if err != nil || string(stored) != `{"events":[]}` {
+		t.Fatalf("stored payload = %q, err=%v", stored, err)
+	}
+}
+
 func TestAndroidDeviceLoginBearerWebGrantAndRevoke(t *testing.T) {
 	store, err := deviceauth.New(t.TempDir())
 	if err != nil {
