@@ -121,6 +121,58 @@ export function messageSignature(message: ChatMessage): string {
   )}`
 }
 
+function reconciliationSignature(message: ChatMessage): string {
+  const content = message.content.trim()
+  if (content) {
+    // The session API and the live Pico event describe the same durable reply
+    // with different transport metadata (model name, attachment shape and
+    // timestamps). Content + presentation kind is the stable identity shared
+    // by both paths. Occurrence counts in mergeHistoryMessages keep repeated
+    // answers in separate turns rather than collapsing them globally.
+    return `${message.role}\u0000${message.kind ?? "normal"}\u0000${content}`
+  }
+
+  return messageSignature({ ...message, modelName: undefined })
+}
+
+function removeShadowedHistoryCopies(messages: ChatMessage[]): ChatMessage[] {
+  const turnByIndex: number[] = []
+  let turn = 0
+  messages.forEach((message, index) => {
+    if (message.role === "user") {
+      turn += 1
+    }
+    turnByIndex[index] = turn
+  })
+
+  const removed = new Set<number>()
+  messages.forEach((message, liveIndex) => {
+    if (message.role !== "assistant" || message.id.startsWith("hist-")) {
+      return
+    }
+
+    const signature = reconciliationSignature(message)
+    for (let index = liveIndex - 1; index >= 0; index -= 1) {
+      if (turnByIndex[index] !== turnByIndex[liveIndex]) {
+        break
+      }
+      const candidate = messages[index]
+      if (
+        candidate?.id.startsWith("hist-") &&
+        !removed.has(index) &&
+        reconciliationSignature(candidate) === signature
+      ) {
+        removed.add(index)
+        break
+      }
+    }
+  })
+
+  return removed.size === 0
+    ? messages
+    : messages.filter((_, index) => !removed.has(index))
+}
+
 export function removeMatchingHistoryCopies(
   messages: ChatMessage[],
   liveMessage: ChatMessage,
@@ -132,31 +184,33 @@ export function removeMatchingHistoryCopies(
     return messages
   }
 
-  const signature = messageSignature(liveMessage)
-  const liveTimestamp = comparableTimestamp(liveMessage.timestamp)
+  const signature = reconciliationSignature(liveMessage)
+  const liveIndex = messages.findIndex(
+    (message) => message.id === liveMessage.id,
+  )
+  let latestUserIndex = -1
+  const searchEnd = liveIndex >= 0 ? liveIndex : messages.length
+  for (let index = searchEnd - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") {
+      latestUserIndex = index
+      break
+    }
+  }
   let duplicateIndex = -1
-  let closestTimestampDifference = Number.POSITIVE_INFINITY
 
   messages.forEach((message, index) => {
     if (
+      index <= latestUserIndex ||
       !message.id.startsWith("hist-") ||
-      messageSignature(message) !== signature
+      reconciliationSignature(message) !== signature
     ) {
       return
     }
 
-    const timestampDifference = Math.abs(
-      comparableTimestamp(message.timestamp) - liveTimestamp,
-    )
-    // A repeated answer in a later turn is legitimate. Only reconcile the
-    // history copy produced by the same in-flight response.
-    if (
-      timestampDifference <= 30_000 &&
-      timestampDifference < closestTimestampDifference
-    ) {
-      duplicateIndex = index
-      closestTimestampDifference = timestampDifference
-    }
+    // Prefer the last matching history entry in the current turn. This covers
+    // long-running replies whose persisted and live timestamps can be many
+    // minutes apart while preserving the same text from older turns.
+    duplicateIndex = index
   })
 
   return duplicateIndex < 0
@@ -175,11 +229,13 @@ export function mergeHistoryMessages(
   currentMessages: ChatMessage[],
 ): ChatMessage[] {
   historyMessages = splitMarkedAssistantMessages(historyMessages)
-  currentMessages = splitMarkedAssistantMessages(currentMessages)
+  currentMessages = removeShadowedHistoryCopies(
+    splitMarkedAssistantMessages(currentMessages),
+  )
   const currentIds = new Set(currentMessages.map((message) => message.id))
   const unmatchedCurrentSignatures = new Map<string, number>()
   for (const message of currentMessages) {
-    const signature = messageSignature(message)
+    const signature = reconciliationSignature(message)
     unmatchedCurrentSignatures.set(
       signature,
       (unmatchedCurrentSignatures.get(signature) ?? 0) + 1,
@@ -190,7 +246,7 @@ export function mergeHistoryMessages(
     if (currentIds.has(message.id)) {
       return false
     }
-    const signature = messageSignature(message)
+    const signature = reconciliationSignature(message)
     const matches = unmatchedCurrentSignatures.get(signature) ?? 0
     if (matches === 0) {
       return true
