@@ -432,10 +432,25 @@ func (c *WeixinChannel) Send(ctx context.Context, msg bus.OutboundMessage) ([]st
 		if c.remainingPause() > 0 {
 			return nil, fmt.Errorf("weixin send: %w", channels.ErrSendFailed)
 		}
+		if isContextTokenRejected(err) {
+			return nil, fmt.Errorf(
+				"weixin send: stale context token; ask the recipient to send the bot a new message first: %w",
+				channels.ErrSendFailed,
+			)
+		}
 		return nil, fmt.Errorf("weixin send: %w", channels.ErrTemporary)
 	}
 
 	return nil, nil
+}
+
+func isContextTokenRejected(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "ret=-2") &&
+		strings.Contains(message, "prepare failed")
 }
 
 // VoiceCapabilities returns the voice capabilities of the channel.

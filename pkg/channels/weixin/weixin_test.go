@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -20,6 +21,15 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+func TestIsContextTokenRejected(t *testing.T) {
+	if !isContextTokenRejected(fmt.Errorf("sendmessage failed: ret=-2 errcode=0 errmsg=prepare failed")) {
+		t.Fatal("expected prepare failure to identify a rejected context token")
+	}
+	if isContextTokenRejected(fmt.Errorf("sendmessage failed: ret=-14 errcode=0 errmsg=expired")) {
+		t.Fatal("session-expired errors must use the existing pause path")
+	}
 }
 
 func TestParseWeixinMediaAESKey(t *testing.T) {
