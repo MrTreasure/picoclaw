@@ -146,6 +146,9 @@ export async function saveCachedSession(
 
 export async function deleteCachedSession(id: string): Promise<void> {
   try {
+    // A previously queued write must finish before deletion; otherwise a late
+    // save can recreate an already-deleted conversation in IndexedDB.
+    await pendingWrites.get(id)?.catch(() => {})
     const database = await openDatabase()
     if (!database) return
     await new Promise<void>((resolve, reject) => {

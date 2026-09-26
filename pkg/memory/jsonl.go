@@ -851,6 +851,25 @@ func (s *JSONLStore) rewriteJSONL(
 	return fileutil.WriteFileAtomic(s.jsonlPath(sessionKey), buf.Bytes(), 0o644)
 }
 
+// DeleteSession serializes file unlinking with writers for this key. Callers
+// must reserve the active turn before invoking this method.
+func (s *JSONLStore) DeleteSession(key string) (bool, error) {
+	mu := s.sessionLock(key)
+	mu.Lock()
+	defer mu.Unlock()
+	removed := false
+	for _, path := range []string{s.jsonlPath(key), s.metaPath(key)} {
+		if err := os.Remove(path); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return removed, err
+		}
+		removed = true
+	}
+	return removed, nil
+}
+
 // ListSessions returns all known session keys by reading .meta.json files.
 func (s *JSONLStore) ListSessions() []string {
 	entries, err := os.ReadDir(s.dir)

@@ -12,6 +12,7 @@ import { useNavigate } from "@tanstack/react-router"
 import dayjs from "dayjs"
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 
 import { CodexRpcClient, type CodexThread } from "@/api/codex"
 import type { SessionSummary } from "@/api/sessions"
@@ -45,6 +46,9 @@ type SessionListEntry =
   | { kind: "muse"; session: SessionSummary; updated: number }
   | { kind: "codex"; thread: CodexThread; updated: number }
 
+const museKey = (id: string) => `muse:${id}`
+const codexKey = (id: string) => `codex:${id}`
+
 export function SessionListPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -72,7 +76,7 @@ export function SessionListPage() {
     handleDeleteSessions,
   } = useSessionHistory({
     activeSessionId,
-    onDeletedActiveSession: () => void newChat(true),
+    onDeletedActiveSession: () => void newChat(true, true),
   })
 
   useEffect(() => {
@@ -143,28 +147,28 @@ export function SessionListPage() {
 
   const selectionMode = selectedIds.size > 0
 
-  const toggleSelection = (sessionId: string) => {
+  const toggleSelection = (key: string) => {
     setSelectedIds((previous) => {
       const next = new Set(previous)
-      if (next.has(sessionId)) next.delete(sessionId)
-      else next.add(sessionId)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       return next
     })
   }
 
-  const beginLongPress = (sessionId: string, event: React.PointerEvent) => {
+  const beginLongPress = (key: string, event: React.PointerEvent) => {
     if (event.pointerType === "mouse" && event.button !== 0) return
     cancelLongPress()
     suppressClickRef.current = false
     pointerStartRef.current = { x: event.clientX, y: event.clientY }
-    setPressedId(sessionId)
+    setPressedId(key)
     longPressTriggeredRef.current = false
     longPressTimerRef.current = setTimeout(() => {
       longPressTimerRef.current = null
       longPressTriggeredRef.current = true
       suppressClickRef.current = true
       setPressedId(null)
-      if (!selectedIds.has(sessionId)) toggleSelection(sessionId)
+      if (!selectedIds.has(key)) toggleSelection(key)
       navigator.vibrate?.([12, 28, 18])
     }, 460)
   }
@@ -210,6 +214,63 @@ export function SessionListPage() {
     const navigation = navigate({ to: "/" })
     void switchSession(sessionId)
     await navigation
+  }
+
+  const deleteSelected = async () => {
+    if (deleting) return
+    const keys = [...selectedIds]
+    const museIds = keys
+      .filter((key) => key.startsWith("muse:"))
+      .map((key) => key.slice("muse:".length))
+    const codexIds = keys
+      .filter((key) => key.startsWith("codex:"))
+      .map((key) => key.slice("codex:".length))
+    setConfirmBulkDelete(false)
+    setDeleting(true)
+    const deleted = new Set<string>()
+    try {
+      if (museIds.length) {
+        for (const id of await handleDeleteSessions(museIds))
+          deleted.add(museKey(id))
+      }
+      if (codexIds.length) {
+        const rpc = new CodexRpcClient()
+        try {
+          await rpc.connect()
+          // A failed thread must not block deletion of the other selections.
+          for (const id of codexIds) {
+            try {
+              await rpc.request("thread/delete", { threadId: id })
+              deleted.add(codexKey(id))
+            } catch (error) {
+              console.error("Failed to delete Codex thread:", error)
+            }
+          }
+        } catch (error) {
+          console.error("Failed to connect for Codex deletion:", error)
+        } finally {
+          rpc.close()
+        }
+      }
+    } catch (error) {
+      console.error("Failed to delete selected sessions:", error)
+    } finally {
+      setCodexThreads((threads) =>
+        threads.filter((thread) => !deleted.has(codexKey(thread.id))),
+      )
+      setSelectedIds((current) => {
+        const remaining = new Set(current)
+        for (const key of deleted) remaining.delete(key)
+        return remaining
+      })
+      const failedCodex = codexIds.filter((id) => !deleted.has(codexKey(id)))
+      if (failedCodex.length)
+        toast.error(`${failedCodex.length} 段 Codex 会话删除失败，请重试`)
+      const deletedCodex = codexIds.filter((id) => deleted.has(codexKey(id)))
+      if (deletedCodex.length)
+        toast.success(`已永久删除 ${deletedCodex.length} 段 Codex 会话`)
+      setDeleting(false)
+    }
   }
 
   const createSession = async () => {
@@ -306,23 +367,49 @@ export function SessionListPage() {
             {visibleEntries.map((entry) => {
               if (entry.kind === "codex") {
                 const thread = entry.thread
+                const key = codexKey(thread.id)
                 return (
                   <div
-                    key={`codex:${thread.id}`}
-                    className="border-border/55 bg-card flex min-h-20 items-center gap-3 rounded-2xl border px-3 py-3 shadow-sm sm:px-4"
+                    key={key}
+                    className={`group border-border/55 bg-card flex min-h-20 items-center gap-3 rounded-2xl border px-3 py-3 shadow-sm transition-[transform,background-color,box-shadow] duration-150 sm:px-4 ${selectedIds.has(key) ? "border-secondary/60 bg-secondary/10 shadow-md" : pressedId === key ? "bg-muted/80 scale-[0.985] shadow-inner" : "active:scale-[0.99]"}`}
                   >
                     <button
                       type="button"
-                      className="focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left focus-visible:ring-2 focus-visible:outline-none"
-                      onClick={() =>
-                        void navigate({
-                          to: "/codex",
-                          search: { thread: thread.id },
-                        })
-                      }
+                      className="focus-visible:ring-ring flex min-w-0 flex-1 touch-pan-y items-center gap-3 rounded-xl text-left select-none focus-visible:ring-2 focus-visible:outline-none"
+                      onPointerDown={(event) => beginLongPress(key, event)}
+                      onPointerMove={moveLongPress}
+                      onPointerUp={cancelLongPress}
+                      onPointerCancel={cancelLongPress}
+                      onPointerLeave={cancelLongPress}
+                      onContextMenu={(event) => {
+                        event.preventDefault()
+                        cancelLongPress()
+                        suppressClickRef.current = true
+                        if (!selectedIds.has(key)) toggleSelection(key)
+                      }}
+                      onClick={() => {
+                        if (
+                          suppressClickRef.current ||
+                          longPressTriggeredRef.current
+                        ) {
+                          suppressClickRef.current = false
+                          longPressTriggeredRef.current = false
+                          return
+                        }
+                        if (selectionMode) toggleSelection(key)
+                        else
+                          void navigate({
+                            to: "/codex",
+                            search: { thread: thread.id },
+                          })
+                      }}
                     >
                       <span className="bg-secondary/10 text-secondary flex size-14 shrink-0 items-center justify-center rounded-2xl">
-                        <IconCode className="size-7" aria-hidden="true" />
+                        {selectedIds.has(key) ? (
+                          <IconCheck className="size-7" aria-label="已选择" />
+                        ) : (
+                          <IconCode className="size-7" aria-hidden="true" />
+                        )}
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center justify-between gap-3">
@@ -342,17 +429,18 @@ export function SessionListPage() {
                 )
               }
               const session = entry.session
+              const key = museKey(session.id)
               const isActive = session.id === activeSessionId
               const isWeixin = session.channel === "weixin"
               return (
                 <div
-                  key={session.id}
-                  className={`group border-border/55 bg-card flex min-h-20 items-center gap-3 rounded-2xl border px-3 py-3 shadow-sm transition-[transform,background-color,box-shadow] duration-150 sm:px-4 ${selectedIds.has(session.id) ? "border-secondary/60 bg-secondary/10 shadow-md" : pressedId === session.id ? "bg-muted/80 scale-[0.985] shadow-inner" : "active:scale-[0.99]"}`}
+                  key={key}
+                  className={`group border-border/55 bg-card flex min-h-20 items-center gap-3 rounded-2xl border px-3 py-3 shadow-sm transition-[transform,background-color,box-shadow] duration-150 sm:px-4 ${selectedIds.has(key) ? "border-secondary/60 bg-secondary/10 shadow-md" : pressedId === key ? "bg-muted/80 scale-[0.985] shadow-inner" : "active:scale-[0.99]"}`}
                 >
                   <button
                     type="button"
                     className="focus-visible:ring-ring flex min-w-0 flex-1 touch-pan-y items-center gap-3 rounded-xl text-left select-none focus-visible:ring-2 focus-visible:outline-none"
-                    onPointerDown={(event) => beginLongPress(session.id, event)}
+                    onPointerDown={(event) => beginLongPress(key, event)}
                     onPointerMove={moveLongPress}
                     onPointerUp={cancelLongPress}
                     onPointerCancel={cancelLongPress}
@@ -361,8 +449,7 @@ export function SessionListPage() {
                       event.preventDefault()
                       cancelLongPress()
                       suppressClickRef.current = true
-                      if (!selectedIds.has(session.id))
-                        toggleSelection(session.id)
+                      if (!selectedIds.has(key)) toggleSelection(key)
                     }}
                     onClick={() => {
                       if (
@@ -373,14 +460,14 @@ export function SessionListPage() {
                         longPressTriggeredRef.current = false
                         return
                       }
-                      if (selectionMode) toggleSelection(session.id)
+                      if (selectionMode) toggleSelection(key)
                       else void openSession(session.id)
                     }}
                   >
                     <span
                       className={`flex size-14 shrink-0 items-center justify-center rounded-2xl ${isWeixin ? "bg-emerald-500/15 text-emerald-400" : isActive ? "bg-accent text-accent-foreground" : "bg-muted text-muted-foreground"}`}
                     >
-                      {selectedIds.has(session.id) ? (
+                      {selectedIds.has(key) ? (
                         <IconCheck className="size-7" aria-label="已选择" />
                       ) : isWeixin ? (
                         <IconBrandWechat
@@ -447,28 +534,15 @@ export function SessionListPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>删除所选会话？</AlertDialogTitle>
             <AlertDialogDescription>
-              将永久删除 {selectedIds.size}{" "}
-              段会话记录，包括所选微信记录。此操作无法撤销。
+              将永久删除 {selectedIds.size} 段会话记录（含所选 Pico、微信及
+              Codex 对话）。此操作无法撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => {
-                const ids = [...selectedIds]
-                setConfirmBulkDelete(false)
-                setDeleting(true)
-                void handleDeleteSessions(ids)
-                  .then((deleted) => {
-                    setSelectedIds((current) => {
-                      const remaining = new Set(current)
-                      for (const id of deleted) remaining.delete(id)
-                      return remaining
-                    })
-                  })
-                  .finally(() => setDeleting(false))
-              }}
+              onClick={() => void deleteSelected()}
             >
               {t("chat.deleteSession")}
             </AlertDialogAction>

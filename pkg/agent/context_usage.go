@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+
 	"github.com/sipeed/picoclaw/pkg/bus"
 )
 
@@ -13,8 +15,30 @@ import (
 //	compress when: history + system + tools + maxTokens > contextWindow
 //	equivalent to: history + system + tools > contextWindow - maxTokens
 //
+// When the active ContextManager is Seahorse, turns do not send the raw JSONL
+// history: they send the budget-assembled context, which may contain summaries
+// and may have evicted older messages. Counting the JSONL history would then
+// report a number that never reaches the model. In that case the assembled
+// context is measured instead, using a read-only lookup so merely displaying
+// usage does not create a conversation for an untouched session.
+//
 // Returns nil when the agent or session is unavailable.
 func computeContextUsage(agent *AgentInstance, sessionKey string) *bus.ContextUsage {
+	return computeContextUsageWith(agent, nil, sessionKey)
+}
+
+// computeContextUsageForLoop is computeContextUsage with the AgentLoop's active
+// ContextManager, so Seahorse sessions can be measured from the budget-assembled
+// context instead of the raw JSONL history.
+func computeContextUsageForLoop(al *AgentLoop, agent *AgentInstance, sessionKey string) *bus.ContextUsage {
+	var cm ContextManager
+	if al != nil {
+		cm = al.contextManager
+	}
+	return computeContextUsageWith(agent, cm, sessionKey)
+}
+
+func computeContextUsageWith(agent *AgentInstance, cm ContextManager, sessionKey string) *bus.ContextUsage {
 	if agent == nil || agent.Sessions == nil {
 		return nil
 	}
@@ -23,11 +47,37 @@ func computeContextUsage(agent *AgentInstance, sessionKey string) *bus.ContextUs
 		return nil
 	}
 
-	// History tokens
-	history := agent.Sessions.GetHistory(sessionKey)
+	// Effective budget = contextWindow minus output reserve (maxTokens)
+	effectiveWindow := contextWindow - agent.MaxTokens
+	if effectiveWindow < 0 {
+		effectiveWindow = contextWindow
+	}
+
+	// History tokens. The active ContextManager lives on the AgentLoop, so the
+	// caller supplies it (see computeContextUsageForLoop) when available.
 	historyTokens := 0
-	for _, m := range history {
-		historyTokens += EstimateMessageTokens(m)
+	summary := agent.Sessions.GetSummary(sessionKey)
+	if scm, isSeahorse := cm.(*seahorseContextManager); isSeahorse {
+		assembled, err := assembleMeterContext(scm, sessionKey, effectiveWindow)
+		if err != nil {
+			// A failed assembly is unknown, not JSONL: JSONL is not the context
+			// Seahorse sends. Do not display a confidently incorrect value.
+			return nil
+		}
+		if assembled != nil {
+			summary = assembled.Summary
+			for _, m := range assembled.History {
+				historyTokens += EstimateMessageTokens(m)
+			}
+		} else {
+			// No Seahorse conversation exists. JSONL may have unrelated raw
+			// history, but it is not budget-assembled model context.
+			summary = ""
+		}
+	} else {
+		for _, m := range agent.Sessions.GetHistory(sessionKey) {
+			historyTokens += EstimateMessageTokens(m)
+		}
 	}
 
 	// System message tokens: uses EstimateSystemTokens which mirrors
@@ -35,7 +85,6 @@ func computeContextUsage(agent *AgentInstance, sessionKey string) *bus.ContextUs
 	// dynamic context, active skills, summary with wrapping prefix).
 	systemTokens := 0
 	if agent.ContextBuilder != nil {
-		summary := agent.Sessions.GetSummary(sessionKey)
 		// Pass nil for active skills: skills are only injected when the user
 		// explicitly activates them via /use, which is rare. Using nil matches
 		// the common case and avoids over-counting all installed skills.
@@ -50,12 +99,6 @@ func computeContextUsage(agent *AgentInstance, sessionKey string) *bus.ContextUs
 
 	// Used = history + system (includes summary) + tools
 	usedTokens := historyTokens + systemTokens + toolTokens
-
-	// Effective budget = contextWindow minus output reserve (maxTokens)
-	effectiveWindow := contextWindow - agent.MaxTokens
-	if effectiveWindow < 0 {
-		effectiveWindow = contextWindow
-	}
 
 	// compressAt = effectiveWindow: aligns with isOverContextBudget's
 	// proactive trigger (msgTokens + toolTokens + maxTokens > contextWindow).
@@ -88,4 +131,19 @@ func computeContextUsage(agent *AgentInstance, sessionKey string) *bus.ContextUs
 		SummarizeAtTokens: summarizeAt,
 		UsedPercent:       usedPercent,
 	}
+}
+
+// assembleMeterContext assembles the same effective budget used by real turns,
+// but checks for an existing conversation before calling Assemble, since
+// Engine.Assemble would otherwise create an empty conversation on read.
+func assembleMeterContext(cm *seahorseContextManager, sessionKey string, budget int) (*AssembleResponse, error) {
+	if cm == nil || cm.engine == nil {
+		return nil, nil
+	}
+	ctx := context.Background()
+	conv, err := cm.engine.GetRetrieval().Store().GetConversationBySessionKey(ctx, sessionKey)
+	if err != nil || conv == nil {
+		return nil, err
+	}
+	return cm.Assemble(ctx, &AssembleRequest{SessionKey: sessionKey, Budget: budget})
 }

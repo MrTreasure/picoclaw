@@ -463,6 +463,18 @@ func (e *Engine) ClearSession(ctx context.Context, sessionKey string) error {
 	return e.store.ClearConversation(ctx, conv.ConversationID)
 }
 
+// DeleteSession permanently removes the conversation row and all dependent data.
+func (e *Engine) DeleteSession(ctx context.Context, sessionKey string) error {
+	mu := e.getSessionMutex(sessionKey)
+	mu.Lock()
+	defer mu.Unlock()
+	conv, err := e.store.GetConversationBySessionKey(ctx, sessionKey)
+	if err != nil || conv == nil {
+		return err
+	}
+	return e.store.DeleteConversation(ctx, conv.ConversationID)
+}
+
 // Bootstrap reconciles a session's messages with the database.
 // Called once at startup for each known session.
 // Bootstrap reconciles JSONL history with SQLite by ingesting only the delta.

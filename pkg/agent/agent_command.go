@@ -16,6 +16,31 @@ import (
 	"github.com/sipeed/picoclaw/pkg/providers"
 )
 
+// rejectBusyContextCommand keeps state-changing commands out of the steering/LLM queue.
+// They can be retried after the active turn finishes; running them concurrently
+// would race with the turn's context assembly and persistence.
+func (al *AgentLoop) rejectBusyContextCommand(ctx context.Context, msg bus.InboundMessage, sessionKey string) bool {
+	name, ok := commands.CommandName(msg.Content)
+	if !ok || (name != "compact" && name != "clear") {
+		return false
+	}
+	reply := "/" + name + " cannot run during an active turn. Please retry after it finishes."
+	// Do not use PublishResponseIfNeeded: a message tool used by the active turn
+	// must not suppress the reply to this separate command.
+	response := bus.OutboundMessage{
+		Context:    bus.NewOutboundContext(msg.Channel, msg.ChatID, ""),
+		SessionKey: sessionKey,
+		Content:    reply,
+	}
+	markFinalOutbound(&response)
+	if err := al.bus.PublishOutbound(ctx, response); err != nil {
+		logger.WarnCF("agent", "Failed to publish busy context-command rejection", map[string]any{
+			"error": err.Error(), "channel": msg.Channel, "session_key": sessionKey,
+		})
+	}
+	return true
+}
+
 func (al *AgentLoop) handleCommand(
 	ctx context.Context,
 	msg bus.InboundMessage,
@@ -421,7 +446,7 @@ func (al *AgentLoop) buildCommandsRuntime(
 			if opts == nil || agent.Sessions == nil {
 				return nil
 			}
-			usage := computeContextUsage(agent, opts.SessionKey)
+			usage := computeContextUsageForLoop(al, agent, opts.SessionKey)
 			if usage == nil {
 				return nil
 			}

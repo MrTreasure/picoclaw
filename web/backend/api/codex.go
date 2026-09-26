@@ -101,7 +101,8 @@ func codexClientMessageAllowed(data []byte) bool {
 		ID     json.RawMessage `json:"id"`
 		Method string          `json:"method"`
 		Params struct {
-			Cwd string `json:"cwd"`
+			Cwd      string `json:"cwd"`
+			ThreadID string `json:"threadId"`
 		} `json:"params"`
 	}
 	if json.Unmarshal(data, &request) != nil {
@@ -113,6 +114,8 @@ func codexClientMessageAllowed(data []byte) bool {
 	switch request.Method {
 	case "initialize", "initialized", "thread/list", "thread/read", "thread/loaded/list", "thread/resume", "thread/unsubscribe", "turn/interrupt":
 		return true
+	case "thread/delete":
+		return len(request.ID) > 0 && strings.TrimSpace(request.Params.ThreadID) != ""
 	case "thread/start", "turn/start":
 		return codexWorkspaceAllowed(request.Params.Cwd)
 	default:

@@ -282,14 +282,14 @@ func TestHandleListSessions_DuplicateScopeUsesNewestCanonicalSession(t *testing.
 
 	deleteRec := httptest.NewRecorder()
 	mux.ServeHTTP(deleteRec, httptest.NewRequest(http.MethodDelete, "/api/sessions/duplicate-session", nil))
-	if deleteRec.Code != http.StatusNoContent {
+	if deleteRec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("delete status = %d, body=%s", deleteRec.Code, deleteRec.Body.String())
 	}
 	for _, key := range []string{oldKey, newKey} {
 		base := filepath.Join(dir, sanitizeSessionKey(key))
 		for _, path := range []string{base + ".jsonl", base + ".meta.json"} {
-			if _, err := os.Stat(path); !os.IsNotExist(err) {
-				t.Fatalf("expected duplicate %s removed, stat err = %v", path, err)
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("expected duplicate %s to remain, stat err = %v", path, err)
 			}
 		}
 	}
@@ -765,8 +765,8 @@ func TestHandleSessions_JSONLScopeDiscovery(t *testing.T) {
 	deleteRec := httptest.NewRecorder()
 	deleteReq := httptest.NewRequest(http.MethodDelete, "/api/sessions/scope-jsonl", nil)
 	mux.ServeHTTP(deleteRec, deleteReq)
-	if deleteRec.Code != http.StatusNoContent {
-		t.Fatalf("delete status = %d, want %d, body=%s", deleteRec.Code, http.StatusNoContent, deleteRec.Body.String())
+	if deleteRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("delete status = %d, want %d, body=%s", deleteRec.Code, http.StatusServiceUnavailable, deleteRec.Body.String())
 	}
 }
 
@@ -1847,7 +1847,45 @@ func TestHandleListSessions_UsesImagePreviewForMediaOnlyMessage(t *testing.T) {
 	}
 }
 
-func TestHandleDeleteSession_JSONLStorage(t *testing.T) {
+// A cron run can carry inherited Pico scope, but its key must never be
+// accepted as a conversation ID. These are synthetic files under t.TempDir.
+func TestHandleDeleteSession_RejectsUnlistedAndCronWithoutGateway(t *testing.T) {
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+	dir := sessionsTestDir(t, configPath)
+	store, err := memory.NewJSONLStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := "agent:cron-demo"
+	if err := store.AddFullMessage(nil, key, providers.Message{Role: "user", Content: "cron"}); err != nil {
+		t.Fatal(err)
+	}
+	scope, err := json.Marshal(session.SessionScope{Channel: "pico", Values: map[string]string{"sender": "pico:cron-demo"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertSessionMeta(nil, key, scope, nil); err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	for _, id := range []string{"cron-demo", "agent:cron-demo", "nonexistent"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/sessions/"+url.PathEscape(id), nil))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("delete %q: status = %d, want 404", id, rec.Code)
+		}
+	}
+	for _, suffix := range []string{".jsonl", ".meta.json"} {
+		if _, err := os.Stat(filepath.Join(dir, sanitizeSessionKey(key)+suffix)); err != nil {
+			t.Fatalf("cron file lost: %v", err)
+		}
+	}
+}
+
+func TestHandleDeleteSession_FailsClosedWithoutGateway(t *testing.T) {
 	configPath, cleanup := setupOAuthTestEnv(t)
 	defer cleanup()
 
@@ -1876,14 +1914,14 @@ func TestHandleDeleteSession_JSONLStorage(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/api/sessions/delete-jsonl", nil)
 	mux.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusNoContent, rec.Body.String())
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
 
 	base := filepath.Join(dir, sanitizeSessionKey(sessionKey))
 	for _, path := range []string{base + ".jsonl", base + ".meta.json"} {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("expected %s to be removed, stat err = %v", path, err)
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected %s to remain, stat err = %v", path, err)
 		}
 	}
 }
@@ -2029,5 +2067,18 @@ func TestHandleSessions_IgnoresMetaJSONInLegacyFallback(t *testing.T) {
 	}
 	if len(items) != 0 {
 		t.Fatalf("len(items) = %d, want 0", len(items))
+	}
+}
+
+func TestSessionRefFromMetaExcludesCronWithPicoScope(t *testing.T) {
+	scope, err := json.Marshal(session.SessionScope{Version: 1, AgentID: "pico-stream", Channel: "pico", Values: map[string]string{"chat": "direct:pico:visible"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref, ok := sessionRefFromMeta(memory.SessionMeta{Key: "agent:cron-123", Scope: scope}); ok {
+		t.Fatalf("cron run listed as Pico conversation: %+v", ref)
+	}
+	if ref, ok := sessionRefFromMeta(memory.SessionMeta{Key: "pico_20260926t111111111_main", Scope: scope}); !ok || ref.ID != "visible" {
+		t.Fatalf("real Pico session missing: %+v, %v", ref, ok)
 	}
 }

@@ -91,30 +91,30 @@ func providerToCompleteFn(provider providers.LLMProvider, model string) seahorse
 	}
 }
 
+// seahorseAssembleInput resolves the effective assembly budget, reserving space
+// for the model response (spec lines 1400-1410). A non-positive result means
+// MaxTokens >= budget, which is a configuration problem; 50% is used as the
+// minimum to avoid a guaranteed overflow.
+func seahorseAssembleInput(budget, maxTokens int) seahorse.AssembleInput {
+	if budget <= 0 {
+		budget = 100000
+	}
+	effectiveBudget := budget - maxTokens
+	if effectiveBudget <= 0 {
+		logger.WarnCF("agent", "MaxTokens >= budget, using 50% fallback",
+			map[string]any{"budget": budget, "max_tokens": maxTokens})
+		effectiveBudget = budget / 2
+	}
+	return seahorse.AssembleInput{Budget: effectiveBudget}
+}
+
 // Assemble builds budget-aware context from seahorse SQLite.
 func (m *seahorseContextManager) Assemble(ctx context.Context, req *AssembleRequest) (*AssembleResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("seahorse assemble: nil request")
 	}
 
-	budget := req.Budget
-	if budget <= 0 {
-		budget = 100000
-	}
-
-	// Reserve space for model response (spec lines 1400-1410)
-	effectiveBudget := budget - req.MaxTokens
-	if effectiveBudget <= 0 {
-		// MaxTokens >= budget is a configuration problem
-		// Use 50% as minimum to avoid guaranteed overflow
-		logger.WarnCF("agent", "MaxTokens >= budget, using 50% fallback",
-			map[string]any{"budget": budget, "max_tokens": req.MaxTokens})
-		effectiveBudget = budget / 2
-	}
-
-	result, err := m.engine.Assemble(ctx, req.SessionKey, seahorse.AssembleInput{
-		Budget: effectiveBudget,
-	})
+	result, err := m.engine.Assemble(ctx, req.SessionKey, seahorseAssembleInput(req.Budget, req.MaxTokens))
 	if err != nil {
 		return nil, fmt.Errorf("seahorse assemble: %w", err)
 	}

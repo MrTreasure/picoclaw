@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/memory"
+	ppid "github.com/sipeed/picoclaw/pkg/pid"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/providers/messageutil"
 	"github.com/sipeed/picoclaw/pkg/session"
@@ -402,6 +404,10 @@ func extractPicoSessionIDFromScope(scope session.SessionScope) (string, bool) {
 }
 
 func sessionRefFromMeta(meta memory.SessionMeta) (picoJSONLSessionRef, bool) {
+	// A scheduled run can inherit Pico scope; it is not a user chat.
+	if strings.HasPrefix(strings.TrimSpace(meta.Key), "agent:cron-") {
+		return picoJSONLSessionRef{}, false
+	}
 	if len(meta.Scope) == 0 {
 		if sessionID, ok := extractLegacyPicoSessionID(meta.Key); ok {
 			return picoJSONLSessionRef{ID: sessionID, Key: meta.Key}, true
@@ -1223,101 +1229,83 @@ func (h *Handler) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleDeleteSession deletes a specific session.
-//
-//	DELETE /api/sessions/{id}
+// handleDeleteSession delegates deletion to the live gateway, which owns the
+// session store, active turn reservations and seahorse database. Never fall
+// back to unlinking files directly when the gateway cannot be reached.
 func (h *Handler) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
-	sessionID := r.PathValue("id")
-	if sessionID == "" {
-		http.Error(w, "missing session id", http.StatusBadRequest)
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" || strings.ContainsAny(id, "/\\") || id == "." || id == ".." {
+		http.Error(w, "invalid session id", http.StatusBadRequest)
 		return
 	}
-
+	// The URL is a displayed conversation ID, not a storage key. Confirm it
+	// resolves to a readable user conversation before forwarding it to the
+	// gateway; in particular an opaque cron key must never be deletable here.
 	dir, err := h.sessionsDir()
 	if err != nil {
 		http.Error(w, "failed to resolve sessions directory", http.StatusInternalServerError)
 		return
 	}
-
-	removed := false
-	if ref, err := h.findWeixinJSONLSession(dir, sessionID); err == nil {
-		base := filepath.Join(dir, sanitizeSessionKey(ref.Key))
-		for _, path := range []string{base + ".jsonl", base + ".meta.json"} {
-			if err := os.Remove(path); err != nil {
-				if os.IsNotExist(err) {
-					continue
-				}
-				http.Error(w, "failed to delete session", http.StatusInternalServerError)
-				return
-			}
-			removed = true
-		}
-	}
-	// A Pico ID can have multiple canonical keys after scope migration. The
-	// listing intentionally shows only the newest one, so deleting just that
-	// selected key makes an older copy reappear on the next list request.
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		http.Error(w, "failed to list sessions", http.StatusInternalServerError)
-		return
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta.json") {
-			continue
-		}
-		meta, readErr := h.readSessionMeta(filepath.Join(dir, entry.Name()), "")
-		if readErr != nil {
-			continue
-		}
-		ref, ok := sessionRefFromMeta(meta)
-		if !ok || ref.ID != sessionID {
-			continue
-		}
-		base := filepath.Join(dir, strings.TrimSuffix(entry.Name(), ".meta.json"))
-		for _, path := range []string{base + ".jsonl", base + ".meta.json"} {
-			if err := os.Remove(path); err != nil {
-				if os.IsNotExist(err) {
-					continue
-				}
-				http.Error(w, "failed to delete session", http.StatusInternalServerError)
-				return
-			}
-			removed = true
-		}
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
-			continue
-		}
-		baseName := strings.TrimSuffix(entry.Name(), ".jsonl")
-		if _, statErr := os.Stat(filepath.Join(dir, baseName+".meta.json")); !os.IsNotExist(statErr) {
-			continue
-		}
-		ref, ok := jsonlSessionRefFromFilename(entry.Name())
-		if !ok || ref.ID != sessionID {
-			continue
-		}
-		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !os.IsNotExist(err) {
-			http.Error(w, "failed to delete session", http.StatusInternalServerError)
+	found := false
+	if strings.HasPrefix(id, weixinSessionIDPrefix) {
+		ref, findErr := h.findWeixinJSONLSession(dir, id)
+		if findErr == nil {
+			sess, readErr := h.readJSONLSession(dir, ref.Key)
+			found = readErr == nil && !isEmptySession(sess)
+		} else if !errors.Is(findErr, os.ErrNotExist) {
+			http.Error(w, "failed to list sessions", http.StatusInternalServerError)
 			return
 		}
-		removed = true
-	}
-	if legacyRef, err := h.findLegacyPicoSession(dir, sessionID); err == nil {
-		if err := os.Remove(legacyRef.Path); err != nil {
-			if !os.IsNotExist(err) {
-				http.Error(w, "failed to delete session", http.StatusInternalServerError)
+	} else {
+		ref, findErr := h.findPicoJSONLSession(dir, id)
+		if findErr == nil {
+			sess, readErr := h.readJSONLSession(dir, ref.Key)
+			found = readErr == nil && !isEmptySession(sess)
+		} else if !errors.Is(findErr, os.ErrNotExist) {
+			http.Error(w, "failed to list sessions", http.StatusInternalServerError)
+			return
+		}
+		if !found {
+			ref, findErr := h.findLegacyPicoSession(dir, id)
+			if findErr == nil {
+				sess, readErr := h.readLegacySession(ref.Path)
+				found = readErr == nil && !isEmptySession(sess)
+			} else if !errors.Is(findErr, os.ErrNotExist) {
+				http.Error(w, "failed to list sessions", http.StatusInternalServerError)
 				return
 			}
-		} else {
-			removed = true
 		}
 	}
-
-	if !removed {
+	if !found {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
-
+	pidData := h.sanitizeGatewayPidData(ppid.ReadPidFileWithCheck(globalConfigDir()), nil)
+	if pidData == nil || pidData.Port <= 0 || pidData.Token == "" {
+		http.Error(w, "gateway is not running", http.StatusServiceUnavailable)
+		return
+	}
+	target := "http://" + net.JoinHostPort(gatewayProbeHost(pidData.Host), strconv.Itoa(pidData.Port)) +
+		"/internal/sessions/" + url.PathEscape(id)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodDelete, target, nil)
+	if err != nil {
+		http.Error(w, "invalid delete request", http.StatusBadRequest)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+pidData.Token)
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		http.Error(w, "gateway unavailable", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		status := resp.StatusCode
+		if status < 400 || status >= 500 {
+			status = http.StatusBadGateway
+		}
+		http.Error(w, "gateway rejected session deletion", status)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -226,7 +226,14 @@ export function useSessionHistory({
         )
         await deleteSession(id)
         if (id === activeSessionId) onDeletedActiveSession()
-        await deleteCachedSession(id)
+        try {
+          await deleteCachedSession(id)
+        } catch (cacheError) {
+          console.warn(
+            "Session deleted on server; local cache cleanup failed:",
+            cacheError,
+          )
+        }
         loadingRef.current = false
         setIsLoadingMore(false)
         setHasMore(true)
@@ -271,7 +278,9 @@ export function useSessionHistory({
           ),
         )
         if (deletedIds.has(activeSessionId)) onDeletedActiveSession()
-        await Promise.all([...deletedIds].map((id) => deleteCachedSession(id)))
+        await Promise.allSettled(
+          [...deletedIds].map((id) => deleteCachedSession(id)),
+        )
         loadingRef.current = false
         setIsLoadingMore(false)
         setHasMore(true)
@@ -288,7 +297,12 @@ export function useSessionHistory({
         if (deletedIds.size > 0)
           toast.success(`已删除 ${deletedIds.size} 段会话`)
         if (deletedIds.size !== ids.length) {
-          toast.error(`${ids.length - deletedIds.size} 段会话删除失败`)
+          const failures = results.flatMap((result) =>
+            result.status === "rejected" ? [String(result.reason)] : [],
+          )
+          toast.error(
+            `${ids.length - deletedIds.size} 段会话删除失败：${failures[0] ?? "未知错误"}`,
+          )
         }
         return [...deletedIds]
       } catch (err) {

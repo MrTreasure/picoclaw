@@ -117,7 +117,10 @@ export async function deleteSession(id: string): Promise<void> {
     method: "DELETE",
   })
   if (!res.ok) {
-    throw new Error(`Failed to delete session ${id}: ${res.status}`)
+    const detail = (await res.text()).trim().slice(0, 200)
+    throw new Error(
+      `Failed to delete session ${id}: ${res.status}${detail ? ` — ${detail}` : ""}`,
+    )
   }
 }
 

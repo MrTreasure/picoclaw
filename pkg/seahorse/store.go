@@ -1030,6 +1030,38 @@ func (s *Store) ClearConversation(ctx context.Context, convID int64) error {
 	return tx.Commit()
 }
 
+// DeleteConversation permanently removes a conversation and all dependent rows.
+// Unlike ClearConversation, it removes the parent row so bootstrap cannot retain
+// a ghost conversation. The existing FTS triggers run inside the same transaction.
+func (s *Store) DeleteConversation(ctx context.Context, convID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	statements := []string{
+		"DELETE FROM context_items WHERE conversation_id = ?",
+		"DELETE FROM summary_messages WHERE summary_id IN (SELECT summary_id FROM summaries WHERE conversation_id = ?)",
+		"DELETE FROM summary_parents WHERE summary_id IN (SELECT summary_id FROM summaries WHERE conversation_id = ?) OR parent_summary_id IN (SELECT summary_id FROM summaries WHERE conversation_id = ?)",
+		"DELETE FROM summaries WHERE conversation_id = ?",
+		"DELETE FROM message_parts WHERE message_id IN (SELECT message_id FROM messages WHERE conversation_id = ?)",
+		"DELETE FROM messages WHERE conversation_id = ?",
+		"DELETE FROM conversations WHERE conversation_id = ?",
+	}
+	for i, statement := range statements {
+		var e error
+		if i == 2 {
+			_, e = tx.ExecContext(ctx, statement, convID, convID)
+		} else {
+			_, e = tx.ExecContext(ctx, statement, convID)
+		}
+		if e != nil {
+			return fmt.Errorf("delete conversation step %d: %w", i, e)
+		}
+	}
+	return tx.Commit()
+}
+
 // AppendContextMessage appends a single message to context_items at next ordinal.
 func (s *Store) AppendContextMessage(ctx context.Context, convID int64, messageID int64) error {
 	return s.appendContextItems(ctx, convID, []ContextItem{

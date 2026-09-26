@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"strings"
 
@@ -189,4 +190,14 @@ func (b *JSONLBackend) Close() error {
 // ListSessions returns all known session keys.
 func (b *JSONLBackend) ListSessions() []string {
 	return b.store.ListSessions()
+}
+
+// DeleteSession removes the canonical key without alias resolution (which may
+// select a different session while deleting multiple migration-era copies).
+func (b *JSONLBackend) DeleteSession(key string) (bool, error) {
+	store, ok := b.store.(interface{ DeleteSession(string) (bool, error) })
+	if !ok {
+		return false, fmt.Errorf("session store does not support deletion")
+	}
+	return store.DeleteSession(key)
 }

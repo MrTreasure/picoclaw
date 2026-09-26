@@ -811,13 +811,17 @@ export async function switchChatSession(sessionId: string) {
   })
 }
 
-export async function newChatSession(force = false) {
+export async function newChatSession(
+  force = false,
+  skipPersistDeleted = false,
+) {
   if (!force && getChatState().messages.length === 0) {
     return
   }
 
   sessionSwitchGeneration += 1
-  persistCurrentSession()
+  if (skipPersistDeleted) clearCacheTimer()
+  else persistCurrentSession()
   disconnectChatInternal({ clearDesiredConnection: false })
   const sessionId = generateSessionId()
   setActiveSessionId(sessionId)

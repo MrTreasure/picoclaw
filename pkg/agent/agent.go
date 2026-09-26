@@ -192,7 +192,17 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				phase:  TurnPhaseSetup,
 			}
 			if _, loaded := al.activeTurnStates.LoadOrStore(sessionKey, placeholder); loaded {
+				// Deletion reservations are not turns: do not queue a message
+				// that could be replayed after the files have been removed.
+				if current, ok := al.activeTurnStates.Load(sessionKey); ok {
+					if ts, ok := current.(*turnState); ok && ts.turnID == "__deleting__" {
+						continue
+					}
+				}
 				if al.tryHandleStopCommand(ctx, msg, sessionKey) {
+					continue
+				}
+				if al.rejectBusyContextCommand(ctx, msg, sessionKey) {
 					continue
 				}
 
@@ -609,7 +619,7 @@ func (al *AgentLoop) runAgentLoop(
 			SessionKey:   sessionKey,
 			Scope:        scope,
 			Content:      result.finalContent,
-			ContextUsage: computeContextUsage(agent, opts.Dispatch.SessionKey),
+			ContextUsage: computeContextUsageForLoop(al, agent, opts.Dispatch.SessionKey),
 		}
 		if modelName := strings.TrimSpace(result.modelName); modelName != "" {
 			if msg.Context.Raw == nil {

@@ -14,15 +14,16 @@ import (
 )
 
 type Server struct {
-	server         *http.Server
-	mu             sync.RWMutex
-	ready          bool
-	checks         map[string]Check
-	startTime      time.Time
-	reloadFunc     func() error
-	notifyFunc     func(context.Context, string, string, string) error
-	cronDeleteFunc func(string) error
-	authToken      string // optional bearer token for protected endpoints
+	server            *http.Server
+	mu                sync.RWMutex
+	ready             bool
+	checks            map[string]Check
+	startTime         time.Time
+	reloadFunc        func() error
+	notifyFunc        func(context.Context, string, string, string) error
+	cronDeleteFunc    func(string) error
+	sessionDeleteFunc func(context.Context, string) error
+	authToken         string // optional bearer token for protected endpoints
 }
 
 type Check struct {
@@ -53,6 +54,7 @@ func NewServer(host string, port int, token string) *Server {
 	mux.HandleFunc("/reload", s.reloadHandler)
 	mux.HandleFunc("/internal/notify", s.notifyHandler)
 	mux.HandleFunc("/internal/cron/jobs/", s.cronJobHandler)
+	mux.HandleFunc("/internal/sessions/", s.sessionDeleteHandler)
 
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	s.server = &http.Server{
@@ -254,6 +256,7 @@ func (s *Server) RegisterOnMux(mux HandlerMux) {
 	mux.HandleFunc("/reload", s.reloadHandler)
 	mux.HandleFunc("/internal/notify", s.notifyHandler)
 	mux.HandleFunc("/internal/cron/jobs/", s.cronJobHandler)
+	mux.HandleFunc("/internal/sessions/", s.sessionDeleteHandler)
 }
 
 func statusString(ok bool) string {
@@ -274,4 +277,11 @@ func extractBearerToken(header string) string {
 		return ""
 	}
 	return header[len(prefix):]
+}
+
+// SetSessionDeleteFunc binds permanent deletion to the running agent loop.
+func (s *Server) SetSessionDeleteFunc(fn func(context.Context, string) error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessionDeleteFunc = fn
 }

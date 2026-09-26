@@ -491,6 +491,16 @@ func setupAndStartServices(
 			return runningServices.ChannelManager.SendToChannelSync(ctx, channel, to, content)
 		},
 	)
+	runningServices.HealthServer.SetSessionDeleteFunc(func(ctx context.Context, id string) error {
+		err := agentLoop.DeleteVisibleSession(ctx, id)
+		if errors.Is(err, agent.ErrSessionDeleteBusy) {
+			return health.ErrSessionDeleteBusy
+		}
+		if errors.Is(err, agent.ErrSessionDeleteNotFound) {
+			return health.ErrSessionDeleteNotFound
+		}
+		return err
+	})
 	runningServices.HealthServer.SetCronDeleteFunc(func(jobID string) error {
 		err := runningServices.CronService.DeleteJob(jobID)
 		if errors.Is(err, cron.ErrJobNotFound) {

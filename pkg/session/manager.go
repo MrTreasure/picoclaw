@@ -324,3 +324,26 @@ func (sm *SessionManager) SetHistory(key string, history []providers.Message) {
 		session.Updated = time.Now()
 	}
 }
+
+// DeleteSession serializes in-memory eviction and legacy file deletion.
+func (sm *SessionManager) DeleteSession(key string) (bool, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	removed := false
+	if _, ok := sm.sessions[key]; ok {
+		delete(sm.sessions, key)
+		removed = true
+	}
+	if sm.storage != "" {
+		name := sanitizeFilename(key)
+		if name == "." || !filepath.IsLocal(name) {
+			return removed, os.ErrInvalid
+		}
+		if err := os.Remove(filepath.Join(sm.storage, name+".json")); err == nil {
+			removed = true
+		} else if !os.IsNotExist(err) {
+			return removed, err
+		}
+	}
+	return removed, nil
+}
