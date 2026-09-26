@@ -2,6 +2,7 @@ package pico
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/gorilla/websocket"
 	"github.com/sipeed/picoclaw/pkg/tools"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPicoTodoStorePersistenceIsolationAndClear(t *testing.T) {
@@ -150,5 +152,105 @@ func TestPicoPlanModeWireGateRejectsBeforeDispatch(t *testing.T) {
 	}
 	if reply.Type != TypeError || reply.Payload["code"] != "plan_unavailable" || reply.Payload["request_id"] != request.ID {
 		t.Fatalf("mode was not rejected before media handling: %+v", reply)
+	}
+}
+
+func TestPicoTodoClearWireValidationPersistenceAndBroadcast(t *testing.T) {
+	c := newTestPicoChannel(t)
+	c.SetTodoStorage(t.TempDir())
+	c.SetRunning(true)
+	server := httptest.NewServer(http.HandlerFunc(c.handleWebSocket))
+	defer server.Close()
+	dial := func(session string) *websocket.Conn {
+		t.Helper()
+		conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"?session_id="+session, http.Header{"Authorization": []string{"Bearer test-token"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var first PicoMessage
+		if err := conn.ReadJSON(&first); err != nil || first.Type != TypeTodoSnapshot {
+			t.Fatalf("snapshot: %+v %v", first, err)
+		}
+		return conn
+	}
+	first, second, foreign := dial("session-a"), dial("session-a"), dial("session-b")
+	defer first.Close()
+	defer second.Close()
+	defer foreign.Close()
+	read := func(conn *websocket.Conn) PicoMessage {
+		t.Helper()
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		var m PicoMessage
+		if err := conn.ReadJSON(&m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	checkError := func(conn *websocket.Conn, request PicoMessage, code string) {
+		t.Helper()
+		if err := conn.WriteJSON(request); err != nil {
+			t.Fatal(err)
+		}
+		reply := read(conn)
+		if reply.Type != TypeError || reply.Payload["code"] != code || reply.Payload["request_id"] != request.ID {
+			t.Fatalf("error reply: %+v", reply)
+		}
+	}
+	persist := func(session string, revision int64, status string) {
+		t.Helper()
+		b, err := json.Marshal(todoSnapshot{Revision: revision, Items: []tools.PicoTodoItem{{Content: "task", Short: "task", Status: status}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(c.todos.path(session), b, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	persist("session-a", 3, "in_progress")
+	persist("session-b", 9, "completed")
+	request := func(id string, rev any) PicoMessage {
+		return PicoMessage{Type: TypeTodoClear, ID: id, Payload: map[string]any{"expected_revision": rev}}
+	}
+	checkError(first, request("incomplete", 3), "todo_not_completed")
+	persist("session-a", 4, "completed")
+	checkError(first, request("stale", 3), "todo_revision_conflict")
+	checkError(first, request("missing", nil), "invalid_todo_clear")
+	checkError(first, request("fraction", 4.5), "invalid_todo_clear")
+	checkError(first, PicoMessage{Type: TypeTodoClear, ID: "override", SessionID: "session-b", Payload: map[string]any{"expected_revision": 4}}, "invalid_todo_clear")
+	checkError(first, PicoMessage{Type: TypeTodoClear, ID: "extra", Payload: map[string]any{"expected_revision": 4, "session_id": "session-b"}}, "invalid_todo_clear")
+	checkError(foreign, request("foreign-stale", 4), "todo_revision_conflict")
+	before, err := c.todos.load("session-a")
+	if err != nil || before.Revision != 4 || len(before.Items) != 1 {
+		t.Fatalf("failed requests mutated list: %+v %v", before, err)
+	}
+	if err := first.WriteJSON(request("clear-1", 4)); err != nil {
+		t.Fatal(err)
+	}
+	for _, conn := range []*websocket.Conn{first, second} {
+		updated := read(conn)
+		items, ok := updated.Payload["items"].([]any)
+		if updated.Type != TypeTodoUpdated || updated.SessionID != "session-a" || updated.Payload["revision"] != float64(5) || updated.Payload["request_id"] != "clear-1" || !ok || len(items) != 0 {
+			t.Fatalf("broadcast: %+v", updated)
+		}
+	}
+	after, err := c.todos.load("session-a")
+	if err != nil || after.Revision != 5 || len(after.Items) != 0 {
+		t.Fatalf("clear persistence: %+v %v", after, err)
+	}
+	other, err := c.todos.load("session-b")
+	if err != nil || other.Revision != 9 || len(other.Items) != 1 {
+		t.Fatalf("cross-session mutation: %+v %v", other, err)
+	}
+	checkError(first, request("duplicate", 5), "todo_not_completed")
+	url := "ws" + strings.TrimPrefix(server.URL, "http") + "?session_id=session-a"
+	rejoined, _, err := websocket.DefaultDialer.Dial(url, http.Header{"Authorization": []string{"Bearer test-token"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rejoined.Close()
+	restored := read(rejoined)
+	restoredItems, ok := restored.Payload["items"].([]any)
+	if restored.Type != TypeTodoSnapshot || restored.Payload["revision"] != float64(5) || !ok || len(restoredItems) != 0 {
+		t.Fatalf("reconnect snapshot: %+v", restored)
 	}
 }

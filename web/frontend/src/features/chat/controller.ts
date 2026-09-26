@@ -646,6 +646,41 @@ export function respondToConfirmation(
   }
 }
 
+// A completed list is cleared by the server, not by optimistic local state.
+// The socket's authenticated session decides which list may be cleared.
+export function clearCompletedTodos(
+  sessionId: string,
+  expectedRevision: number,
+): boolean {
+  const socket = wsRef
+  const state = getChatState()
+  if (
+    !socket ||
+    socket.readyState !== WebSocket.OPEN ||
+    state.connectionState !== "connected" ||
+    activeSessionIdRef !== sessionId ||
+    state.activeSessionId !== sessionId ||
+    state.todoList?.sessionId !== sessionId ||
+    state.todoList.revision !== expectedRevision ||
+    state.todoList.items.length === 0 ||
+    !state.todoList.items.every((item) => item.status === "completed")
+  )
+    return false
+  try {
+    socket.send(
+      JSON.stringify({
+        type: "todo.clear",
+        id: `todo-clear-${crypto.randomUUID()}`,
+        payload: { expected_revision: expectedRevision },
+      }),
+    )
+    return true
+  } catch (error) {
+    console.error("Failed to request TODO clear:", error)
+    return false
+  }
+}
+
 interface SendChatMessageInput {
   content: string
   attachments?: ChatAttachment[]

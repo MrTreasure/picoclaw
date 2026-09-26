@@ -62,6 +62,8 @@
     "confirmationWaiting": "已提交，等待服务端确认…",
     "confirmationOffline": "连接已断开，无法继续确认。",
     "todoTitle": "任务清单",
+    "todoFinishAndClear": "完成并清空",
+    "todoClearFailed": "待办清空未发送，请检查连接后重试",
     "planMode": "Plan Mode",
     "planModeDescription": "先拟定方案，待你确认后再执行；具体敏感操作仍需单独确认",
     "todoSummary": "已完成 {{completed}}/{{total}} 项",

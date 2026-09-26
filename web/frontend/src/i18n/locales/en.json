@@ -62,6 +62,8 @@
     "confirmationWaiting": "Decision submitted; awaiting server confirmation…",
     "confirmationOffline": "Connection lost. This request cannot be answered offline.",
     "todoTitle": "Tasks",
+    "todoFinishAndClear": "Finish and clear",
+    "todoClearFailed": "Could not send the clear request. Check the connection and try again.",
     "planMode": "Plan Mode",
     "planModeDescription": "Draft a plan first; execute only after your approval. Sensitive actions still require separate confirmation.",
     "todoSummary": "{{completed}}/{{total}} completed",

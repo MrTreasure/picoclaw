@@ -6,7 +6,9 @@ import {
 } from "@tabler/icons-react"
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
+import { toast } from "sonner"
 
+import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
@@ -16,7 +18,15 @@ import {
 } from "@/components/ui/dialog"
 import type { SessionTodoList } from "@/store/chat"
 
-export function TodoProgress({ list }: { list?: SessionTodoList }) {
+export function TodoProgress({
+  list,
+  connected,
+  onClear,
+}: {
+  list?: SessionTodoList
+  connected: boolean
+  onClear: () => boolean
+}) {
   const [open, setOpen] = useState(false)
   const { t } = useTranslation()
   if (!list?.items.length) return null
@@ -101,6 +111,20 @@ export function TodoProgress({ list }: { list?: SessionTodoList }) {
               )
             })}
           </ol>
+          {completed === list.items.length && (
+            <Button
+              type="button"
+              className="min-h-11 w-full rounded-xl"
+              disabled={!connected}
+              onClick={() => {
+                // Do not hide the list until the server broadcasts an empty snapshot.
+                // An ambiguous send must not cause an automatic retry.
+                if (!onClear()) toast.error(t("chat.todoClearFailed"))
+              }}
+            >
+              {t("chat.todoFinishAndClear")}
+            </Button>
+          )}
         </DialogContent>
       </Dialog>
     </>

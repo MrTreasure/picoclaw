@@ -1387,6 +1387,9 @@ func (c *PicoChannel) handleMessage(pc *picoConn, msg PicoMessage) {
 	case TypeTodoSnapshot:
 		c.sendTodoSnapshot(pc)
 
+	case TypeTodoClear:
+		c.handleTodoClear(pc, msg)
+
 	case TypeConfirmationRespond:
 		c.handleConfirmationResponse(pc, msg)
 

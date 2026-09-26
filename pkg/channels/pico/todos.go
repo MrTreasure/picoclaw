@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,14 +110,35 @@ func (c *PicoChannel) UpdatePicoTodos(ctx context.Context, chatID, connID, turnI
 	snap.Revision++
 	snap.UpdatedAt = time.Now().UnixMilli()
 	snap.Items = append([]tools.PicoTodoItem{}, items...)
-	if err = os.MkdirAll(c.todos.dir, 0700); err != nil {
+	if err = c.todos.save(session, snap); err != nil {
+		return err
+	}
+	msg := newMessage(TypeTodoUpdated, map[string]any{"items": snap.Items, "revision": snap.Revision, "updated_at": snap.UpdatedAt, "turn_id": turnID})
+	msg.SessionID = session
+	for _, client := range c.sessionConnectionsSnapshot(session) {
+		if err := client.writeJSON(msg); err != nil { /* reconnect receives the persisted snapshot */
+		}
+	}
+	return nil
+}
+
+var _ tools.PicoTodoBridge = (*PicoChannel)(nil)
+
+// save must be called with the store lock held. Rename makes a successful update
+// visible as a complete snapshot, never a partial JSON file.
+func (s *picoTodoStore) save(session string, snap todoSnapshot) error {
+	if s.dir == "" {
+		return errors.New("TODO storage not configured")
+	}
+	var err error
+	if err = os.MkdirAll(s.dir, 0700); err != nil {
 		return err
 	}
 	b, err := json.Marshal(snap)
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(c.todos.dir, ".todo-*")
+	tmp, err := os.CreateTemp(s.dir, ".todo-*")
 	if err != nil {
 		return err
 	}
@@ -134,16 +156,80 @@ func (c *PicoChannel) UpdatePicoTodos(ctx context.Context, chatID, connID, turnI
 	if closeErr != nil {
 		return closeErr
 	}
-	if err = os.Rename(tmp.Name(), c.todos.path(session)); err != nil {
+	if err = os.Rename(tmp.Name(), s.path(session)); err != nil {
 		return err
-	}
-	msg := newMessage(TypeTodoUpdated, map[string]any{"items": snap.Items, "revision": snap.Revision, "updated_at": snap.UpdatedAt, "turn_id": turnID})
-	msg.SessionID = session
-	for _, client := range c.sessionConnectionsSnapshot(session) {
-		if err := client.writeJSON(msg); err != nil { /* reconnect receives the persisted snapshot */
-		}
 	}
 	return nil
 }
 
-var _ tools.PicoTodoBridge = (*PicoChannel)(nil)
+// handleTodoClear clears only the authenticated socket's own completed list.
+// The expected revision is mandatory, preventing stale UI actions from erasing
+// an agent update that arrived after the completion dialog was rendered.
+func (c *PicoChannel) handleTodoClear(pc *picoConn, msg PicoMessage) {
+	fail := func(code, detail string) {
+		_ = pc.writeJSON(newErrorWithPayload(code, detail, map[string]any{"request_id": msg.ID}))
+	}
+	if msg.ID == "" || len(msg.Payload) != 1 || msg.SessionID != "" {
+		fail("invalid_todo_clear", "request id and expected_revision are required; session override is not allowed")
+		return
+	}
+	rev, ok := msg.Payload["expected_revision"].(float64)
+	if !ok || math.IsNaN(rev) || rev < 0 || rev > 9007199254740991 || math.Trunc(rev) != rev {
+		fail("invalid_todo_clear", "expected_revision must be a nonnegative safe integer")
+		return
+	}
+	if c.todos == nil || c.ctx == nil || c.ctx.Err() != nil || !c.IsRunning() || pc.closed.Load() {
+		fail("todo_unavailable", "TODO clear unavailable")
+		return
+	}
+	c.connsMu.RLock()
+	origin := c.connections[pc.id] == pc
+	c.connsMu.RUnlock()
+	if !origin {
+		fail("todo_unavailable", "originating connection unavailable")
+		return
+	}
+	c.todos.mu.Lock()
+	snap, err := c.todos.load(pc.sessionID)
+	if err != nil {
+		c.todos.mu.Unlock()
+		fail("todo_unavailable", "TODO snapshot unavailable")
+		return
+	}
+	if snap.Revision != int64(rev) {
+		c.todos.mu.Unlock()
+		fail("todo_revision_conflict", "TODO revision changed; refresh before clearing")
+		return
+	}
+	if len(snap.Items) == 0 {
+		c.todos.mu.Unlock()
+		fail("todo_not_completed", "TODO list is empty")
+		return
+	}
+	for _, item := range snap.Items {
+		if item.Status != "completed" {
+			c.todos.mu.Unlock()
+			fail("todo_not_completed", "all TODO items must be completed")
+			return
+		}
+	}
+	if pc.closed.Load() || c.ctx.Err() != nil {
+		c.todos.mu.Unlock()
+		fail("todo_unavailable", "originating connection disconnected")
+		return
+	}
+	snap.Revision++
+	snap.UpdatedAt = time.Now().UnixMilli()
+	snap.Items = []tools.PicoTodoItem{}
+	err = c.todos.save(pc.sessionID, snap)
+	c.todos.mu.Unlock()
+	if err != nil {
+		fail("todo_unavailable", "TODO clear could not be persisted")
+		return
+	}
+	updated := newMessage(TypeTodoUpdated, map[string]any{"items": snap.Items, "revision": snap.Revision, "updated_at": snap.UpdatedAt, "request_id": msg.ID})
+	updated.SessionID = pc.sessionID
+	for _, client := range c.sessionConnectionsSnapshot(pc.sessionID) {
+		_ = client.writeJSON(updated)
+	}
+}

@@ -27,6 +27,7 @@ import { TypingIndicator } from "@/components/chat/typing-indicator"
 import { useImageViewer } from "@/components/chat/use-image-viewer"
 import { UserMessage } from "@/components/chat/user-message"
 import { Button } from "@/components/ui/button"
+import { clearCompletedTodos } from "@/features/chat/controller"
 import { CHAT_FILE_ACCEPT, uploadChatFiles } from "@/features/chat/file-upload"
 import {
   CHAT_IMAGE_ACCEPT,
@@ -789,6 +790,14 @@ function SessionChatPage({ sessionId }: { sessionId: string }) {
 
       <TodoProgress
         list={todoList?.sessionId === sessionId ? todoList : undefined}
+        connected={connectionState === "connected"}
+        onClear={() => {
+          const current = todoList
+          return (
+            current?.sessionId === sessionId &&
+            clearCompletedTodos(sessionId, current.revision)
+          )
+        }}
       />
       <ChatComposer
         input={input}
