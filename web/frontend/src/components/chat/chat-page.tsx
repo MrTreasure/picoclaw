@@ -109,6 +109,7 @@ export function ChatPage() {
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [input, setInput] = useState("")
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
+  const [isSending, setIsSending] = useState(false)
   const [isDragActive, setIsDragActive] = useState(false)
   const [assistantDetailVisibility, setAssistantDetailVisibility] = useAtom(
     assistantDetailVisibilityAtom,
@@ -237,18 +238,25 @@ export function ChatPage() {
     }
   }, [messages, isTyping, isAtBottom, virtualizer])
 
-  const handleSend = () => {
-    if ((!input.trim() && attachments.length === 0) || !canInput) return
-    if (
-      sendMessage({
-        content: input,
-        attachments,
+  const handleSend = async () => {
+    if (isSending || (!input.trim() && attachments.length === 0) || !canInput) return
+    const sentContent = input
+    const sentAttachments = attachments
+    setIsSending(true)
+    try {
+      if (await sendMessage({
+        content: sentContent,
+        attachments: sentAttachments,
         messageId: draftMessageIdRef.current,
-      })
-    ) {
-      setInput("")
-      setAttachments([])
-      draftMessageIdRef.current = `msg-${crypto.randomUUID()}`
+      })) {
+        setInput((current) => current === sentContent ? "" : current)
+        setAttachments((current) =>
+          current.filter((attachment) => !sentAttachments.includes(attachment)),
+        )
+        draftMessageIdRef.current = `msg-${crypto.randomUUID()}`
+      }
+    } finally {
+      setIsSending(false)
     }
   }
 
@@ -383,7 +391,7 @@ export function ChatPage() {
   }
 
   const canSubmit =
-    canInput && (Boolean(input.trim()) || attachments.length > 0)
+    canInput && !isSending && (Boolean(input.trim()) || attachments.length > 0)
   return (
     <div className="bg-background/95 relative flex h-full min-h-0 flex-col overflow-hidden">
       <ChatControls
@@ -535,9 +543,9 @@ export function ChatPage() {
           sendMessage({ content: "/stop", attachments: [] })
         }}
         onContextDetail={() => {
-          if (sendMessage({ content: "/context", attachments: [] })) {
-            setInput("")
-          }
+          void sendMessage({ content: "/context", attachments: [] }).then((sent) => {
+            if (sent) setInput("")
+          })
         }}
         inputDisabledReason={null}
         canSend={canSubmit}

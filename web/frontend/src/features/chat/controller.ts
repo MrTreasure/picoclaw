@@ -2,6 +2,7 @@ import { getDefaultStore } from "jotai"
 import { toast } from "sonner"
 
 import { getSessions } from "@/api/sessions"
+import { launcherFetch } from "@/api/http"
 import {
   CHAT_HISTORY_PAGE_SIZE,
   loadSessionMessages,
@@ -568,71 +569,99 @@ interface SendChatMessageInput {
   messageId?: string
 }
 
-export function sendChatMessage({
+let sendInProgress = false
+
+async function uploadChatImage(
+  attachment: ChatAttachment,
+  sessionId: string,
+  messageId: string,
+): Promise<string> {
+  if (!attachment.file) throw new Error("图片文件已失效，请重新选择")
+  const form = new FormData()
+  form.append("session_id", sessionId)
+  form.append("message_id", messageId)
+  form.append("file", attachment.file, attachment.filename || "image.png")
+  const response = await launcherFetch("/pico/upload", {
+    method: "POST",
+    body: form,
+  })
+  if (!response.ok) throw new Error(`图片上传失败 (${response.status})`)
+  const result: unknown = await response.json()
+  if (
+    !result ||
+    typeof result !== "object" ||
+    !("ref" in result) ||
+    typeof result.ref !== "string" ||
+    !result.ref.startsWith("media://")
+  ) {
+    throw new Error("图片上传返回了无效引用")
+  }
+  return result.ref
+}
+
+export async function sendChatMessage({
   content,
   attachments = [],
   messageId,
-}: SendChatMessageInput) {
-  if (!wsRef || wsRef.readyState !== WebSocket.OPEN) {
+}: SendChatMessageInput): Promise<boolean> {
+  if (sendInProgress || !wsRef || wsRef.readyState !== WebSocket.OPEN) {
     console.warn("WebSocket not connected")
     return false
   }
 
   const normalizedContent = content.trim()
-  const normalizedAttachments = attachments
-    .filter((attachment) => attachment.url || attachment.mediaRef)
-    .map((attachment) => ({ ...attachment }))
+  const normalizedAttachments = attachments.filter(
+    (attachment) => attachment.url || attachment.mediaRef,
+  )
+  if (!normalizedContent && normalizedAttachments.length === 0) return false
 
-  if (!normalizedContent && normalizedAttachments.length === 0) {
-    return false
-  }
-
+  sendInProgress = true
   const socket = wsRef
+  const sessionId = activeSessionIdRef
   const id = messageId || `msg-${++msgIdCounter}-${Date.now()}`
-
-  updateChatStore((prev) => ({
-    messages: [
-      ...prev.messages,
-      {
+  try {
+    const mediaRefs: string[] = []
+    for (const attachment of normalizedAttachments) {
+      if (attachment.mediaRef) {
+        mediaRefs.push(attachment.mediaRef)
+      } else if (attachment.type === "image") {
+        mediaRefs.push(await uploadChatImage(attachment, sessionId, id))
+      }
+    }
+    if (
+      socket !== wsRef ||
+      socket.readyState !== WebSocket.OPEN ||
+      sessionId !== activeSessionIdRef
+    ) {
+      throw new Error("连接已改变，请重新发送")
+    }
+    socket.send(JSON.stringify({
+      type: "message.send",
+      id,
+      payload: { content: normalizedContent, media_refs: mediaRefs },
+    }))
+    const visibleAttachments = normalizedAttachments.map(
+      ({ type, url, mediaRef, filename, contentType }) => ({
+        type, url, mediaRef, filename, contentType,
+      }),
+    )
+    updateChatStore((prev) => ({
+      messages: [...prev.messages, {
         id,
         role: "user",
         content: normalizedContent,
-        attachments:
-          normalizedAttachments.length > 0 ? normalizedAttachments : undefined,
+        attachments: visibleAttachments.length > 0 ? visibleAttachments : undefined,
         timestamp: Date.now(),
-      },
-    ],
-    isTyping: true,
-  }))
-
-  try {
-    const payload: Record<string, unknown> = {
-      content: normalizedContent,
-      media: normalizedAttachments
-        .filter(
-          (attachment) => attachment.type === "image" && !attachment.mediaRef,
-        )
-        .map((attachment) => attachment.url),
-      media_refs: normalizedAttachments
-        .map((attachment) => attachment.mediaRef)
-        .filter((ref): ref is string => Boolean(ref)),
-    }
-
-    socket.send(
-      JSON.stringify({
-        type: "message.send",
-        id,
-        payload,
-      }),
-    )
+      }],
+      isTyping: true,
+    }))
     return true
   } catch (error) {
     console.error("Failed to send pico message:", error)
-    updateChatStore((prev) => ({
-      messages: prev.messages.filter((message) => message.id !== id),
-      isTyping: false,
-    }))
+    toast.error(error instanceof Error ? error.message : "图片发送失败")
     return false
+  } finally {
+    sendInProgress = false
   }
 }
 

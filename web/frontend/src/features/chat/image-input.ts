@@ -156,6 +156,7 @@ export async function buildChatImageAttachments(
         filename,
         url: await readFileAsDataUrl(normalizedFile),
         contentType: mimeType,
+        file: normalizedFile,
       })
     } catch {
       toast.error(

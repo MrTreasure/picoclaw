@@ -146,18 +146,22 @@ func (t *LoadImageTool) Execute(ctx context.Context, args map[string]any) *ToolR
 	if err != nil {
 		return ErrorResult(fmt.Sprintf("failed to register image in media store: %v", err))
 	}
+	if publisher, ok := t.mediaStore.(interface {
+		PublishImage(context.Context, string) (string, error)
+	}); ok {
+		if _, err := publisher.PublishImage(ctx, ref); err != nil {
+			return ErrorResult(fmt.Sprintf("failed to publish image: %v", err))
+		}
+	}
 
-	// Build the tool result text. The media:// ref in Media will be picked
-	// up by resolveMediaRefs in agent_media.go and base64-encoded for tool
-	// result messages (role="tool"), so the LLM can see the image content.
+	// The media ref is resolved into a public image URL when R2 is configured.
+	// Without R2 configuration, existing inline image behavior is preserved.
 	msg := fmt.Sprintf("Image loaded: %s\n[image: photo]", filename)
 
 	return &ToolResult{
 		ForLLM:  msg,
 		ForUser: fmt.Sprintf("Loaded image: %s", filename),
-		// Media refs inside ForLLM are resolved by resolveMediaRefs in the
-		// agent loop before the next LLM call. Do NOT use MediaResult here —
-		// that would send the file to the user channel instead.
+		// Media refs inside ForLLM are resolved before the next LLM call.
 		Media: []string{ref},
 	}
 }

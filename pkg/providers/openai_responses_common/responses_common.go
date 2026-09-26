@@ -98,7 +98,7 @@ func TranslateMessages(messages []protocoltypes.Message) (input responses.Respon
 }
 
 // BuildMultipartContent constructs a ResponseInputMessageContentListParam from
-// text content and media URLs (data:image/... and data:audio/... URIs).
+// text content and media URLs (HTTPS images and data:image/data:audio URIs).
 func BuildMultipartContent(text string, media []string) responses.ResponseInputMessageContentListParam {
 	parts := make(responses.ResponseInputMessageContentListParam, 0, 1+len(media))
 
@@ -111,7 +111,7 @@ func BuildMultipartContent(text string, media []string) responses.ResponseInputM
 	}
 
 	for _, mediaURL := range media {
-		if strings.HasPrefix(mediaURL, "data:image/") {
+		if strings.HasPrefix(mediaURL, "data:image/") || strings.HasPrefix(mediaURL, "https://") {
 			parts = append(parts, responses.ResponseInputContentUnionParam{
 				OfInputImage: &responses.ResponseInputImageParam{
 					ImageURL: openai.Opt(mediaURL),

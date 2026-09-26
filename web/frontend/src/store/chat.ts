@@ -17,6 +17,7 @@ export interface ChatAttachment {
   type: "image" | "audio" | "video" | "file"
   url: string
   mediaRef?: string
+  file?: File
   filename?: string
   contentType?: string
 }

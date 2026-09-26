@@ -449,7 +449,15 @@ func setupAndStartServices(
 		MaxAge:   time.Duration(cfg.Tools.MediaCleanup.MaxAge) * time.Minute,
 		Interval: time.Duration(cfg.Tools.MediaCleanup.Interval) * time.Minute,
 	})
+	imagePublisher, imageErr := media.NewR2ImagePublisherFromEnv()
+	if imageErr != nil {
+		return nil, fmt.Errorf("configure public image storage: %w", imageErr)
+	}
+	if imagePublisher != nil && (!cfg.Tools.MediaCleanup.Enabled || cfg.Tools.MediaCleanup.MaxAge <= 0 || cfg.Tools.MediaCleanup.Interval <= 0) {
+		return nil, fmt.Errorf("public image storage requires media cleanup with a positive retention period and interval")
+	}
 	if fms, ok := runningServices.MediaStore.(*media.FileMediaStore); ok {
+		fms.SetImagePublisher(imagePublisher)
 		fms.Start()
 	}
 
@@ -709,7 +717,15 @@ func restartServices(
 		MaxAge:   time.Duration(cfg.Tools.MediaCleanup.MaxAge) * time.Minute,
 		Interval: time.Duration(cfg.Tools.MediaCleanup.Interval) * time.Minute,
 	})
+	imagePublisher, imageErr := media.NewR2ImagePublisherFromEnv()
+	if imageErr != nil {
+		return fmt.Errorf("configure public image storage: %w", imageErr)
+	}
+	if imagePublisher != nil && (!cfg.Tools.MediaCleanup.Enabled || cfg.Tools.MediaCleanup.MaxAge <= 0 || cfg.Tools.MediaCleanup.Interval <= 0) {
+		return fmt.Errorf("public image storage requires media cleanup with a positive retention period and interval")
+	}
 	if fms, ok := runningServices.MediaStore.(*media.FileMediaStore); ok {
+		fms.SetImagePublisher(imagePublisher)
 		fms.Start()
 	}
 	if runningServices.ChannelManager != nil {

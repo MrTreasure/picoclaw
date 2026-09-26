@@ -117,7 +117,7 @@ func SerializeMessages(messages []Message) []any {
 			})
 		}
 		for _, mediaURL := range m.Media {
-			if strings.HasPrefix(mediaURL, "data:image/") {
+			if strings.HasPrefix(mediaURL, "data:image/") || strings.HasPrefix(mediaURL, "https://") {
 				parts = append(parts, map[string]any{
 					"type": "image_url",
 					"image_url": map[string]any{

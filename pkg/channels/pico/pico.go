@@ -998,7 +998,7 @@ func (c *PicoChannel) handleMediaDownload(w http.ResponseWriter, r *http.Request
 const picoUploadMaxBytes = 20 << 20
 
 var picoUploadExtensions = map[string]bool{
-	".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true,
+	".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true, ".bmp": true,
 	".txt": true, ".md": true, ".pdf": true, ".json": true, ".xml": true,
 	".m4a": true, ".aac": true, ".mp3": true, ".ogg": true, ".opus": true, ".wav": true,
 }
@@ -1125,6 +1125,16 @@ func (c *PicoChannel) handleMediaUpload(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	savedPath = "" // ownership transferred to MediaStore
+	if strings.HasPrefix(contentType, "image/") {
+		if publisher, ok := store.(interface {
+			PublishImage(context.Context, string) (string, error)
+		}); ok {
+			if _, err := publisher.PublishImage(r.Context(), ref); err != nil {
+				http.Error(w, "failed to publish image", http.StatusBadGateway)
+				return
+			}
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"ref": ref, "filename": filename, "content_type": contentType,

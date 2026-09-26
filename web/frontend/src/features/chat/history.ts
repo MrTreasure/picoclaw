@@ -16,9 +16,11 @@ export interface ChatHistoryPage {
 }
 
 function toChatAttachments({
+  content,
   media,
   attachments,
 }: {
+  content?: string
   media?: string[]
   attachments?: {
     type?: "image" | "audio" | "video" | "file"
@@ -40,8 +42,16 @@ function toChatAttachments({
     )
 
   const legacyMediaAttachments = (media ?? [])
-    .filter((item) => item.startsWith("data:image/"))
-    .map((url) => ({ type: "image" as const, url }))
+    .filter((item) =>
+      item.startsWith("data:image/") ||
+      (content?.includes("[image:") && /^media:\/\/[^/]+$/.test(item)),
+    )
+    .map((item) => ({
+      type: "image" as const,
+      url: item.startsWith("media://")
+        ? `/pico/media/${encodeURIComponent(item.slice("media://".length))}`
+        : item,
+    }))
 
   const merged = [...(normalizedAttachments ?? []), ...legacyMediaAttachments]
 
@@ -72,6 +82,7 @@ export async function loadSessionMessages(
           ? parseToolCallsValue(message.tool_calls)
           : undefined,
       attachments: toChatAttachments({
+        content: message.content,
         media: message.media,
         attachments: message.attachments,
       }),

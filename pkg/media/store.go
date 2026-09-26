@@ -1,12 +1,15 @@
 package media
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/h2non/filetype"
 
 	"github.com/sipeed/picoclaw/pkg/logger"
 )
@@ -30,6 +33,7 @@ type MediaMeta struct {
 	ContentType   string
 	Source        string        // "telegram", "discord", "tool:image-gen", etc.
 	CleanupPolicy CleanupPolicy // defaults to CleanupPolicyDeleteOnCleanup
+	PublicURL     string        // set only after an image has been published
 }
 
 // MediaStore manages the lifecycle of media files associated with processing scopes.
@@ -53,9 +57,10 @@ type MediaStore interface {
 
 // mediaEntry holds the path and metadata for a stored media file.
 type mediaEntry struct {
-	path     string
-	meta     MediaMeta
-	storedAt time.Time
+	path      string
+	meta      MediaMeta
+	storedAt  time.Time
+	publicKey string
 }
 
 type pathRefState struct {
@@ -73,18 +78,80 @@ type MediaCleanerConfig struct {
 // FileMediaStore is a pure in-memory implementation of MediaStore.
 // Files are expected to already exist on disk (e.g. in /tmp/picoclaw_media/).
 type FileMediaStore struct {
-	mu          sync.RWMutex
-	refs        map[string]mediaEntry
-	scopeToRefs map[string]map[string]struct{}
-	refToScope  map[string]string
-	refToPath   map[string]string
-	pathStates  map[string]pathRefState
+	mu             sync.RWMutex
+	publicMu       sync.Mutex
+	imagePublisher ImagePublisher
+	refs           map[string]mediaEntry
+	scopeToRefs    map[string]map[string]struct{}
+	refToScope     map[string]string
+	refToPath      map[string]string
+	pathStates     map[string]pathRefState
 
 	cleanerCfg MediaCleanerConfig
 	stop       chan struct{}
 	startOnce  sync.Once
 	stopOnce   sync.Once
 	nowFunc    func() time.Time // for testing
+}
+
+func (s *FileMediaStore) SetImagePublisher(p ImagePublisher) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.imagePublisher = p
+}
+
+// PublishImage uploads one registered image once and stores its public URL.
+// Calls for the same store are serialized so repeated message resolution does
+// not publish duplicate objects.
+func (s *FileMediaStore) PublishImage(ctx context.Context, ref string) (string, error) {
+	s.publicMu.Lock()
+	defer s.publicMu.Unlock()
+	s.mu.RLock()
+	entry, ok := s.refs[ref]
+	publisher := s.imagePublisher
+	s.mu.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("unknown media ref")
+	}
+	if entry.meta.PublicURL != "" {
+		return entry.meta.PublicURL, nil
+	}
+	if publisher == nil {
+		return "", nil
+	}
+	allowedTypes := map[string]string{
+		"image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
+		"image/webp": ".webp", "image/bmp": ".bmp",
+	}
+	ext, allowed := allowedTypes[entry.meta.ContentType]
+	if !allowed {
+		return "", fmt.Errorf("media is not an image")
+	}
+	actual, err := filetype.MatchFile(entry.path)
+	if err != nil || actual.MIME.Value != entry.meta.ContentType {
+		return "", fmt.Errorf("image content does not match its type")
+	}
+	refID := strings.TrimPrefix(ref, "media://")
+	if refID == ref || refID == "" || strings.Contains(refID, "/") {
+		return "", fmt.Errorf("invalid media ref")
+	}
+	key := "muse-chat/" + refID + ext
+	if err := publisher.Put(ctx, key, entry.path, entry.meta.ContentType); err != nil {
+		return "", err
+	}
+	url := publisher.URL(key)
+	s.mu.Lock()
+	if current, exists := s.refs[ref]; exists {
+		current.meta.PublicURL = url
+		current.publicKey = key
+		s.refs[ref] = current
+	} else {
+		s.mu.Unlock()
+		_ = publisher.Delete(context.Background(), key)
+		return "", fmt.Errorf("media ref expired during upload")
+	}
+	s.mu.Unlock()
+	return url, nil
 }
 
 // NewFileMediaStore creates a new FileMediaStore without background cleanup.
@@ -178,8 +245,10 @@ func (s *FileMediaStore) ResolveWithMeta(ref string) (string, MediaMeta, error) 
 func (s *FileMediaStore) ReleaseAll(scope string) error {
 	// Phase 1: collect paths and remove from maps under lock
 	var paths []string
+	var publicKeys []string
 
 	s.mu.Lock()
+	publisher := s.imagePublisher
 	refs, ok := s.scopeToRefs[scope]
 	if !ok {
 		s.mu.Unlock()
@@ -190,6 +259,9 @@ func (s *FileMediaStore) ReleaseAll(scope string) error {
 		fallbackPath := ""
 		if entry, exists := s.refs[ref]; exists {
 			fallbackPath = entry.path
+			if entry.publicKey != "" {
+				publicKeys = append(publicKeys, entry.publicKey)
+			}
 		}
 		if removablePath, shouldDelete := s.releaseRefLocked(ref, fallbackPath); shouldDelete {
 			paths = append(paths, removablePath)
@@ -207,6 +279,7 @@ func (s *FileMediaStore) ReleaseAll(scope string) error {
 			})
 		}
 	}
+	s.deletePublicImages(publisher, publicKeys)
 
 	return nil
 }
@@ -223,9 +296,11 @@ func (s *FileMediaStore) CleanExpired() int {
 	type expiredEntry struct {
 		ref        string
 		deletePath string
+		publicKey  string
 	}
 
 	s.mu.Lock()
+	publisher := s.imagePublisher
 	cutoff := s.nowFunc().Add(-s.cleanerCfg.MaxAge)
 	var expired []expiredEntry
 
@@ -240,7 +315,7 @@ func (s *FileMediaStore) CleanExpired() int {
 				}
 			}
 
-			expiredItem := expiredEntry{ref: ref}
+			expiredItem := expiredEntry{ref: ref, publicKey: entry.publicKey}
 			if deletePath, shouldDelete := s.releaseRefLocked(ref, entry.path); shouldDelete {
 				expiredItem.deletePath = deletePath
 			}
@@ -261,8 +336,29 @@ func (s *FileMediaStore) CleanExpired() int {
 			})
 		}
 	}
+	var publicKeys []string
+	for _, e := range expired {
+		if e.publicKey != "" {
+			publicKeys = append(publicKeys, e.publicKey)
+		}
+	}
+	s.deletePublicImages(publisher, publicKeys)
 
 	return len(expired)
+}
+
+func (s *FileMediaStore) deletePublicImages(publisher ImagePublisher, keys []string) {
+	if publisher == nil {
+		return
+	}
+	for _, key := range keys {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err := publisher.Delete(ctx, key)
+		cancel()
+		if err != nil {
+			logger.WarnCF("media", "failed to delete public image", map[string]any{"key": key, "error": err.Error()})
+		}
+	}
 }
 
 func normalizeCleanupPolicy(policy CleanupPolicy) CleanupPolicy {
@@ -336,12 +432,30 @@ func (s *FileMediaStore) Start() {
 							"count": n,
 						})
 					}
+					s.sweepPublicImages()
 				case <-s.stop:
 					return
 				}
 			}
 		}()
 	})
+}
+
+func (s *FileMediaStore) sweepPublicImages() {
+	s.mu.RLock()
+	publisher := s.imagePublisher
+	s.mu.RUnlock()
+	sweeper, ok := publisher.(interface {
+		Sweep(context.Context, time.Time) error
+	})
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := sweeper.Sweep(ctx, time.Now().Add(-s.cleanerCfg.MaxAge)); err != nil {
+		logger.WarnCF("media", "failed to sweep expired public images", map[string]any{"error": err.Error()})
+	}
 }
 
 // Stop terminates the background cleanup goroutine.
