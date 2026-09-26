@@ -4,6 +4,7 @@ import {
   IconCode,
   IconMessageCircle,
   IconMessagePlus,
+  IconRobot,
   IconSearch,
   IconTrash,
   IconX,
@@ -15,6 +16,7 @@ import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
 import { CodexRpcClient, type CodexThread } from "@/api/codex"
+import { getLauncherAuthStatus } from "@/api/launcher-auth"
 import type { SessionSummary } from "@/api/sessions"
 import {
   AlertDialog,
@@ -35,6 +37,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { deleteCodexHistoryCache } from "@/features/codex/history-cache"
+import {
+  invalidateCodexSessionListCache,
+  readCodexSessionListCache,
+  validCacheScope,
+  writeCodexSessionListCache,
+} from "@/hooks/session-list-cache"
 import { usePicoChat } from "@/hooks/use-pico-chat"
 import { useSessionHistory } from "@/hooks/use-session-history"
 import {
@@ -48,6 +57,11 @@ type SessionListEntry =
 
 const museKey = (id: string) => `muse:${id}`
 const codexKey = (id: string) => `codex:${id}`
+// Sub-agent turns use a semantic session key ending in _sub. Do not infer
+// provenance from message text or from legacy opaque session IDs.
+const isSubAgentSession = (session: SessionSummary) =>
+  session.channel === "pico" &&
+  /^[a-z0-9][a-z0-9-]*_\d{8}t\d{9}_sub$/.test(session.id)
 
 export function SessionListPage() {
   const { t } = useTranslation()
@@ -61,13 +75,20 @@ export function SessionListPage() {
   const [pressedId, setPressedId] = useState<string | null>(null)
   const [showNewSession, setShowNewSession] = useState(false)
   const [codexThreads, setCodexThreads] = useState<CodexThread[]>([])
+  const [codexStatus, setCodexStatus] = useState<
+    "loading" | "cached" | "ready" | "error"
+  >("loading")
+  const [codexRetry, setCodexRetry] = useState(0)
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const longPressTriggeredRef = useRef(false)
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null)
   const suppressClickRef = useRef(false)
   const loadedRef = useRef(false)
+  const codexScopeRef = useRef<string | null>(null)
+  const codexLoadGeneration = useRef(0)
   const {
     sessions,
+    initialLoading,
     hasMore,
     loadError,
     loadErrorMessage,
@@ -91,29 +112,76 @@ export function SessionListPage() {
 
   useEffect(() => {
     let cancelled = false
+    const generation = ++codexLoadGeneration.current
+    setCodexStatus("loading")
     const rpc = new CodexRpcClient()
-    void rpc
-      .connect()
-      .then(() =>
+    void (async () => {
+      // Authenticate before reading account-scoped cached titles. Start the
+      // live RPC concurrently so IndexedDB latency never delays fresh data.
+      const status = await getLauncherAuthStatus()
+      if (cancelled || generation !== codexLoadGeneration.current) return
+      if (!status.authenticated || !validCacheScope(status.cache_scope)) {
+        codexScopeRef.current = null
+        setCodexThreads([])
+        setCodexStatus("error")
+        return
+      }
+      const scope = status.cache_scope
+      codexScopeRef.current = scope
+      const cached = readCodexSessionListCache(scope)
+      const live = rpc.connect().then(() =>
         rpc.request<{ data: CodexThread[] }>("thread/list", {
           limit: 50,
           sortKey: "recency_at",
         }),
       )
-      .then((result) => {
-        if (!cancelled)
-          setCodexThreads(
-            (result.data ?? []).filter(
-              (thread) => thread.historyMode === "legacy",
-            ),
-          )
-      })
-      .catch(() => {})
+      // Ensure the live request cannot reject before a handler is attached.
+      let liveSettled = false
+      const settledLive = live.then(
+        (result) => {
+          liveSettled = true
+          return { ok: true as const, result }
+        },
+        (error: unknown) => {
+          liveSettled = true
+          return { ok: false as const, error }
+        },
+      )
+      const snapshot = await cached
+      if (
+        !cancelled &&
+        generation === codexLoadGeneration.current &&
+        !liveSettled &&
+        snapshot
+      ) {
+        setCodexThreads(snapshot)
+        setCodexStatus("cached")
+      }
+      const outcome = await settledLive
+      if (cancelled || generation !== codexLoadGeneration.current) return
+      if (!outcome.ok) {
+        console.error("Failed to load Codex conversations:", outcome.error)
+        setCodexStatus("error")
+        return
+      }
+      const threads = (outcome.result.data ?? []).filter(
+        (thread) => thread.historyMode === "legacy",
+      )
+      setCodexThreads(threads)
+      setCodexStatus("ready")
+      void writeCodexSessionListCache(scope, threads)
+    })().catch((error: unknown) => {
+      if (!cancelled && generation === codexLoadGeneration.current) {
+        console.error("Failed to load Codex conversations:", error)
+        setCodexStatus("error")
+      }
+    })
     return () => {
       cancelled = true
+      codexLoadGeneration.current += 1
       rpc.close()
     }
-  }, [])
+  }, [codexRetry])
 
   // Sort only when source lists change; a search keystroke just filters.
   const sortedEntries = useMemo(() => {
@@ -146,6 +214,7 @@ export function SessionListPage() {
   }, [deferredQuery, sortedEntries])
 
   const selectionMode = selectedIds.size > 0
+  const awaitingInitialLists = initialLoading || codexStatus === "loading"
 
   const toggleSelection = (key: string) => {
     setSelectedIds((previous) => {
@@ -241,6 +310,8 @@ export function SessionListPage() {
           for (const id of codexIds) {
             try {
               await rpc.request("thread/delete", { threadId: id })
+              const scope = codexScopeRef.current
+              if (scope) void deleteCodexHistoryCache(scope, id)
               deleted.add(codexKey(id))
             } catch (error) {
               console.error("Failed to delete Codex thread:", error)
@@ -267,8 +338,11 @@ export function SessionListPage() {
       if (failedCodex.length)
         toast.error(`${failedCodex.length} 段 Codex 会话删除失败，请重试`)
       const deletedCodex = codexIds.filter((id) => deleted.has(codexKey(id)))
-      if (deletedCodex.length)
+      if (deletedCodex.length) {
+        const scope = codexScopeRef.current
+        if (scope) void invalidateCodexSessionListCache(scope)
         toast.success(`已永久删除 ${deletedCodex.length} 段 Codex 会话`)
+      }
       setDeleting(false)
     }
   }
@@ -351,17 +425,52 @@ export function SessionListPage() {
             </div>
           )}
 
-          {!loadError && visibleEntries.length === 0 && (
-            <div className="text-muted-foreground flex flex-col items-center px-6 py-20 text-center">
-              <div className="bg-muted mb-5 flex size-16 items-center justify-center rounded-2xl">
-                <IconMessageCircle className="size-8" aria-hidden="true" />
-              </div>
-              <p className="text-foreground text-lg font-semibold">
-                {query ? "没有匹配的会话" : t("chat.noHistory")}
-              </p>
-              <p className="mt-2 text-sm">点击右上角开始一段新对话</p>
+          {codexStatus === "error" && (
+            <div
+              role="alert"
+              className="border-destructive/40 bg-destructive/10 text-destructive mb-3 flex min-h-12 items-center justify-between rounded-xl border px-4 text-sm"
+            >
+              <span>Codex 对话加载失败，已显示可用的其他对话。</span>
+              <Button
+                variant="ghost"
+                onClick={() => setCodexRetry((n) => n + 1)}
+              >
+                重试
+              </Button>
             </div>
           )}
+
+          {awaitingInitialLists && visibleEntries.length === 0 && (
+            <div
+              role="status"
+              className="text-muted-foreground flex flex-col items-center px-6 py-20 text-center"
+            >
+              <div className="bg-muted mb-5 flex size-16 items-center justify-center rounded-2xl">
+                <IconMessageCircle
+                  className="size-8 animate-pulse"
+                  aria-hidden="true"
+                />
+              </div>
+              <p className="text-foreground text-lg font-semibold">
+                正在加载对话…
+              </p>
+            </div>
+          )}
+
+          {!awaitingInitialLists &&
+            !loadError &&
+            codexStatus !== "error" &&
+            visibleEntries.length === 0 && (
+              <div className="text-muted-foreground flex flex-col items-center px-6 py-20 text-center">
+                <div className="bg-muted mb-5 flex size-16 items-center justify-center rounded-2xl">
+                  <IconMessageCircle className="size-8" aria-hidden="true" />
+                </div>
+                <p className="text-foreground text-lg font-semibold">
+                  {query ? "没有匹配的会话" : t("chat.noHistory")}
+                </p>
+                <p className="mt-2 text-sm">点击右上角开始一段新对话</p>
+              </div>
+            )}
 
           <div className="space-y-2">
             {visibleEntries.map((entry) => {
@@ -432,6 +541,7 @@ export function SessionListPage() {
               const key = museKey(session.id)
               const isActive = session.id === activeSessionId
               const isWeixin = session.channel === "weixin"
+              const isSubAgent = isSubAgentSession(session)
               return (
                 <div
                   key={key}
@@ -465,7 +575,7 @@ export function SessionListPage() {
                     }}
                   >
                     <span
-                      className={`flex size-14 shrink-0 items-center justify-center rounded-2xl ${isWeixin ? "bg-emerald-500/15 text-emerald-400" : isActive ? "bg-accent text-accent-foreground" : "bg-muted text-muted-foreground"}`}
+                      className={`flex size-14 shrink-0 items-center justify-center rounded-2xl ${isWeixin ? "bg-emerald-500/15 text-emerald-400" : isSubAgent ? "bg-violet-500/15 text-violet-500" : isActive ? "bg-accent text-accent-foreground" : "bg-muted text-muted-foreground"}`}
                     >
                       {selectedIds.has(key) ? (
                         <IconCheck className="size-7" aria-label="已选择" />
@@ -473,6 +583,11 @@ export function SessionListPage() {
                         <IconBrandWechat
                           className="size-7"
                           aria-hidden="true"
+                        />
+                      ) : isSubAgent ? (
+                        <IconRobot
+                          className="size-7"
+                          aria-label="子 Agent 对话"
                         />
                       ) : (
                         <IconMessageCircle
@@ -499,6 +614,11 @@ export function SessionListPage() {
                       {isWeixin && (
                         <span className="mt-1 block text-xs font-medium text-emerald-400">
                           微信记录
+                        </span>
+                      )}
+                      {isSubAgent && (
+                        <span className="mt-1 block text-xs font-medium text-violet-500">
+                          子 Agent 对话
                         </span>
                       )}
                       {isActive && (

@@ -31,8 +31,14 @@ import {
   getCodexWorkspaces,
   uploadCodexImage,
 } from "@/api/codex"
+import { getLauncherAuthStatus } from "@/api/launcher-auth"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  readCodexHistoryCache,
+  writeCodexHistoryCache,
+} from "@/features/codex/history-cache"
+import { validCacheScope } from "@/hooks/session-list-cache"
 
 interface CodexPageProps {
   threadId?: string
@@ -104,6 +110,8 @@ export function CodexPage({ threadId }: CodexPageProps) {
 function CodexConversationPage({ threadId }: { threadId?: string }) {
   const navigate = useNavigate()
   const rpcRef = useRef<CodexRpcClient | null>(null)
+  const cacheScopeRef = useRef<string | null>(null)
+  const liveHydratedThreadRef = useRef<string | null>(null)
   const listRef = useRef<HTMLElement>(null)
   const followRef = useRef(true)
   const lastScrollTopRef = useRef(0)
@@ -114,6 +122,7 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
   const completedTurnRef = useRef<string | null>(null)
   const [showJump, setShowJump] = useState(false)
   const [loadedThreadId, setLoadedThreadId] = useState<string | null>(null)
+  const [historyFromCache, setHistoryFromCache] = useState(false)
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState("")
   const [threads, setThreads] = useState<CodexThread[]>([])
@@ -164,6 +173,42 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
       setError(cause instanceof Error ? cause.message : "加载 Codex 会话失败")
     }
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    cacheScopeRef.current = null
+    liveHydratedThreadRef.current = null
+    if (!threadId) return
+    void getLauncherAuthStatus()
+      .then(async (status) => {
+        if (
+          cancelled ||
+          !status.authenticated ||
+          !validCacheScope(status.cache_scope)
+        )
+          return
+        const scope = status.cache_scope
+        cacheScopeRef.current = scope
+        const cached = await readCodexHistoryCache(scope, threadId)
+        if (
+          cancelled ||
+          cacheScopeRef.current !== scope ||
+          !cached ||
+          liveHydratedThreadRef.current === threadId
+        )
+          return
+        // Network remains authoritative. Cached history is a read-only fallback;
+        // it never resumes a turn or replays an approval/send.
+        setItems(flattenThread(cached))
+        setHistoryFromCache(true)
+        setLoadedThreadId(threadId)
+        setTitle(cached.name || cached.preview || "Codex")
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [threadId])
 
   useEffect(() => {
     const rpc = new CodexRpcClient()
@@ -278,6 +323,21 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
           (params.turn as { id?: string } | undefined)?.id ?? null
         activeTurnRef.current = null
         setRunning(false)
+        const scope = cacheScopeRef.current
+        if (scope && threadId) {
+          // Store a fresh, server-confirmed turn after completion; never cache
+          // partial deltas as an authoritative transcript.
+          void rpc
+            .request<{ thread: CodexThread }>("thread/read", {
+              threadId,
+              includeTurns: true,
+            })
+            .then((result) => {
+              if (!cancelled && result.thread?.historyMode === "legacy")
+                void writeCodexHistoryCache(scope, threadId, result.thread)
+            })
+            .catch(() => {})
+        }
       }
       if (message.method === "error" && params.threadId === threadId) {
         flushItems()
@@ -323,8 +383,30 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
               return
             }
             flushItems()
+            liveHydratedThreadRef.current = threadId
             setItems(flattenThread(result.thread))
+            setHistoryFromCache(false)
             setLoadedThreadId(threadId)
+            const scope = cacheScopeRef.current
+            if (scope)
+              void writeCodexHistoryCache(scope, threadId, result.thread)
+            else
+              void getLauncherAuthStatus()
+                .then((status) => {
+                  if (
+                    !cancelled &&
+                    status.authenticated &&
+                    validCacheScope(status.cache_scope)
+                  ) {
+                    cacheScopeRef.current = status.cache_scope
+                    void writeCodexHistoryCache(
+                      status.cache_scope,
+                      threadId,
+                      result.thread,
+                    )
+                  }
+                })
+                .catch(() => {})
             setTitle(result.thread.name || result.thread.preview || "Codex")
             setWorkspace(result.thread.cwd || "")
             setRunning(result.thread.status?.type === "active")
@@ -681,7 +763,13 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
               {threadId ? title || "Codex" : "Codex 会话"}
             </h1>
             <p className="text-muted-foreground truncate text-xs">
-              {threadId ? workspace : connected ? "已连接 NAS" : "连接中"}
+              {threadId
+                ? historyFromCache && !connected
+                  ? "本地历史 · 离线只读"
+                  : workspace || (connected ? "已连接 NAS" : "连接中")
+                : connected
+                  ? "已连接 NAS"
+                  : "连接中"}
             </p>
           </div>
           {threadId && running && (

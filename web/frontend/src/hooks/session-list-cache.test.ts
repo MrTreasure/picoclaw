@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import {
+  MAX_CODEX_THREADS,
   MAX_SESSION_SUMMARIES,
+  invalidateCodexSessionListCache,
   invalidateSessionListCache,
+  readCodexSessionListCache,
   readSessionListCache,
   reconcileFirstPage,
   validCacheScope,
+  writeCodexSessionListCache,
   writeSessionListCache,
 } from "./session-list-cache"
 
@@ -48,6 +52,26 @@ function mockStorage() {
               delete: (key: string) => {
                 records.delete(key)
                 queueMicrotask(() => (tx.oncomplete as () => void)?.())
+              },
+              openCursor: () => {
+                const keys = [...records.keys()]
+                const r: Record<string, unknown> = {}
+                let i = 0
+                const advance = () => {
+                  const key = keys[i++]
+                  r.result =
+                    key === undefined
+                      ? null
+                      : {
+                          key,
+                          delete: () => records.delete(key),
+                          continue: () => queueMicrotask(advance),
+                        }
+                  ;(r.onsuccess as () => void)?.()
+                  if (key === undefined) (tx.oncomplete as () => void)?.()
+                }
+                queueMicrotask(advance)
+                return r
               },
               clear: () => {
                 records.clear()
@@ -178,5 +202,112 @@ describe("first-page reconciliation", () => {
     ).toHaveLength(2)
     expect(reconcileFirstPage([summary("0")], cached, 2)).toHaveLength(1)
     expect(reconcileFirstPage(fresh, null, 2)).toEqual(fresh)
+  })
+})
+
+const thread = (id: string) => ({
+  id,
+  historyMode: "legacy",
+  name: "name",
+  preview: "preview",
+  cwd: "/work",
+  createdAt: 1_700_000_000,
+  updatedAt: 1_700_000_001,
+})
+
+describe("account-scoped Codex legacy list cache", () => {
+  it("isolates accounts and Pico, caps 50, strips message/status fields", async () => {
+    const records = mockStorage()
+    await writeSessionListCache(A, {
+      sessions: [summary("p")],
+      offset: 1,
+      hasMore: false,
+    })
+    const many = Array.from({ length: 60 }, (_, n) => ({
+      ...thread(String(n)),
+      turns: [
+        {
+          id: "secret",
+          items: [{ id: "m", type: "text", text: "raw message" }],
+        },
+      ],
+      status: { type: "active" },
+      source: "private",
+    }))
+    await writeCodexSessionListCache(A, [
+      ...many,
+      { ...thread("nonlegacy"), historyMode: "new" },
+    ])
+    await writeCodexSessionListCache(B, [thread("B")])
+    expect((await readCodexSessionListCache(A))?.length).toBe(MAX_CODEX_THREADS)
+    expect(JSON.stringify(records.get(`codex:${A}`))).not.toMatch(
+      /raw message|secret|private|active/,
+    )
+    expect(await readCodexSessionListCache(B)).toEqual([thread("B")])
+    await invalidateSessionListCache(A)
+    expect(await readSessionListCache(A)).toBeNull()
+    expect(await readCodexSessionListCache(A)).toHaveLength(MAX_CODEX_THREADS)
+    await invalidateCodexSessionListCache(A)
+    expect(await readCodexSessionListCache(A)).toBeNull()
+    expect(await readCodexSessionListCache(B)).toEqual([thread("B")])
+    await invalidateCodexSessionListCache()
+    expect(await readCodexSessionListCache(B)).toBeNull()
+  })
+
+  it("rejects expired, malformed, duplicate, nonlegacy and cross-scope records", async () => {
+    const records = mockStorage()
+    const key = `codex:${A}`
+    for (const bad of [
+      {
+        id: key,
+        savedAt: Date.now() - 31 * 86_400_000,
+        threads: [thread("x")],
+      },
+      { id: `codex:${B}`, savedAt: Date.now(), threads: [thread("x")] },
+      { id: key, savedAt: Date.now(), threads: [thread("x"), thread("x")] },
+      { id: key, savedAt: Date.now(), threads: [{ ...thread("x"), cwd: 123 }] },
+      {
+        id: key,
+        savedAt: Date.now(),
+        threads: [{ ...thread("x"), historyMode: "new" }],
+      },
+      {
+        id: key,
+        savedAt: Date.now(),
+        threads: [{ ...thread("x"), updatedAt: Infinity }],
+      },
+      {
+        id: key,
+        savedAt: Date.now(),
+        threads: Array.from({ length: 51 }, (_, n) => thread(String(n))),
+      },
+    ]) {
+      records.set(key, bad)
+      expect(await readCodexSessionListCache(A)).toBeNull()
+    }
+    expect(await readCodexSessionListCache("invalid")).toBeNull()
+    records.set(key, {
+      id: key,
+      savedAt: Date.now(),
+      threads: [{ ...thread("x"), turns: [{ id: "private" }] }],
+    })
+    expect(await readCodexSessionListCache(A)).toEqual([thread("x")])
+  })
+
+  it("logout revokes queued writes and clears both caches", async () => {
+    mockStorage()
+    const pending = writeCodexSessionListCache(A, [thread("late")])
+    const clear = invalidateSessionListCache()
+    await Promise.all([pending, clear])
+    expect(await readCodexSessionListCache(A)).toBeNull()
+    await writeCodexSessionListCache(A, [thread("fresh")])
+    await writeSessionListCache(A, {
+      sessions: [summary("p")],
+      offset: 1,
+      hasMore: false,
+    })
+    await invalidateSessionListCache()
+    expect(await readCodexSessionListCache(A)).toBeNull()
+    expect(await readSessionListCache(A)).toBeNull()
   })
 })

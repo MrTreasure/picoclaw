@@ -1,3 +1,4 @@
+import type { CodexThread } from "@/api/codex"
 import type { SessionSummary } from "@/api/sessions"
 
 // Separate from the message cache. Never store credentials or raw session tokens.
@@ -5,6 +6,11 @@ const DATABASE = "musec137-session-list"
 const STORE = "summaries"
 export const MAX_SESSION_SUMMARIES = 200
 const MAX_AGE_MS = 5 * 60 * 1000
+const CODEX_PREFIX = "codex:"
+// The list is the navigation entry for locally retained Codex histories.
+// Pico summaries keep the short freshness window; Codex is refreshed online.
+const CODEX_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
+export const MAX_CODEX_THREADS = 50
 
 export interface SessionListSnapshot {
   sessions: SessionSummary[]
@@ -14,6 +20,83 @@ export interface SessionListSnapshot {
 interface StoredSnapshot extends SessionListSnapshot {
   id: string
   savedAt: number
+}
+
+// Persist only display fields, never raw RPC responses, turns or credentials.
+type CachedCodexThread = Pick<
+  CodexThread,
+  "id" | "historyMode" | "name" | "preview" | "cwd" | "createdAt" | "updatedAt"
+>
+interface StoredCodexSnapshot {
+  id: string
+  savedAt: number
+  threads: CachedCodexThread[]
+}
+const codexKey = (scope: string) => `${CODEX_PREFIX}${scope}`
+
+function validCodexThread(value: unknown): value is CachedCodexThread {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const t = value as Partial<CachedCodexThread>
+  const timestamp = (v: unknown) =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0
+  return (
+    typeof t.id === "string" &&
+    t.id.length > 0 &&
+    t.id.length <= 256 &&
+    t.historyMode === "legacy" &&
+    (t.name === undefined ||
+      t.name === null ||
+      (typeof t.name === "string" && t.name.length <= 256)) &&
+    (t.preview === undefined ||
+      (typeof t.preview === "string" && t.preview.length <= 2048)) &&
+    (t.cwd === undefined ||
+      (typeof t.cwd === "string" && t.cwd.length <= 2048)) &&
+    (t.createdAt === undefined || timestamp(t.createdAt)) &&
+    (t.updatedAt === undefined || timestamp(t.updatedAt)) &&
+    (t.createdAt !== undefined || t.updatedAt !== undefined)
+  )
+}
+
+function validCodexSnapshot(
+  value: unknown,
+  scope: string,
+): value is StoredCodexSnapshot {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const s = value as Partial<StoredCodexSnapshot>
+  if (
+    s.id !== codexKey(scope) ||
+    !Number.isFinite(s.savedAt) ||
+    Date.now() - s.savedAt! < 0 ||
+    Date.now() - s.savedAt! > CODEX_MAX_AGE_MS ||
+    !Array.isArray(s.threads) ||
+    s.threads.length > MAX_CODEX_THREADS
+  )
+    return false
+  const ids = new Set<string>()
+  return s.threads.every((t) => {
+    if (!validCodexThread(t) || ids.has(t.id)) return false
+    ids.add(t.id)
+    return true
+  })
+}
+
+function cleanCodexThreads(threads: CodexThread[]): CachedCodexThread[] {
+  const ids = new Set<string>()
+  const result: CachedCodexThread[] = []
+  if (!Array.isArray(threads)) return result
+  for (const t of threads) {
+    if (!validCodexThread(t) || ids.has(t.id)) continue
+    ids.add(t.id)
+    const clean: CachedCodexThread = { id: t.id, historyMode: "legacy" }
+    if (t.name !== undefined) clean.name = t.name
+    if (t.preview !== undefined) clean.preview = t.preview
+    if (t.cwd !== undefined) clean.cwd = t.cwd
+    if (t.createdAt !== undefined) clean.createdAt = t.createdAt
+    if (t.updatedAt !== undefined) clean.updatedAt = t.updatedAt
+    result.push(clean)
+    if (result.length === MAX_CODEX_THREADS) break
+  }
+  return result
 }
 
 /** Avoid a large refresh; preserve the cached tail only if the first page
@@ -119,6 +202,7 @@ async function operation<T>(
 // Generation changes synchronously, before queued IndexedDB work. Late writes
 // from a previous login/deletion cannot recreate a revoked snapshot.
 let generation = 0
+let codexGeneration = 0
 export function sessionListCacheGeneration(): number {
   return generation
 }
@@ -171,8 +255,69 @@ export function writeSessionListCache(
   })
 }
 
+/** Account-scoped legacy Codex list; old v1 IndexedDB store needs no migration. */
+export function readCodexSessionListCache(
+  scope: string,
+): Promise<CodexThread[] | null> {
+  if (!validCacheScope(scope)) return Promise.resolve(null)
+  const version = codexGeneration
+  return ordered(async () => {
+    if (version !== codexGeneration) return null
+    const value = await operation<unknown>("readonly", (store, setResult) => {
+      const request = store.get(codexKey(scope))
+      request.onsuccess = () => setResult(request.result)
+    })
+    if (version !== codexGeneration || !validCodexSnapshot(value, scope))
+      return null
+    return cleanCodexThreads(value.threads)
+  })
+}
+
+export function writeCodexSessionListCache(
+  scope: string,
+  threads: CodexThread[],
+): Promise<void> {
+  if (!validCacheScope(scope)) return Promise.resolve()
+  const version = codexGeneration
+  const clean = cleanCodexThreads(threads)
+  return ordered(async () => {
+    if (version !== codexGeneration) return
+    await operation<void>("readwrite", (store) => {
+      store.put({
+        id: codexKey(scope),
+        savedAt: Date.now(),
+        threads: clean,
+      } satisfies StoredCodexSnapshot)
+    })
+  })
+}
+
+/** Scoped invalidation never removes Pico or another account's cache. */
+export function invalidateCodexSessionListCache(scope?: string): Promise<void> {
+  ++codexGeneration
+  return ordered(async () => {
+    await operation<void>("readwrite", (store) => {
+      if (scope && validCacheScope(scope)) store.delete(codexKey(scope))
+      else {
+        const request = store.openCursor()
+        request.onsuccess = () => {
+          const cursor = request.result
+          if (!cursor) return
+          if (
+            typeof cursor.key === "string" &&
+            cursor.key.startsWith(CODEX_PREFIX)
+          )
+            cursor.delete()
+          cursor.continue()
+        }
+      }
+    })
+  })
+}
+
 export function invalidateSessionListCache(scope?: string): Promise<void> {
   ++generation
+  if (!scope || !validCacheScope(scope)) ++codexGeneration // logout clears both
   return ordered(async () => {
     await operation<void>("readwrite", (store) => {
       if (scope && validCacheScope(scope)) store.delete(scope)

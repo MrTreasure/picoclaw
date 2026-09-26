@@ -1,3 +1,4 @@
+import { clearCodexHistoryCache } from "@/features/codex/history-cache"
 import { invalidateSessionListCache } from "@/hooks/session-list-cache"
 
 /**
@@ -46,7 +47,7 @@ export async function getLauncherAuthStatus(): Promise<LauncherAuthStatus> {
 
 export async function postLauncherDashboardLogout(): Promise<boolean> {
   // Revoke pending writes immediately and clear the persistent list before navigation.
-  await invalidateSessionListCache()
+  await Promise.all([invalidateSessionListCache(), clearCodexHistoryCache()])
   const res = await fetch("/api/auth/logout", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
