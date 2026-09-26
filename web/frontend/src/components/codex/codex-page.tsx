@@ -1,10 +1,12 @@
 import {
   IconArrowDown,
   IconArrowLeft,
+  IconPhoto,
   IconPlayerStop,
   IconPlus,
   IconRefresh,
   IconSend,
+  IconX,
 } from "@tabler/icons-react"
 import { useNavigate } from "@tanstack/react-router"
 import {
@@ -19,12 +21,15 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
 import {
+  type CodexImage,
   type CodexItem,
+  type CodexModel,
   CodexRpcClient,
   type CodexRpcMessage,
   type CodexThread,
   type CodexWorkspace,
   getCodexWorkspaces,
+  uploadCodexImage,
 } from "@/api/codex"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -51,6 +56,22 @@ function itemText(item: CodexItem): string {
   if (item.type === "userMessage")
     return item.content?.map((part) => part.text ?? "").join("\n") ?? ""
   return item.text ?? item.command ?? ""
+}
+
+function imagePreview(path?: string): string | null {
+  const name = path?.split("/").pop()
+  return name && /^[0-9a-f]{32}\.(jpg|png|gif|webp)$/.test(name)
+    ? `/api/codex/images/${name}`
+    : null
+}
+
+const effortLabels: Record<string, string> = {
+  low: "低",
+  medium: "中",
+  high: "高",
+  xhigh: "极高",
+  max: "最大",
+  ultra: "超高",
 }
 
 function flattenThread(thread: CodexThread): CodexItem[] {
@@ -88,6 +109,9 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
   const lastScrollTopRef = useRef(0)
   const scrollThreadRef = useRef(threadId)
   const positionedThreadRef = useRef<string | undefined>(undefined)
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const activeTurnRef = useRef<string | null>(null)
+  const completedTurnRef = useRef<string | null>(null)
   const [showJump, setShowJump] = useState(false)
   const [loadedThreadId, setLoadedThreadId] = useState<string | null>(null)
   const [connected, setConnected] = useState(false)
@@ -102,6 +126,14 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
   } | null>(null)
   const [workspace, setWorkspace] = useState("")
   const [draft, setDraft] = useState("")
+  const [draftImages, setDraftImages] = useState<
+    Array<CodexImage & { name: string }>
+  >([])
+  const [uploading, setUploading] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [models, setModels] = useState<CodexModel[]>([])
+  const [model, setModel] = useState("")
+  const [effort, setEffort] = useState("")
   const [items, setItems] = useState<CodexItem[]>([])
   const [running, setRunning] = useState(false)
   const [approval, setApproval] = useState<Approval | null>(null)
@@ -235,10 +267,16 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
           )
         })
       }
-      if (message.method === "turn/started" && params.threadId === threadId)
+      if (message.method === "turn/started" && params.threadId === threadId) {
+        activeTurnRef.current =
+          (params.turn as { id?: string } | undefined)?.id ?? null
         setRunning(true)
+      }
       if (message.method === "turn/completed" && params.threadId === threadId) {
         flushItems()
+        completedTurnRef.current =
+          (params.turn as { id?: string } | undefined)?.id ?? null
+        activeTurnRef.current = null
         setRunning(false)
       }
       if (message.method === "error" && params.threadId === threadId) {
@@ -252,6 +290,26 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
       .then(async () => {
         if (cancelled) return
         setConnected(true)
+        try {
+          const result = await rpc.request<{ data: CodexModel[] }>(
+            "model/list",
+            { limit: 100 },
+          )
+          if (!cancelled) {
+            setModels(result.data ?? [])
+            const preferred =
+              result.data?.find((entry) => entry.isDefault) ?? result.data?.[0]
+            setModel((current) => current || preferred?.model || "")
+            setEffort(
+              (current) => current || preferred?.defaultReasoningEffort || "",
+            )
+          }
+        } catch (cause) {
+          if (!cancelled)
+            setError(
+              cause instanceof Error ? cause.message : "加载 Codex 模型失败",
+            )
+        }
         if (!threadId) await loadLists(rpc)
         if (threadId) {
           try {
@@ -270,7 +328,28 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
             setTitle(result.thread.name || result.thread.preview || "Codex")
             setWorkspace(result.thread.cwd || "")
             setRunning(result.thread.status?.type === "active")
-            await rpc.request("thread/resume", { threadId })
+            activeTurnRef.current =
+              result.thread.status?.type === "active"
+                ? (result.thread.turns?.at(-1)?.id ?? null)
+                : null
+            if (result.thread.model) setModel(result.thread.model)
+            if (result.thread.reasoningEffort)
+              setEffort(result.thread.reasoningEffort)
+            const resumed = await rpc.request<{ thread: CodexThread }>(
+              "thread/resume",
+              { threadId },
+            )
+            if (cancelled) return
+            if (
+              resumed.thread?.status?.type &&
+              resumed.thread.status.type !== "active"
+            ) {
+              activeTurnRef.current = null
+              setRunning(false)
+            }
+            if (resumed.thread?.model) setModel(resumed.thread.model)
+            if (resumed.thread?.reasoningEffort)
+              setEffort(resumed.thread.reasoningEffort)
           } catch (cause) {
             if (!cancelled)
               setError(cause instanceof Error ? cause.message : "会话恢复失败")
@@ -288,6 +367,8 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
       if (frame !== null) cancelAnimationFrame(frame)
       pendingItems = []
       rpc.close()
+      activeTurnRef.current = null
+      completedTurnRef.current = null
       rpcRef.current = null
     }
   }, [loadLists, navigate, threadId])
@@ -345,7 +426,16 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
   const createThread = async () => {
     const rpc = rpcRef.current
     const firstPrompt = draft.trim()
-    if (!rpc || !workspace || !firstPrompt || creating) return
+    if (
+      !rpc ||
+      !workspace ||
+      (!firstPrompt && !draftImages.length) ||
+      creating ||
+      uploading ||
+      !model ||
+      !effort
+    )
+      return
     setCreating(true)
     setError("")
     try {
@@ -360,6 +450,7 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
             sandbox: "workspace-write",
             approvalPolicy: "on-request",
             historyMode: "legacy",
+            model,
           },
         )
         target = { id: result.thread.id, workspace }
@@ -368,10 +459,19 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
       await rpc.request("turn/start", {
         threadId: target.id,
         cwd: target.workspace,
-        input: [{ type: "text", text: firstPrompt }],
+        model,
+        effort,
+        input: [
+          ...(firstPrompt ? [{ type: "text", text: firstPrompt }] : []),
+          ...draftImages.map((image) => ({
+            type: "localImage",
+            path: image.path,
+          })),
+        ],
       })
       // Keep the draft until turn/start succeeds; a failed send is recoverable.
       setDraft("")
+      setDraftImages([])
       setPendingThread(null)
       setShowCreate(false)
       await navigate({ to: "/codex", search: { thread: target.id } })
@@ -384,24 +484,187 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
 
   const sendPrompt = async () => {
     const rpc = rpcRef.current
-    if (!rpc || !threadId || !workspace || !draft.trim() || running) return
+    if (
+      !rpc ||
+      !threadId ||
+      !workspace ||
+      (!draft.trim() && !draftImages.length) ||
+      sending ||
+      uploading ||
+      !model ||
+      !effort
+    )
+      return
+    const originalDraft = draft
     const text = draft.trim()
-    setDraft("")
+    const images = draftImages
+    const input = [
+      ...(text ? [{ type: "text", text }] : []),
+      ...images.map((image) => ({ type: "localImage", path: image.path })),
+    ]
+    setSending(true)
     setError("")
     try {
-      await rpc.request("turn/start", {
-        threadId,
-        cwd: workspace,
-        input: [{ type: "text", text }],
-      })
+      if (running) {
+        if (!activeTurnRef.current)
+          throw new Error("正在同步当前回合，请稍后重试")
+        await rpc.request("turn/steer", {
+          threadId,
+          expectedTurnId: activeTurnRef.current,
+          input,
+        })
+      } else {
+        const result = await rpc.request<{ turn: { id: string } }>(
+          "turn/start",
+          {
+            threadId,
+            cwd: workspace,
+            model,
+            effort,
+            input,
+          },
+        )
+        if (completedTurnRef.current !== result.turn.id) {
+          activeTurnRef.current = result.turn.id
+          setRunning(true)
+        }
+      }
+      setDraft((current) => (current === originalDraft ? "" : current))
+      const sentPaths = new Set(images.map((image) => image.path))
+      setDraftImages((current) =>
+        current.filter((image) => !sentPaths.has(image.path)),
+      )
     } catch (cause) {
-      setDraft(text)
       setError(cause instanceof Error ? cause.message : "发送失败")
+    } finally {
+      setSending(false)
     }
   }
 
+  const selectedModel = models.find((entry) => entry.model === model)
+  const efforts = selectedModel?.supportedReasoningEfforts ?? []
+  const canSendImage = selectedModel?.inputModalities?.includes("image") ?? true
+
+  const changeModel = (next: string) => {
+    setModel(next)
+    const entry = models.find((candidate) => candidate.model === next)
+    if (
+      entry &&
+      !entry.supportedReasoningEfforts.some(
+        (option) => option.reasoningEffort === effort,
+      )
+    )
+      setEffort(entry.defaultReasoningEffort)
+  }
+
+  const addImages = async (files: FileList | null) => {
+    if (!files?.length || uploading) return
+    const selected = Array.from(files)
+    if (draftImages.length + selected.length > 4) {
+      setError("每条消息最多添加 4 张图片")
+      return
+    }
+    setUploading(true)
+    setError("")
+    try {
+      for (const file of selected) {
+        if (!file.type.startsWith("image/")) throw new Error("请选择图片文件")
+        if (file.size > 10 * 1024 * 1024)
+          throw new Error("每张图片不能超过 10 MB")
+        const image = await uploadCodexImage(file)
+        setDraftImages((current) => [...current, { ...image, name: file.name }])
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "图片上传失败")
+    } finally {
+      setUploading(false)
+      if (imageInputRef.current) imageInputRef.current.value = ""
+    }
+  }
+
+  const settings = (
+    <div className="grid grid-cols-2 gap-2">
+      <label className="text-muted-foreground min-w-0 text-xs">
+        对话模型
+        <select
+          className="bg-background border-border text-foreground mt-1 min-h-11 w-full rounded-xl border px-2"
+          value={model}
+          onChange={(event) => changeModel(event.target.value)}
+          disabled={!connected || creating || sending || running}
+        >
+          {!model && <option value="">加载中…</option>}
+          {model && !selectedModel && <option value={model}>{model}</option>}
+          {models.map((entry) => (
+            <option key={entry.id} value={entry.model}>
+              {entry.displayName}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="text-muted-foreground min-w-0 text-xs">
+        思考强度
+        <select
+          className="bg-background border-border text-foreground mt-1 min-h-11 w-full rounded-xl border px-2"
+          value={effort}
+          onChange={(event) => setEffort(event.target.value)}
+          disabled={
+            !connected || creating || sending || running || !selectedModel
+          }
+        >
+          {!effort && <option value="">加载中…</option>}
+          {effort &&
+            !efforts.some((entry) => entry.reasoningEffort === effort) && (
+              <option value={effort}>{effort}</option>
+            )}
+          {efforts.map((entry) => (
+            <option key={entry.reasoningEffort} value={entry.reasoningEffort}>
+              {effortLabels[entry.reasoningEffort] ?? entry.reasoningEffort}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  )
+
+  const imageControls = draftImages.length > 0 && (
+    <div className="flex flex-wrap gap-2" aria-label="待发送图片">
+      {draftImages.map((image) => (
+        <div
+          key={image.path}
+          className="bg-secondary relative size-16 overflow-hidden rounded-xl"
+        >
+          <img
+            src={image.url}
+            alt={image.name}
+            className="size-full object-cover"
+          />
+          <button
+            type="button"
+            className="bg-background/90 absolute top-0 right-0 flex size-7 items-center justify-center rounded-bl-lg"
+            aria-label={`移除 ${image.name}`}
+            onClick={() =>
+              setDraftImages((current) =>
+                current.filter((entry) => entry.path !== image.path),
+              )
+            }
+          >
+            <IconX className="size-4" />
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+
   return (
     <div className="bg-background flex h-full min-h-0 flex-col">
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp"
+        multiple
+        className="hidden"
+        onChange={(event) => void addImages(event.target.files)}
+      />
       <header className="border-border/70 flex h-[calc(4rem+env(safe-area-inset-top))] shrink-0 items-end border-b px-2 pb-1">
         <div className="flex h-14 w-full items-center gap-2">
           <Button
@@ -483,6 +746,7 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
                     ))}
                   </select>
                 </label>
+                <div className="mb-3">{settings}</div>
                 <label className="block text-sm">
                   第一条消息
                   <Textarea
@@ -492,6 +756,24 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
                     placeholder="告诉 Codex 要处理什么…"
                   />
                 </label>
+                {imageControls}
+                <div className="mt-3 flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="size-11"
+                    aria-label="添加图片"
+                    disabled={!canSendImage || uploading || creating}
+                    onClick={() => imageInputRef.current?.click()}
+                  >
+                    <IconPhoto className="size-5" />
+                  </Button>
+                  {uploading && (
+                    <span className="text-muted-foreground text-sm">
+                      图片上传中…
+                    </span>
+                  )}
+                </div>
                 <div className="mt-3 flex justify-end gap-2">
                   <Button
                     variant="ghost"
@@ -502,7 +784,13 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
                   </Button>
                   <Button
                     disabled={
-                      creating || !connected || !workspace || !draft.trim()
+                      creating ||
+                      uploading ||
+                      !connected ||
+                      !workspace ||
+                      !model ||
+                      !effort ||
+                      (!draft.trim() && !draftImages.length)
                     }
                     onClick={() => void createThread()}
                   >
@@ -721,23 +1009,48 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
             )}
           </div>
           <div className="bg-background border-border shrink-0 border-t px-3 pt-3 pb-[calc(.75rem+env(safe-area-inset-bottom))]">
-            <div className="mx-auto flex max-w-3xl items-end gap-2">
-              <Textarea
-                className="min-h-12 flex-1 resize-none text-base"
-                rows={1}
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                placeholder="继续和 Codex 对话…"
-              />
-              <Button
-                size="icon"
-                className="size-12 shrink-0 rounded-full"
-                disabled={!connected || running || !draft.trim()}
-                onClick={() => void sendPrompt()}
-                aria-label="发送"
-              >
-                <IconSend className="size-5" />
-              </Button>
+            <div className="mx-auto max-w-3xl space-y-2">
+              {settings}
+              {imageControls}
+              <div className="flex items-end gap-2">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="size-12 shrink-0 rounded-full"
+                  aria-label="添加图片"
+                  disabled={!canSendImage || uploading || sending}
+                  onClick={() => imageInputRef.current?.click()}
+                >
+                  <IconPhoto className="size-5" />
+                </Button>
+                <Textarea
+                  className="min-h-12 flex-1 resize-none text-base"
+                  rows={1}
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  placeholder="继续和 Codex 对话…"
+                />
+                <Button
+                  size="icon"
+                  className="size-12 shrink-0 rounded-full"
+                  disabled={
+                    !connected ||
+                    !threadReady ||
+                    uploading ||
+                    sending ||
+                    !model ||
+                    !effort ||
+                    (!draft.trim() && !draftImages.length)
+                  }
+                  onClick={() => void sendPrompt()}
+                  aria-label={running ? "插入当前回复" : "发送"}
+                >
+                  <IconSend className="size-5" />
+                </Button>
+              </div>
+              {uploading && (
+                <p className="text-muted-foreground text-xs">图片上传中…</p>
+              )}
             </div>
           </div>
         </>
@@ -755,6 +1068,26 @@ const CodexItemView = memo(function CodexItemView({
     return (
       <div className="bg-secondary text-secondary-foreground ml-auto max-w-[90%] rounded-2xl px-4 py-3 whitespace-pre-wrap">
         {itemText(item)}
+        {item.content
+          ?.filter(
+            (part) => part.type === "image" || part.type === "localImage",
+          )
+          .map((part, index) => {
+            const preview = imagePreview(part.path)
+            return preview ? (
+              <img
+                key={index}
+                src={preview}
+                alt="已发送图片"
+                className="mt-2 max-h-64 max-w-full rounded-lg object-contain"
+                loading="lazy"
+              />
+            ) : (
+              <span key={index} className="mt-2 block text-sm">
+                [图片]
+              </span>
+            )
+          })}
       </div>
     )
   if (item.type === "agentMessage")

@@ -14,6 +14,8 @@ export interface CodexThread {
   createdAt?: number
   updatedAt?: number
   status?: { type: string }
+  model?: string | null
+  reasoningEffort?: string | null
   historyMode?: string
   turns?: CodexTurn[]
 }
@@ -28,7 +30,7 @@ export interface CodexItem {
   id: string
   type: string
   text?: string
-  content?: Array<{ type: string; text?: string }>
+  content?: Array<{ type: string; text?: string; path?: string; url?: string }>
   command?: string
   aggregatedOutput?: string
   changes?: unknown[]
@@ -56,6 +58,36 @@ async function getJSON<T>(path: string): Promise<T> {
 
 export const getCodexWorkspaces = () =>
   getJSON<CodexWorkspace[]>("/api/codex/workspaces")
+
+export interface CodexModel {
+  id: string
+  model: string
+  displayName: string
+  defaultReasoningEffort: string
+  supportedReasoningEfforts: Array<{
+    reasoningEffort: string
+    description?: string
+  }>
+  inputModalities?: string[]
+  isDefault?: boolean
+}
+
+export interface CodexImage {
+  path: string
+  url: string
+}
+
+export async function uploadCodexImage(file: File): Promise<CodexImage> {
+  const body = new FormData()
+  body.append("image", file)
+  const response = await launcherFetch("/api/codex/images", {
+    method: "POST",
+    body,
+  })
+  if (!response.ok)
+    throw new Error((await response.text()).trim() || `HTTP ${response.status}`)
+  return response.json() as Promise<CodexImage>
+}
 
 export class CodexRpcClient {
   private socket: WebSocket | null = null
