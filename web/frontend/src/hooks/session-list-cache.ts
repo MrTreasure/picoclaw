@@ -32,6 +32,91 @@ interface StoredCodexSnapshot {
   savedAt: number
   threads: CachedCodexThread[]
 }
+// A convenience hint, not authentication. API and WebSocket remain server-authorized.
+const RELATION_KEY = "musec137:last-authenticated-list-scope"
+const RELATION_AGE_MS = 30 * 24 * 60 * 60 * 1000
+let currentScope: string | null = null
+let museMemory: {
+  scope: string
+  snapshot: SessionListSnapshot
+  savedAt: number
+} | null = null
+let codexMemory: {
+  scope: string
+  threads: CodexThread[]
+  savedAt: number
+} | null = null
+
+export function lastAuthenticatedListScope(): string | null {
+  if (currentScope) return currentScope
+  try {
+    const stored = JSON.parse(localStorage.getItem(RELATION_KEY) || "null") as {
+      scope?: unknown
+      at?: unknown
+    } | null
+    if (
+      validCacheScope(stored?.scope) &&
+      typeof stored?.at === "number" &&
+      Date.now() >= stored.at &&
+      Date.now() - stored.at < RELATION_AGE_MS
+    ) {
+      currentScope = stored.scope
+      return currentScope
+    }
+  } catch {
+    /* Storage can be disabled. */
+  }
+  return null
+}
+
+export function rememberAuthenticatedListScope(scope: string): void {
+  if (!validCacheScope(scope)) return
+  if (currentScope && currentScope !== scope) {
+    museMemory = null
+    codexMemory = null
+  }
+  currentScope = scope
+  try {
+    localStorage.setItem(
+      RELATION_KEY,
+      JSON.stringify({ scope, at: Date.now() }),
+    )
+  } catch {
+    /* Network-only fallback. */
+  }
+}
+
+/** Call on explicit logout before navigation (alongside clearing Codex history). */
+export function revokeAuthenticatedListScope(): Promise<void> {
+  currentScope = null
+  try {
+    localStorage.removeItem(RELATION_KEY)
+  } catch {
+    /* ignore */
+  }
+  return invalidateSessionListCache()
+}
+
+export function peekSessionListCache(
+  scope: string,
+): SessionListSnapshot | null {
+  return scope === currentScope &&
+    museMemory &&
+    museMemory.scope === scope &&
+    Date.now() - museMemory.savedAt <= MAX_AGE_MS
+    ? museMemory.snapshot
+    : null
+}
+
+export function peekCodexSessionListCache(scope: string): CodexThread[] | null {
+  return scope === currentScope &&
+    codexMemory &&
+    codexMemory.scope === scope &&
+    Date.now() - codexMemory.savedAt <= CODEX_MAX_AGE_MS
+    ? codexMemory.threads
+    : null
+}
+
 const codexKey = (scope: string) => `${CODEX_PREFIX}${scope}`
 
 function validCodexThread(value: unknown): value is CachedCodexThread {
@@ -207,6 +292,13 @@ let codexGeneration = 0
 export function sessionListCacheGeneration(): number {
   return generation
 }
+const revocationListeners = new Set<() => void>()
+export function subscribeListCacheRevocation(listener: () => void): () => void {
+  revocationListeners.add(listener)
+  return () => {
+    revocationListeners.delete(listener)
+  }
+}
 let queue: Promise<unknown> = Promise.resolve()
 function ordered<T>(work: () => Promise<T>): Promise<T> {
   const next = queue.then(work, work)
@@ -226,11 +318,18 @@ export function readSessionListCache(
       request.onsuccess = () => setResult(request.result)
     })
     if (version !== generation || !validSnapshot(value, scope)) return null
-    return {
+    const snapshot = {
       sessions: value.sessions,
       offset: value.offset,
       hasMore: value.hasMore,
     }
+    if (
+      !museMemory ||
+      museMemory.scope !== scope ||
+      museMemory.savedAt <= value.savedAt
+    )
+      museMemory = { scope, snapshot, savedAt: value.savedAt }
+    return snapshot
   })
 }
 
@@ -240,9 +339,16 @@ export function writeSessionListCache(
 ): Promise<void> {
   if (!validCacheScope(scope)) return Promise.resolve()
   const version = generation
+  const sessions = snapshot.sessions.slice(0, MAX_SESSION_SUMMARIES)
+  const clean = {
+    sessions,
+    offset: sessions.length,
+    hasMore:
+      snapshot.hasMore || snapshot.sessions.length > MAX_SESSION_SUMMARIES,
+  }
+  museMemory = { scope, snapshot: clean, savedAt: Date.now() }
   return ordered(async () => {
     if (version !== generation) return
-    const sessions = snapshot.sessions.slice(0, MAX_SESSION_SUMMARIES)
     await operation<void>("readwrite", (store) => {
       store.put({
         id: scope,
@@ -270,7 +376,14 @@ export function readCodexSessionListCache(
     })
     if (version !== codexGeneration || !validCodexSnapshot(value, scope))
       return null
-    return cleanCodexThreads(value.threads)
+    const threads = cleanCodexThreads(value.threads)
+    if (
+      !codexMemory ||
+      codexMemory.scope !== scope ||
+      codexMemory.savedAt <= value.savedAt
+    )
+      codexMemory = { scope, threads, savedAt: value.savedAt }
+    return threads
   })
 }
 
@@ -284,6 +397,9 @@ export function writeCodexSessionListCache(
   const clean = cleanCodexThreads(threads)
   const incomplete =
     threads.length > MAX_CODEX_THREADS || clean.length !== threads.length
+  codexMemory = incomplete
+    ? null
+    : { scope, threads: clean, savedAt: Date.now() }
   return ordered(async () => {
     if (version !== codexGeneration) return
     await operation<void>("readwrite", (store) => {
@@ -303,6 +419,7 @@ export function writeCodexSessionListCache(
 /** Scoped invalidation never removes Pico or another account's cache. */
 export function invalidateCodexSessionListCache(scope?: string): Promise<void> {
   ++codexGeneration
+  codexMemory = null
   return ordered(async () => {
     await operation<void>("readwrite", (store) => {
       if (scope && validCacheScope(scope)) store.delete(codexKey(scope))
@@ -325,7 +442,18 @@ export function invalidateCodexSessionListCache(scope?: string): Promise<void> {
 
 export function invalidateSessionListCache(scope?: string): Promise<void> {
   ++generation
-  if (!scope || !validCacheScope(scope)) ++codexGeneration // logout clears both
+  museMemory = null
+  if (!scope || !validCacheScope(scope)) {
+    ++codexGeneration // logout clears both
+    codexMemory = null
+    currentScope = null
+    try {
+      localStorage.removeItem(RELATION_KEY)
+    } catch {
+      /* ignore */
+    }
+    for (const listener of revocationListeners) listener()
+  }
   return ordered(async () => {
     await operation<void>("readwrite", (store) => {
       if (scope && validCacheScope(scope)) store.delete(scope)

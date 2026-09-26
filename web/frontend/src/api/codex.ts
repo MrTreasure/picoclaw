@@ -1,3 +1,4 @@
+import { codexSocketManager } from "@/api/codex-socket-manager"
 import { launcherFetch } from "@/api/http"
 
 export interface CodexWorkspace {
@@ -30,8 +31,14 @@ export interface CodexItem {
   id: string
   type: string
   text?: string
+  summary?: Array<string | { text?: string }>
   content?: Array<{ type: string; text?: string; path?: string; url?: string }>
   command?: string
+  tool?: string
+  server?: string
+  arguments?: unknown
+  result?: unknown
+  error?: unknown
   aggregatedOutput?: string
   changes?: unknown[]
   status?: string
@@ -89,83 +96,47 @@ export async function uploadCodexImage(file: File): Promise<CodexImage> {
   return response.json() as Promise<CodexImage>
 }
 
+// A route owns a listener, not the tab-wide WebSocket. Closing one client
+// never interrupts another route's pending requests or event stream.
 export class CodexRpcClient {
-  private socket: WebSocket | null = null
-  private nextId = 1
-  private pending = new Map<
-    number,
-    { resolve: (value: unknown) => void; reject: (reason: Error) => void }
-  >()
+  private release: (() => void) | null = null
+  private closed = false
   onEvent?: (message: CodexRpcMessage) => void
   onClose?: () => void
+  onReconnect?: () => void
 
   async connect(): Promise<void> {
-    const socket = new WebSocket(codexWebSocketURL("/api/codex/app-server/ws"))
-    this.socket = socket
-    await new Promise<void>((resolve, reject) => {
-      socket.onopen = () => resolve()
-      socket.onerror = () => reject(new Error("Codex 连接失败"))
+    if (this.closed) throw new Error("Codex client has been closed")
+    if (!this.release) this.release = codexSocketManager.subscribe({
+      event: (message) => this.onEvent?.(message),
+      close: () => this.onClose?.(),
+      reconnect: () => this.onReconnect?.(),
     })
-    socket.onmessage = (event: MessageEvent<string>) => {
-      let message: CodexRpcMessage
-      try {
-        message = JSON.parse(event.data) as CodexRpcMessage
-      } catch {
-        return
-      }
-      if (message.method) {
-        this.onEvent?.(message)
-      } else if (
-        typeof message.id === "number" &&
-        this.pending.has(message.id)
-      ) {
-        const pending = this.pending.get(message.id)!
-        this.pending.delete(message.id)
-        if (message.error) pending.reject(new Error(message.error.message))
-        else pending.resolve(message.result)
-      }
-    }
-    socket.onclose = () => {
-      for (const pending of this.pending.values())
-        pending.reject(new Error("Codex 连接已断开"))
-      this.pending.clear()
-      this.onClose?.()
-    }
-    await this.request("initialize", {
-      clientInfo: {
-        name: "musec137_pwa",
-        title: "MuseC137 PWA",
-        version: "0.1.0",
-      },
-      capabilities: { experimentalApi: true },
-    })
-    this.notify("initialized", {})
+    await codexSocketManager.connect()
+    if (this.closed) throw new Error("Codex client has been closed")
   }
 
   request<T>(method: string, params: Record<string, unknown>): Promise<T> {
-    const socket = this.socket
-    if (!socket || socket.readyState !== WebSocket.OPEN)
-      return Promise.reject(new Error("Codex 尚未连接"))
-    const id = this.nextId++
-    return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, {
-        resolve: (value) => resolve(value as T),
-        reject,
-      })
-      socket.send(JSON.stringify({ id, method, params }))
-    })
+    if (this.closed) return Promise.reject(new Error("Codex client has been closed"))
+    return codexSocketManager.request<T>(method, params)
   }
 
   notify(method: string, params: Record<string, unknown>): void {
-    this.socket?.send(JSON.stringify({ method, params }))
+    if (!this.closed) codexSocketManager.notify(method, params)
   }
 
   respond(id: number | string, result: Record<string, unknown>): void {
-    this.socket?.send(JSON.stringify({ id, result }))
+    if (!this.closed) codexSocketManager.respond(id, result)
   }
 
   close(): void {
-    this.socket?.close()
-    this.socket = null
+    this.closed = true
+    this.release?.()
+    this.release = null
   }
+}
+
+// Call on logout/account change to close the authenticated tab-wide transport.
+export function stopCodexSocket(): void {
+  codexSocketManager.stop()
 }

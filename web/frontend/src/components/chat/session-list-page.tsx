@@ -40,7 +40,13 @@ import { Input } from "@/components/ui/input"
 import { deleteCodexHistoryCache } from "@/features/codex/history-cache"
 import {
   invalidateCodexSessionListCache,
+  invalidateSessionListCache,
+  lastAuthenticatedListScope,
+  peekCodexSessionListCache,
   readCodexSessionListCache,
+  rememberAuthenticatedListScope,
+  sessionListCacheGeneration,
+  subscribeListCacheRevocation,
   validCacheScope,
   writeCodexSessionListCache,
 } from "@/hooks/session-list-cache"
@@ -75,10 +81,16 @@ export function SessionListPage() {
   const [deleting, setDeleting] = useState(false)
   const [pressedId, setPressedId] = useState<string | null>(null)
   const [showNewSession, setShowNewSession] = useState(false)
-  const [codexThreads, setCodexThreads] = useState<CodexThread[]>([])
+  const [codexThreads, setCodexThreads] = useState<CodexThread[]>(() => {
+    const scope = lastAuthenticatedListScope()
+    return scope ? (peekCodexSessionListCache(scope) ?? []) : []
+  })
   const [codexStatus, setCodexStatus] = useState<
     "loading" | "cached" | "ready" | "error"
-  >("loading")
+  >(() => {
+    const scope = lastAuthenticatedListScope()
+    return scope && peekCodexSessionListCache(scope) ? "cached" : "loading"
+  })
   const [codexRetry, setCodexRetry] = useState(0)
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const longPressTriggeredRef = useRef(false)
@@ -101,6 +113,17 @@ export function SessionListPage() {
     onDeletedActiveSession: () => void newChat(true, true),
   })
 
+  useEffect(
+    () =>
+      subscribeListCacheRevocation(() => {
+        codexLoadGeneration.current += 1
+        codexScopeRef.current = null
+        setCodexThreads([])
+        setCodexStatus("error")
+      }),
+    [],
+  )
+
   useEffect(() => {
     clearChatNavigationOrigin()
   }, [])
@@ -114,22 +137,50 @@ export function SessionListPage() {
   useEffect(() => {
     let cancelled = false
     const generation = ++codexLoadGeneration.current
-    setCodexStatus("loading")
+    const hinted = lastAuthenticatedListScope()
+    const immediate = hinted ? peekCodexSessionListCache(hinted) : null
+    codexScopeRef.current = hinted
+    setCodexThreads(immediate ?? [])
+    setCodexStatus(immediate ? "cached" : "loading")
+    const authGeneration = sessionListCacheGeneration()
+    const hintedRead = hinted ? readCodexSessionListCache(hinted) : null
+    let liveApplied = false
+    if (hintedRead)
+      void hintedRead.then((snapshot) => {
+        if (
+          !snapshot ||
+          liveApplied ||
+          cancelled ||
+          generation !== codexLoadGeneration.current ||
+          authGeneration !== sessionListCacheGeneration() ||
+          lastAuthenticatedListScope() !== hinted
+        )
+          return
+        setCodexThreads(snapshot)
+        setCodexStatus("cached")
+      })
     const rpc = new CodexRpcClient()
     void (async () => {
-      // Authenticate before reading account-scoped cached titles. Start the
-      // live RPC concurrently so IndexedDB latency never delays fresh data.
       const status = await getLauncherAuthStatus()
-      if (cancelled || generation !== codexLoadGeneration.current) return
+      if (
+        cancelled ||
+        generation !== codexLoadGeneration.current ||
+        authGeneration !== sessionListCacheGeneration()
+      )
+        return
       if (!status.authenticated || !validCacheScope(status.cache_scope)) {
         codexScopeRef.current = null
+        void invalidateSessionListCache()
         setCodexThreads([])
         setCodexStatus("error")
         return
       }
       const scope = status.cache_scope
+      if (hinted && hinted !== scope) setCodexThreads([])
+      rememberAuthenticatedListScope(scope)
       codexScopeRef.current = scope
-      const cached = readCodexSessionListCache(scope)
+      const cached =
+        scope === hinted ? hintedRead : readCodexSessionListCache(scope)
       const live = rpc.connect().then(async () => {
         const threads: CodexThread[] = []
         const cursors = new Set<string>()
@@ -163,24 +214,38 @@ export function SessionListPage() {
           return { ok: false as const, error }
         },
       )
-      const snapshot = await cached
-      if (
-        !cancelled &&
-        generation === codexLoadGeneration.current &&
-        !liveSettled &&
-        snapshot
-      ) {
-        setCodexThreads(snapshot)
-        setCodexStatus("cached")
-      }
+      if (cached)
+        void cached.then((snapshot) => {
+          if (
+            !cancelled &&
+            generation === codexLoadGeneration.current &&
+            authGeneration === sessionListCacheGeneration() &&
+            !liveSettled &&
+            !liveApplied &&
+            snapshot
+          ) {
+            setCodexThreads(snapshot)
+            setCodexStatus("cached")
+          }
+        })
       const outcome = await settledLive
-      if (cancelled || generation !== codexLoadGeneration.current) return
+      if (
+        cancelled ||
+        generation !== codexLoadGeneration.current ||
+        authGeneration !== sessionListCacheGeneration()
+      )
+        return
       if (!outcome.ok) {
         console.error("Failed to load Codex conversations:", outcome.error)
+        if (String(outcome.error).includes("401")) {
+          void invalidateSessionListCache()
+          setCodexThreads([])
+        }
         setCodexStatus("error")
         return
       }
       const threads = outcome.result
+      liveApplied = true
       setCodexThreads(threads)
       setCodexStatus("ready")
       void writeCodexSessionListCache(scope, threads)
@@ -317,6 +382,10 @@ export function SessionListPage() {
           deleted.add(museKey(id))
       }
       if (codexIds.length) {
+        codexLoadGeneration.current += 1
+        // Revoke pending reads/writes before a delete can race a refresh.
+        const scope = codexScopeRef.current
+        if (scope) await invalidateCodexSessionListCache(scope)
         const rpc = new CodexRpcClient()
         try {
           await rpc.connect()
@@ -354,10 +423,15 @@ export function SessionListPage() {
       const deletedCodex = codexIds.filter((id) => deleted.has(codexKey(id)))
       if (deletedCodex.length) {
         const scope = codexScopeRef.current
-        if (scope) void invalidateCodexSessionListCache(scope)
+        if (scope)
+          void writeCodexSessionListCache(
+            scope,
+            codexThreads.filter((thread) => !deleted.has(codexKey(thread.id))),
+          )
         toast.success(`已永久删除 ${deletedCodex.length} 段 Codex 会话`)
       }
       setDeleting(false)
+      if (codexIds.length) setCodexRetry((n) => n + 1)
     }
   }
 

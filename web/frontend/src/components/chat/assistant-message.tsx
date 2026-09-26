@@ -37,6 +37,7 @@ import {
 
 interface AssistantMessageProps {
   content: string
+  senderName?: string
   onImageOpen?: (imageIndex: number) => void
   attachments?: ChatAttachment[]
   kind?: AssistantMessageKind
@@ -89,6 +90,7 @@ function formatToolArguments(argumentsText: string): string {
 
 export const AssistantMessage = memo(function AssistantMessage({
   content,
+  senderName = "MuseC137",
   onImageOpen,
   attachments = [],
   kind = "normal",
@@ -221,7 +223,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       {!isCollapsedBlock && (
         <div className="text-foreground/70 flex items-center justify-between gap-2 px-1 text-xs">
           <div className="flex items-center gap-2">
-            <span>MuseC137</span>
+            <span>{senderName}</span>
             {trimmedModelName && (
               <>
                 <span className="text-foreground/45">•</span>

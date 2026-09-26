@@ -5,12 +5,17 @@ import { toast } from "sonner"
 import { getLauncherAuthStatus } from "@/api/launcher-auth"
 import { type SessionSummary, deleteSession, getSessions } from "@/api/sessions"
 import { deleteCachedSession } from "@/features/chat/local-cache"
+import { evictDeletedChatSession } from "@/features/chat/controller"
 
 import {
   invalidateSessionListCache,
+  lastAuthenticatedListScope,
+  peekSessionListCache,
   readSessionListCache,
   reconcileFirstPage,
+  rememberAuthenticatedListScope,
   sessionListCacheGeneration,
+  subscribeListCacheRevocation,
   validCacheScope,
   writeSessionListCache,
 } from "./session-list-cache"
@@ -32,12 +37,24 @@ export function useSessionHistory({
   const requestVersion = useRef(0)
   const loadingRef = useRef(false)
   const scopeRef = useRef<string | null>(null)
-  const [sessions, setSessions] = useState<SessionSummary[]>([])
-  const [offset, setOffset] = useState(0)
-  const [hasMore, setHasMore] = useState(true)
+  const [sessions, setSessions] = useState<SessionSummary[]>(() => {
+    const scope = lastAuthenticatedListScope()
+    return scope ? (peekSessionListCache(scope)?.sessions ?? []) : []
+  })
+  const [offset, setOffset] = useState(() => {
+    const scope = lastAuthenticatedListScope()
+    return scope ? (peekSessionListCache(scope)?.offset ?? 0) : 0
+  })
+  const [hasMore, setHasMore] = useState(() => {
+    const scope = lastAuthenticatedListScope()
+    return scope ? (peekSessionListCache(scope)?.hasMore ?? true) : true
+  })
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [loadError, setLoadError] = useState(false)
-  const [initialLoading, setInitialLoading] = useState(true)
+  const [initialLoading, setInitialLoading] = useState(() => {
+    const scope = lastAuthenticatedListScope()
+    return !scope || !peekSessionListCache(scope)
+  })
 
   const loadSessions = useCallback(
     async (reset = true) => {
@@ -48,14 +65,38 @@ export function useSessionHistory({
       const mutationVersion = listMutationVersion
       const authGeneration = sessionListCacheGeneration()
       setIsLoadingMore(true)
+      const hintedScope = reset ? lastAuthenticatedListScope() : null
+      const immediate = hintedScope ? peekSessionListCache(hintedScope) : null
       if (reset) {
-        // Nothing from a previous account may remain visible while auth is pending.
-        scopeRef.current = null
-        setSessions([])
-        setOffset(0)
-        setHasMore(false)
+        scopeRef.current = hintedScope
+        setSessions(immediate?.sessions ?? [])
+        setOffset(immediate?.offset ?? 0)
+        setHasMore(immediate?.hasMore ?? false)
+        setInitialLoading(!immediate)
         setLoadError(false)
       }
+      // Disk reads and auth start together. A fast network result must never
+      // be overwritten by an IndexedDB read that completes later.
+      const cacheRead =
+        reset && hintedScope ? readSessionListCache(hintedScope) : null
+      let networkApplied = false
+      if (cacheRead)
+        void cacheRead.then((cached) => {
+          if (
+            !cached ||
+            networkApplied ||
+            request !== requestVersion.current ||
+            mutationVersion !== listMutationVersion ||
+            authGeneration !== sessionListCacheGeneration() ||
+            scopeRef.current !== hintedScope ||
+            lastAuthenticatedListScope() !== hintedScope
+          )
+            return
+          setSessions(cached.sessions)
+          setOffset(cached.offset)
+          setHasMore(cached.hasMore)
+          setInitialLoading(false)
+        })
       try {
         let scope = scopeRef.current
         if (reset) {
@@ -66,10 +107,23 @@ export function useSessionHistory({
             authGeneration !== sessionListCacheGeneration()
           )
             return
-          if (!status.authenticated) throw new Error("Not authenticated")
+          if (!status.authenticated || !validCacheScope(status.cache_scope)) {
+            void invalidateSessionListCache()
+            scopeRef.current = null
+            setSessions([])
+            setOffset(0)
+            setHasMore(false)
+            throw new Error("Not authenticated")
+          }
           scope = validCacheScope(status.cache_scope)
             ? status.cache_scope
             : null
+          if (hintedScope && hintedScope !== scope) {
+            setSessions([])
+            setOffset(0)
+            setHasMore(false)
+          }
+          if (scope) rememberAuthenticatedListScope(scope)
           scopeRef.current = scope
         }
         if (
@@ -77,28 +131,32 @@ export function useSessionHistory({
           authGeneration !== sessionListCacheGeneration()
         )
           return
-        // Auth is verified before showing cache; start network and storage in
-        // parallel so IndexedDB latency does not delay the first API request.
         const currentOffset = reset ? 0 : offset
-        const cacheRead = reset && scope ? readSessionListCache(scope) : null
-        if (cacheRead) {
-          void cacheRead.then((cached) => {
+        const scopedCache =
+          reset && scope && scope !== hintedScope
+            ? readSessionListCache(scope)
+            : cacheRead
+        const cachedMemory = reset && scope ? peekSessionListCache(scope) : null
+        if (scopedCache && scope !== hintedScope)
+          void scopedCache.then((cached) => {
             if (
               !cached ||
+              networkApplied ||
               request !== requestVersion.current ||
               mutationVersion !== listMutationVersion ||
-              scopeRef.current !== scope ||
-              authGeneration !== sessionListCacheGeneration()
+              authGeneration !== sessionListCacheGeneration() ||
+              scopeRef.current !== scope
             )
               return
             setSessions(cached.sessions)
             setOffset(cached.offset)
             setHasMore(cached.hasMore)
+            setInitialLoading(false)
           })
-        }
         // Never request 200 rows just because 200 were visible last time.
         const data = await getSessions(currentOffset, LIMIT)
-        const cached = cacheRead ? await cacheRead : null
+        const cached =
+          cachedMemory ?? (scope ? peekSessionListCache(scope) : null)
         if (
           request !== requestVersion.current ||
           mutationVersion !== listMutationVersion ||
@@ -106,6 +164,7 @@ export function useSessionHistory({
           authGeneration !== sessionListCacheGeneration()
         )
           return
+        networkApplied = true
         setLoadError(false)
         const more = data.length === LIMIT
         if (reset) {
@@ -160,14 +219,18 @@ export function useSessionHistory({
         // confirmed auth check must not erase a usable scoped snapshot.
         const unauthorized =
           err instanceof Error && /(?:^|\s)401$/.test(err.message)
-        if (unauthorized || !scopeRef.current) {
+        if (unauthorized || (!scopeRef.current && !hintedScope)) {
           scopeRef.current = null
           void invalidateSessionListCache()
           setSessions([])
           setOffset(0)
           setHasMore(false)
         } else if (reset) {
-          const cached = await readSessionListCache(scopeRef.current)
+          const fallbackScope = scopeRef.current ?? hintedScope
+          const cached = fallbackScope
+            ? (peekSessionListCache(fallbackScope) ??
+              (await readSessionListCache(fallbackScope)))
+            : null
           if (
             request !== requestVersion.current ||
             mutationVersion !== listMutationVersion ||
@@ -190,6 +253,20 @@ export function useSessionHistory({
       }
     },
     [offset],
+  )
+
+  useEffect(
+    () =>
+      subscribeListCacheRevocation(() => {
+        requestVersion.current += 1
+        loadingRef.current = false
+        scopeRef.current = null
+        setSessions([])
+        setOffset(0)
+        setHasMore(false)
+        setInitialLoading(false)
+      }),
+    [],
   )
 
   useEffect(() => {
@@ -227,6 +304,7 @@ export function useSessionHistory({
           (session) => session.id === id,
         )
         await deleteSession(id)
+        evictDeletedChatSession(id)
         if (id === activeSessionId) onDeletedActiveSession()
         try {
           await deleteCachedSession(id)
@@ -268,6 +346,7 @@ export function useSessionHistory({
         for (const id of ids) {
           try {
             await deleteSession(id)
+            evictDeletedChatSession(id)
             results.push({ status: "fulfilled", value: id })
           } catch (reason) {
             console.error("Failed to delete session:", reason)

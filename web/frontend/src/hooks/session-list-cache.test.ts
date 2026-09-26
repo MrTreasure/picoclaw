@@ -318,3 +318,61 @@ describe("account-scoped Codex list cache", () => {
     expect(await readSessionListCache(A)).toBeNull()
   })
 })
+
+describe("last authenticated local relation and synchronous snapshots", () => {
+  it("remembers only an opaque scope, hydrates in memory and revokes on logout", async () => {
+    mockStorage()
+    const values = new Map<string, string>()
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        values.set(key, value)
+      },
+      removeItem: (key: string) => {
+        values.delete(key)
+      },
+    })
+    const {
+      rememberAuthenticatedListScope,
+      lastAuthenticatedListScope,
+      peekSessionListCache,
+      peekCodexSessionListCache,
+      revokeAuthenticatedListScope,
+    } = await import("./session-list-cache")
+    rememberAuthenticatedListScope("token:secret")
+    expect(lastAuthenticatedListScope()).toBeNull()
+    rememberAuthenticatedListScope(A)
+    expect(values.size).toBe(1)
+    expect([...values.values()][0]).not.toContain("token:secret")
+    await writeSessionListCache(A, {
+      sessions: [summary("x")],
+      offset: 1,
+      hasMore: false,
+    })
+    await writeCodexSessionListCache(A, [thread("one")])
+    expect(peekSessionListCache(A)?.sessions[0].id).toBe("x")
+    expect(peekCodexSessionListCache(A)?.[0].id).toBe("one")
+    await revokeAuthenticatedListScope()
+    expect(lastAuthenticatedListScope()).toBeNull()
+    expect(peekSessionListCache(A)).toBeNull()
+    expect(peekCodexSessionListCache(A)).toBeNull()
+    expect(await readSessionListCache(A)).toBeNull()
+    expect(await readCodexSessionListCache(A)).toBeNull()
+  })
+
+  it("does not restore a stale memory snapshot after scoped deletion", async () => {
+    mockStorage()
+    const { rememberAuthenticatedListScope, peekSessionListCache } =
+      await import("./session-list-cache")
+    rememberAuthenticatedListScope(B)
+    await writeSessionListCache(B, {
+      sessions: [summary("deleted")],
+      offset: 1,
+      hasMore: false,
+    })
+    const pending = readSessionListCache(B)
+    const invalidation = invalidateSessionListCache(B)
+    await Promise.all([pending, invalidation])
+    expect(peekSessionListCache(B)).toBeNull()
+  })
+})

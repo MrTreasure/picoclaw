@@ -4,7 +4,10 @@ import { useEffect, useState } from "react"
 
 import { getLauncherAuthStatus } from "@/api/launcher-auth"
 import { AppLayout } from "@/components/app-layout"
-import { initializeChatStore } from "@/features/chat/controller"
+import {
+  initializeChatStore,
+  setChatDetailVisible,
+} from "@/features/chat/controller"
 import { isLauncherAuthPathname } from "@/lib/launcher-login-path"
 
 const RootLayout = () => {
@@ -66,6 +69,11 @@ const RootLayout = () => {
     }
     initializeChatStore()
   }, [isAuthPage])
+
+  useEffect(() => {
+    if (isAuthPage) return
+    setChatDetailVisible(routerState.pathname === "/")
+  }, [isAuthPage, routerState.pathname])
 
   if (isAuthPage) {
     return (
