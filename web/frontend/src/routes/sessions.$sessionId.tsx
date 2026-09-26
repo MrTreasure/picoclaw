@@ -5,6 +5,7 @@ import { useAtomValue } from "jotai"
 import { useEffect, useMemo, useRef, useState } from "react"
 
 import { AssistantMessage } from "@/components/chat/assistant-message"
+import { useImageViewer } from "@/components/chat/use-image-viewer"
 import { UserMessage } from "@/components/chat/user-message"
 import { Button } from "@/components/ui/button"
 import {
@@ -28,6 +29,7 @@ function WeixinSessionPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const detailVisibility = useAtomValue(assistantDetailVisibilityAtom)
+  const { open: openImage, viewer: imageViewer } = useImageViewer(messages)
   const visibleMessages = useMemo(
     () =>
       messages.filter((message) =>
@@ -97,6 +99,7 @@ function WeixinSessionPage() {
 
   return (
     <div className="bg-background flex h-full min-h-0 flex-col">
+      {imageViewer}
       <header className="border-border/70 bg-background/92 flex h-[calc(4rem+env(safe-area-inset-top))] shrink-0 items-end border-b px-2 pb-1 backdrop-blur-xl">
         <div className="flex h-14 w-full items-center gap-2">
           <Button
@@ -157,6 +160,9 @@ function WeixinSessionPage() {
                     <AssistantMessage
                       content={message.content}
                       attachments={message.attachments}
+                      onImageOpen={(imageIndex) =>
+                        openImage(message.id, imageIndex)
+                      }
                       kind={message.kind}
                       modelName={message.modelName}
                       toolCalls={message.toolCalls}
@@ -167,6 +173,9 @@ function WeixinSessionPage() {
                     <UserMessage
                       content={message.content}
                       attachments={message.attachments}
+                      onImageOpen={(imageIndex) =>
+                        openImage(message.id, imageIndex)
+                      }
                       timestamp={message.timestamp}
                     />
                   )}

@@ -191,6 +191,11 @@ func matchesVisibleSession(meta memory.SessionMeta, id string) bool {
 		var scope session.SessionScope
 		return json.Unmarshal(meta.Scope, &scope) == nil && strings.EqualFold(scope.Channel, "weixin")
 	}
+	// The session list also exposes older opaque sk_v1 keys without scope or
+	// aliases. Match those by their exact canonical key, never by chat scope.
+	if len(meta.Scope) == 0 && session.IsOpaqueSessionKey(id) && meta.Key == id {
+		return true
+	}
 	legacy := "agent:main:pico:direct:pico:" + id
 	if len(meta.Scope) > 0 {
 		var scope session.SessionScope

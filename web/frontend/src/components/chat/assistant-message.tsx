@@ -26,6 +26,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet"
+import { isSafeImageSource } from "@/features/chat/image-gallery"
 import { formatMessageTime } from "@/hooks/use-pico-chat"
 import { cn } from "@/lib/utils"
 import {
@@ -36,6 +37,7 @@ import {
 
 interface AssistantMessageProps {
   content: string
+  onImageOpen?: (imageIndex: number) => void
   attachments?: ChatAttachment[]
   kind?: AssistantMessageKind
   modelName?: string
@@ -87,6 +89,7 @@ function formatToolArguments(argumentsText: string): string {
 
 export const AssistantMessage = memo(function AssistantMessage({
   content,
+  onImageOpen,
   attachments = [],
   kind = "normal",
   modelName,
@@ -105,7 +108,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   const hasText = content.trim().length > 0
   const hasToolCalls = toolCalls.length > 0
   const imageAttachments = attachments.filter(
-    (attachment) => attachment.type === "image",
+    (attachment) =>
+      attachment.type === "image" && isSafeImageSource(attachment.url),
   )
   const audioAttachments = attachments.filter(
     (attachment) => attachment.type === "audio",
@@ -441,11 +445,11 @@ export const AssistantMessage = memo(function AssistantMessage({
       {imageAttachments.length > 0 && (
         <div className="mt-1 flex flex-wrap gap-2">
           {imageAttachments.map((attachment, index) => (
-            <a
+            <button
               key={`${attachment.url}-${index}`}
-              href={attachment.url}
-              target="_blank"
-              rel="noreferrer"
+              type="button"
+              aria-label={`View image ${index + 1}`}
+              onClick={() => onImageOpen?.(index)}
               className="group/img border-border/50 bg-muted/30 hover:border-border/80 relative overflow-hidden rounded-xl border shadow-sm transition-colors"
             >
               <img
@@ -454,7 +458,7 @@ export const AssistantMessage = memo(function AssistantMessage({
                 className="max-h-80 max-w-[280px] object-contain transition-transform duration-300 group-hover/img:scale-[1.02]"
               />
               <div className="absolute inset-0 bg-black/0 transition-colors group-hover/img:bg-black/10 dark:group-hover/img:bg-black/20" />
-            </a>
+            </button>
           ))}
         </div>
       )}

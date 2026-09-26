@@ -23,6 +23,8 @@ func TestMatchesVisibleSessionNeverMatchesCron(t *testing.T) {
 		want bool
 	}{
 		{memory.SessionMeta{Key: "sk_v1_abc", Scope: scope}, "target", true},
+		{memory.SessionMeta{Key: "sk_v1_legacy"}, "sk_v1_legacy", true},
+		{memory.SessionMeta{Key: "sk_v1_legacy", Scope: json.RawMessage(`{"channel":"cron"}`)}, "sk_v1_legacy", false},
 		{memory.SessionMeta{Key: "sk_v1_abc", Scope: scope}, "different", false},
 		{memory.SessionMeta{Key: "agent:cron-abc", Scope: scope}, "target", false},
 		{memory.SessionMeta{Key: "agent:cron-abc", Scope: json.RawMessage(`{"channel":"weixin"}`)}, "weixin:agent:cron-abc", false},
@@ -122,5 +124,30 @@ func TestDeleteVisibleSessionRejectsActiveTurnWithoutDataLoss(t *testing.T) {
 	}
 	if conv, err := mgr.engine.GetRetrieval().Store().GetConversationBySessionKey(context.Background(), key); err != nil || conv == nil {
 		t.Fatalf("active session search lost: %v %v", conv, err)
+	}
+}
+
+// Pre-scope Pico conversations may have only an opaque key, with no scope or
+// aliases. The PWA lists those by filename; gateway deletion must agree.
+func TestDeleteVisibleSessionLegacyOpaqueWithoutScope(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := &config.Config{Agents: config.AgentsConfig{Defaults: config.AgentDefaults{Workspace: workspace, ModelName: "test-model", MaxTokens: 4096, MaxToolIterations: 3, ContextManager: "seahorse"}, List: []config.AgentConfig{{ID: "main", Default: true}, {ID: "pico-stream", Workspace: workspace}}}}
+	al := NewAgentLoop(cfg, bus.NewMessageBus(), &seahorseTestProvider{})
+	defer al.Close()
+	key := session.BuildOpaqueSessionKey("agent:main:pico:direct:pico:old-session")
+	store := al.registry.GetDefaultAgent().Sessions.(*session.JSONLBackend)
+	store.AddMessage(key, "user", "old conversation")
+	for _, suffix := range []string{".meta.json", ".jsonl"} {
+		if _, err := os.Stat(filepath.Join(workspace, "sessions", sessionFilename(key)+suffix)); err != nil {
+			t.Fatalf("missing fixture %s: %v", suffix, err)
+		}
+	}
+	if err := al.DeleteVisibleSession(context.Background(), key); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{".meta.json", ".jsonl"} {
+		if _, err := os.Stat(filepath.Join(workspace, "sessions", sessionFilename(key)+suffix)); !os.IsNotExist(err) {
+			t.Errorf("%s remains: %v", suffix, err)
+		}
 	}
 }

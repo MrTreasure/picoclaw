@@ -3,12 +3,14 @@ import { memo } from "react"
 import { useTranslation } from "react-i18next"
 
 import { MessageActions } from "@/components/chat/message-actions"
+import { isSafeImageSource } from "@/features/chat/image-gallery"
 import { formatMessageTime } from "@/hooks/use-pico-chat"
 import { cn } from "@/lib/utils"
 import type { ChatAttachment } from "@/store/chat"
 
 interface UserMessageProps {
   content: string
+  onImageOpen?: (imageIndex: number) => void
   attachments?: ChatAttachment[]
   timestamp?: string | number
   sendStatus?: "pending" | "failed" | "unconfirmed"
@@ -18,6 +20,7 @@ interface UserMessageProps {
 
 export const UserMessage = memo(function UserMessage({
   content,
+  onImageOpen,
   attachments = [],
   timestamp = "",
   sendStatus,
@@ -28,7 +31,8 @@ export const UserMessage = memo(function UserMessage({
   const hasText = content.trim().length > 0
   const isCommand = content.trim().startsWith("/")
   const imageAttachments = attachments.filter(
-    (attachment) => attachment.type === "image",
+    (attachment) =>
+      attachment.type === "image" && isSafeImageSource(attachment.url),
   )
   const fileAttachments = attachments.filter(
     (attachment) => attachment.type !== "image",
@@ -44,12 +48,19 @@ export const UserMessage = memo(function UserMessage({
       {imageAttachments.length > 0 && (
         <div className="flex max-w-[70%] flex-wrap justify-end gap-2">
           {imageAttachments.map((attachment, index) => (
-            <img
+            <button
+              type="button"
               key={`${attachment.url}-${index}`}
-              src={attachment.url}
-              alt={attachment.filename || t("chat.uploadedImage")}
-              className="max-h-72 max-w-full object-cover"
-            />
+              aria-label={`View image ${index + 1}`}
+              onClick={() => onImageOpen?.(index)}
+              className="max-w-full"
+            >
+              <img
+                src={attachment.url}
+                alt={attachment.filename || t("chat.uploadedImage")}
+                className="max-h-72 max-w-full object-cover"
+              />
+            </button>
           ))}
         </div>
       )}

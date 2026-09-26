@@ -24,6 +24,7 @@ import { ChatEmptyState } from "@/components/chat/chat-empty-state"
 import { ConfirmationCard } from "@/components/chat/confirmation-card"
 import { TodoProgress } from "@/components/chat/todo-progress"
 import { TypingIndicator } from "@/components/chat/typing-indicator"
+import { useImageViewer } from "@/components/chat/use-image-viewer"
 import { UserMessage } from "@/components/chat/user-message"
 import { Button } from "@/components/ui/button"
 import { CHAT_FILE_ACCEPT, uploadChatFiles } from "@/features/chat/file-upload"
@@ -179,6 +180,7 @@ function SessionChatPage({ sessionId }: { sessionId: string }) {
   const canInput = inputDisabledReason === null
   const canCompose = true
 
+  const { open: openImage, viewer: imageViewer } = useImageViewer(messages)
   const visibleMessages = useMemo(
     () =>
       messages.filter((message) =>
@@ -537,6 +539,7 @@ function SessionChatPage({ sessionId }: { sessionId: string }) {
     canInput && (Boolean(input.trim()) || attachments.length > 0)
   return (
     <div className="bg-background/95 relative flex h-full min-h-0 flex-col overflow-hidden">
+      {imageViewer}
       <ChatControls
         defaultModelName={defaultModelName}
         connectionState={connectionState}
@@ -649,6 +652,9 @@ function SessionChatPage({ sessionId }: { sessionId: string }) {
                           <AssistantMessage
                             content={msg.content}
                             attachments={msg.attachments}
+                            onImageOpen={(imageIndex) =>
+                              openImage(msg.id, imageIndex)
+                            }
                             kind={msg.kind}
                             modelName={msg.modelName}
                             toolCalls={msg.toolCalls}
@@ -664,6 +670,9 @@ function SessionChatPage({ sessionId }: { sessionId: string }) {
                           <UserMessage
                             content={msg.content}
                             attachments={msg.attachments}
+                            onImageOpen={(imageIndex) =>
+                              openImage(msg.id, imageIndex)
+                            }
                             timestamp={msg.timestamp}
                             sendStatus={msg.sendStatus}
                             sendError={msg.sendError}
@@ -685,6 +694,9 @@ function SessionChatPage({ sessionId }: { sessionId: string }) {
                     <AssistantMessage
                       content={msg.content}
                       attachments={msg.attachments}
+                      onImageOpen={(imageIndex) =>
+                        openImage(msg.id, imageIndex)
+                      }
                       kind={msg.kind}
                       modelName={msg.modelName}
                       toolCalls={msg.toolCalls}
@@ -700,6 +712,9 @@ function SessionChatPage({ sessionId }: { sessionId: string }) {
                     <UserMessage
                       content={msg.content}
                       attachments={msg.attachments}
+                      onImageOpen={(imageIndex) =>
+                        openImage(msg.id, imageIndex)
+                      }
                       timestamp={msg.timestamp}
                       sendStatus={msg.sendStatus}
                       sendError={msg.sendError}
