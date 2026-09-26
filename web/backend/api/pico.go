@@ -158,6 +158,13 @@ func (h *Handler) writePicoInfoResponse(
 // on the upstream gateway request.
 func (h *Handler) handleWebSocketProxy() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Dashboard cookies are sent during WebSocket upgrades. Without an
+		// explicit origin check a foreign page could use the user's session.
+		origin := r.Header.Get("Origin")
+		if origin == "" || !sameLauncherRequestOrigin(r, origin) {
+			http.Error(w, "forbidden origin", http.StatusForbidden)
+			return
+		}
 		if !h.gatewayAvailableForProxy() {
 			logger.Warnf("Gateway not available for WebSocket proxy")
 			http.Error(w, "Gateway not available", http.StatusServiceUnavailable)

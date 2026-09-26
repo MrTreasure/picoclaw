@@ -256,6 +256,17 @@ pnpm build:backend
 - `pnpm build` writes a normal Vite build to `frontend/dist`
 - `pnpm build:backend` writes the embeddable build to `../backend/dist`
 
+### Frontend-only build for the MuseC137 PWA hostname
+
+The build commands above describe the **generic launcher** workflow. On this
+NAS, `pwa.mrtreasure.cc` instead serves static files directly from the
+`static-server` Nginx container; only its API, media, and WebSocket requests
+are proxied to the launcher. Updating that PWA's frontend does **not** require
+rebuilding or restarting the launcher or Pico gateway. For the actual publish
+path, auth boundaries, checks, and rollback procedure, follow
+[`../deploy/README.md`](../deploy/README.md). This is a deployment distinction,
+not a claim that the frontend source is independent of this repository.
+
 ### Run The Built Launcher
 
 Examples:

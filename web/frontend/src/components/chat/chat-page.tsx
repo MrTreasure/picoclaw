@@ -1,6 +1,6 @@
 import { IconArrowDown } from "@tabler/icons-react"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { useAtom } from "jotai"
+import { useAtom, useAtomValue } from "jotai"
 import {
   type ChangeEvent,
   type ClipboardEvent,
@@ -21,6 +21,7 @@ import {
 } from "@/components/chat/chat-composer"
 import { ChatControls } from "@/components/chat/chat-controls"
 import { ChatEmptyState } from "@/components/chat/chat-empty-state"
+import { ConfirmationCard } from "@/components/chat/confirmation-card"
 import { TypingIndicator } from "@/components/chat/typing-indicator"
 import { UserMessage } from "@/components/chat/user-message"
 import { Button } from "@/components/ui/button"
@@ -31,6 +32,10 @@ import {
   getTransferredFiles,
   hasFileTransfer,
 } from "@/features/chat/image-input"
+import {
+  readSessionDraft,
+  writeSessionDraft,
+} from "@/features/chat/session-draft"
 import { shouldShowTypingIndicator } from "@/features/chat/typing-indicator-state"
 import { useChatModels } from "@/hooks/use-chat-models"
 import { useGateway } from "@/hooks/use-gateway"
@@ -39,6 +44,7 @@ import type { ConnectionState } from "@/store/chat"
 import type { ChatAttachment } from "@/store/chat"
 import {
   assistantDetailVisibilityAtom,
+  chatAtom,
   shouldShowAssistantMessage,
 } from "@/store/chat"
 import type { GatewayState } from "@/store/gateway"
@@ -100,7 +106,13 @@ function resolveChatInputDisabledReason({
 }
 
 export function ChatPage() {
+  const sessionId = useAtomValue(chatAtom).activeSessionId
+  return <SessionChatPage key={sessionId} sessionId={sessionId} />
+}
+
+function SessionChatPage({ sessionId }: { sessionId: string }) {
   const { t } = useTranslation()
+  const pendingConfirmations = useAtomValue(chatAtom).pendingConfirmations
   const scrollRef = useRef<HTMLDivElement>(null)
   const scrollContentRef = useRef<HTMLDivElement>(null)
   const galleryInputRef = useRef<HTMLInputElement>(null)
@@ -114,9 +126,12 @@ export function ChatPage() {
   )
   const didInitialScrollRef = useRef(false)
   const shouldFollowOutputRef = useRef(true)
+  // ResizeObserver/virtualizer measurements can fire scroll events without user input.
+  const userScrollIntentRef = useRef(false)
   const touchStartYRef = useRef<number | null>(null)
+  const [initialPositioned, setInitialPositioned] = useState(false)
   const [isAtBottom, setIsAtBottom] = useState(true)
-  const [input, setInput] = useState("")
+  const [input, setInput] = useState(() => readSessionDraft(sessionId))
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [isDragActive, setIsDragActive] = useState(false)
   const [expandedDetailMessageIds, setExpandedDetailMessageIds] = useState<
@@ -208,15 +223,6 @@ export function ChatPage() {
     useAnimationFrameWithResizeObserver: true,
   })
 
-  useEffect(() => {
-    didInitialScrollRef.current = false
-    loadingOlderRef.current = false
-    olderScrollAnchorRef.current = null
-    shouldFollowOutputRef.current = true
-    setIsAtBottom(true)
-    setExpandedDetailMessageIds(new Set())
-  }, [activeSessionId])
-
   const syncScrollState = (element: HTMLDivElement) => {
     const { clientHeight, scrollHeight, scrollTop } = element
     const atBottom = scrollHeight - scrollTop <= clientHeight + 48
@@ -227,11 +233,15 @@ export function ChatPage() {
   const handleScroll = async (e: React.UIEvent<HTMLDivElement>) => {
     const element = e.currentTarget
     const atBottom = syncScrollState(element)
-    if (atBottom && !loadingOlderRef.current)
-      shouldFollowOutputRef.current = true
-    else if (didInitialScrollRef.current) shouldFollowOutputRef.current = false
+    if (userScrollIntentRef.current && !loadingOlderRef.current) {
+      shouldFollowOutputRef.current = atBottom
+    }
+    const fromUser = userScrollIntentRef.current
+    userScrollIntentRef.current = false
     if (
+      !fromUser ||
       !didInitialScrollRef.current ||
+      isOpeningSession ||
       element.scrollTop > 160 ||
       !hasOlderMessages ||
       isLoadingOlderMessages ||
@@ -287,6 +297,7 @@ export function ChatPage() {
 
     if (element) {
       element.scrollTop = element.scrollHeight
+      if (!didInitialScrollRef.current) setInitialPositioned(true)
       didInitialScrollRef.current = true
       syncScrollState(element)
     }
@@ -314,23 +325,32 @@ export function ChatPage() {
 
     let frame: number | undefined
     const observer = new ResizeObserver(() => {
-      if (!shouldFollowOutputRef.current || olderScrollAnchorRef.current) {
+      if (
+        !shouldFollowOutputRef.current ||
+        olderScrollAnchorRef.current ||
+        isOpeningSession
+      ) {
         return
       }
 
-      if (frame !== undefined) {
-        cancelAnimationFrame(frame)
+      // ResizeObserver runs before paint: correct markdown/image growth here,
+      // rather than letting a frame of the old scroll position flash onscreen.
+      const element = scrollRef.current
+      if (element) {
+        element.scrollTop = element.scrollHeight
+        syncScrollState(element)
       }
+      if (frame !== undefined) cancelAnimationFrame(frame)
       frame = requestAnimationFrame(() => {
         const element = scrollRef.current
         if (
           !element ||
           !shouldFollowOutputRef.current ||
-          olderScrollAnchorRef.current
+          olderScrollAnchorRef.current ||
+          isOpeningSession
         )
           return
         element.scrollTop = element.scrollHeight
-        didInitialScrollRef.current = true
         syncScrollState(element)
       })
     })
@@ -342,7 +362,18 @@ export function ChatPage() {
         cancelAnimationFrame(frame)
       }
     }
-  }, [])
+  }, [isOpeningSession])
+
+  const updateInput = (value: string) => {
+    setInput(value)
+    writeSessionDraft(sessionId, value)
+  }
+
+  const restoreMessageText = (content: string) => {
+    // Append rather than replace a newer draft; never restore media refs or resend.
+    if (input === content) return
+    updateInput(input ? `${input}\n${content}` : content)
+  }
 
   const handleSend = () => {
     if ((!input.trim() && attachments.length === 0) || !canInput) return
@@ -355,8 +386,12 @@ export function ChatPage() {
         messageId: draftMessageIdRef.current,
       })
     ) {
-      setInput("")
+      updateInput("")
       setAttachments([])
+      draftMessageIdRef.current = `msg-${crypto.randomUUID()}`
+    } else {
+      // A synchronous socket.send failure leaves the draft visible. Use a new
+      // request ID if the user explicitly tries again; never resend on our own.
       draftMessageIdRef.current = `msg-${crypto.randomUUID()}`
     }
   }
@@ -517,12 +552,33 @@ export function ChatPage() {
           ref={scrollRef}
           onScroll={handleScroll}
           onWheel={(event) => {
+            userScrollIntentRef.current = true
             if (event.deltaY < 0) shouldFollowOutputRef.current = false
+          }}
+          onPointerDown={() => {
+            // Covers dragging the scrollbar; layout-driven scroll events do not.
+            userScrollIntentRef.current = true
+          }}
+          onKeyDown={(event) => {
+            if (
+              [
+                "ArrowUp",
+                "ArrowDown",
+                "PageUp",
+                "PageDown",
+                "Home",
+                "End",
+                " ",
+              ].includes(event.key)
+            ) {
+              userScrollIntentRef.current = true
+            }
           }}
           onTouchStart={(event) => {
             touchStartYRef.current = event.touches[0]?.clientY ?? null
           }}
           onTouchMove={(event) => {
+            userScrollIntentRef.current = true
             const startY = touchStartYRef.current
             const currentY = event.touches[0]?.clientY
             if (
@@ -538,7 +594,16 @@ export function ChatPage() {
           }}
           className="h-full [scrollbar-gutter:stable] overflow-y-auto px-3 pt-[calc(4.75rem+env(safe-area-inset-top))] pb-3 md:px-8 lg:px-24 xl:px-48"
         >
-          <div ref={scrollContentRef} className="mx-auto w-full max-w-225 pb-5">
+          <div
+            ref={scrollContentRef}
+            className="mx-auto w-full max-w-225 pb-5"
+            style={{
+              visibility:
+                messages.length > 0 && !initialPositioned
+                  ? "hidden"
+                  : undefined,
+            }}
+          >
             {isOpeningSession && messages.length === 0 && (
               <p
                 className="text-muted-foreground py-16 text-center text-sm"
@@ -598,6 +663,11 @@ export function ChatPage() {
                             content={msg.content}
                             attachments={msg.attachments}
                             timestamp={msg.timestamp}
+                            sendStatus={msg.sendStatus}
+                            sendError={msg.sendError}
+                            onRestoreText={() =>
+                              restoreMessageText(msg.content)
+                            }
                           />
                         )}
                       </div>
@@ -629,6 +699,9 @@ export function ChatPage() {
                       content={msg.content}
                       attachments={msg.attachments}
                       timestamp={msg.timestamp}
+                      sendStatus={msg.sendStatus}
+                      sendError={msg.sendError}
+                      onRestoreText={() => restoreMessageText(msg.content)}
                     />
                   )}
                 </div>
@@ -636,6 +709,17 @@ export function ChatPage() {
               {showTypingIndicator && (
                 <TypingIndicator activity={assistantActivity} />
               )}
+              {pendingConfirmations
+                .filter(
+                  (confirmation) => confirmation.sessionId === activeSessionId,
+                )
+                .map((confirmation) => (
+                  <ConfirmationCard
+                    key={confirmation.requestId}
+                    confirmation={confirmation}
+                    connected={connectionState === "connected"}
+                  />
+                ))}
             </div>
           </div>
         </div>
@@ -689,7 +773,7 @@ export function ChatPage() {
       <ChatComposer
         input={input}
         attachments={attachments}
-        onInputChange={setInput}
+        onInputChange={updateInput}
         onOpenGallery={handleOpenGallery}
         onOpenCamera={handleOpenCamera}
         onOpenFiles={handleOpenFiles}
@@ -699,7 +783,7 @@ export function ChatPage() {
         onClearContext={() => {
           sendMessage({ content: "/clear", attachments: [] })
         }}
-        onSelectSkill={(name) => setInput(`/use ${name} `)}
+        onSelectSkill={(name) => updateInput(`/use ${name} `)}
         onPaste={handleComposerPaste}
         onDragEnter={handleComposerDragEnter}
         onDragLeave={handleComposerDragLeave}
@@ -712,7 +796,7 @@ export function ChatPage() {
         }}
         onContextDetail={() => {
           if (sendMessage({ content: "/context", attachments: [] })) {
-            setInput("")
+            updateInput("")
           }
         }}
         inputDisabledReason={inputDisabledReason}

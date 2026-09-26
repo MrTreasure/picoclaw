@@ -21,6 +21,18 @@ func (al *AgentLoop) RegisterTool(tool tools.Tool) {
 
 func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 	al.channelManager = cm
+	if cm == nil {
+		return
+	}
+	ch, ok := cm.GetChannel("pico")
+	if !ok {
+		return
+	}
+	bridge, ok := ch.(tools.PicoConfirmationBridge)
+	if !ok {
+		return
+	}
+	al.RegisterTool(tools.NewAskUserConfirmationTool(bridge))
 }
 
 func (al *AgentLoop) GetRegistry() *AgentRegistry {

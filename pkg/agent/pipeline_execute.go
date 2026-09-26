@@ -561,6 +561,9 @@ toolLoop:
 			ts.opts.Dispatch.MessageID(),
 			ts.opts.Dispatch.ReplyToMessageID(),
 		)
+		if ts.opts.Dispatch.InboundContext != nil && ts.channel == "pico" {
+			execCtx = tools.WithPicoOrigin(execCtx, ts.opts.Dispatch.InboundContext.Raw["conn_id"])
+		}
 		execCtx = tools.WithToolSessionContext(
 			execCtx,
 			ts.agent.ID,

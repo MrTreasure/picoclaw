@@ -11,12 +11,18 @@ interface UserMessageProps {
   content: string
   attachments?: ChatAttachment[]
   timestamp?: string | number
+  sendStatus?: "pending" | "failed" | "unconfirmed"
+  sendError?: string
+  onRestoreText?: () => void
 }
 
 export const UserMessage = memo(function UserMessage({
   content,
   attachments = [],
   timestamp = "",
+  sendStatus,
+  sendError,
+  onRestoreText,
 }: UserMessageProps) {
   const { t } = useTranslation()
   const hasText = content.trim().length > 0
@@ -94,8 +100,30 @@ export const UserMessage = memo(function UserMessage({
         </div>
       )}
 
+      {(sendStatus === "failed" || sendStatus === "unconfirmed") && (
+        <div
+          role="status"
+          className="flex max-w-[86%] flex-wrap items-center justify-end gap-2 px-1 text-xs text-amber-700 dark:text-amber-300"
+        >
+          <span>
+            {sendStatus === "failed"
+              ? `${t("chat.sendFailed")}${sendError ? `: ${sendError}` : ""}`
+              : t("chat.sendUnconfirmed")}
+          </span>
+          {hasText && onRestoreText && (
+            <button
+              type="button"
+              className="underline underline-offset-2"
+              onClick={onRestoreText}
+            >
+              {t("chat.restoreMessageDraft")}
+            </button>
+          )}
+        </div>
+      )}
+
       {formattedTimestamp && (
-        <span className="px-1 text-[11px] text-foreground/70">
+        <span className="text-foreground/70 px-1 text-[11px]">
           {formattedTimestamp}
         </span>
       )}

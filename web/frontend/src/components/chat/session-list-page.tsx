@@ -1,5 +1,6 @@
 import {
   IconBrandWechat,
+  IconCheck,
   IconCode,
   IconMessageCircle,
   IconMessagePlus,
@@ -9,7 +10,7 @@ import {
 } from "@tabler/icons-react"
 import { useNavigate } from "@tanstack/react-router"
 import dayjs from "dayjs"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { CodexRpcClient, type CodexThread } from "@/api/codex"
@@ -49,12 +50,17 @@ export function SessionListPage() {
   const navigate = useNavigate()
   const { activeSessionId, switchSession, newChat } = usePicoChat()
   const [query, setQuery] = useState("")
+  const deferredQuery = useDeferredValue(query)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [pressedId, setPressedId] = useState<string | null>(null)
   const [showNewSession, setShowNewSession] = useState(false)
   const [codexThreads, setCodexThreads] = useState<CodexThread[]>([])
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const longPressTriggeredRef = useRef(false)
+  const pointerStartRef = useRef<{ x: number; y: number } | null>(null)
+  const suppressClickRef = useRef(false)
   const loadedRef = useRef(false)
   const {
     sessions,
@@ -105,38 +111,35 @@ export function SessionListPage() {
     }
   }, [])
 
-  const visibleEntries = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase()
-    const museEntries: SessionListEntry[] = sessions
-      .filter(
-        (session) =>
-          !normalizedQuery ||
-          `${session.title} ${session.preview}`
-            .toLocaleLowerCase()
-            .includes(normalizedQuery),
-      )
-      .map((session) => ({
-        kind: "muse",
-        session,
-        updated: dayjs(session.updated).valueOf(),
-      }))
-    const codexEntries: SessionListEntry[] = codexThreads
-      .filter(
-        (thread) =>
-          !normalizedQuery ||
-          `${thread.name || ""} ${thread.preview || ""} ${thread.cwd || ""}`
-            .toLocaleLowerCase()
-            .includes(normalizedQuery),
-      )
-      .map((thread) => ({
-        kind: "codex",
-        thread,
-        updated: (thread.updatedAt ?? thread.createdAt ?? 0) * 1000,
-      }))
+  // Sort only when source lists change; a search keystroke just filters.
+  const sortedEntries = useMemo(() => {
+    const museEntries: SessionListEntry[] = sessions.map((session) => ({
+      kind: "muse",
+      session,
+      updated: dayjs(session.updated).valueOf(),
+    }))
+    const codexEntries: SessionListEntry[] = codexThreads.map((thread) => ({
+      kind: "codex",
+      thread,
+      updated: (thread.updatedAt ?? thread.createdAt ?? 0) * 1000,
+    }))
     return [...museEntries, ...codexEntries].sort(
       (a, b) => b.updated - a.updated,
     )
-  }, [query, sessions, codexThreads])
+  }, [sessions, codexThreads])
+
+  const visibleEntries = useMemo(() => {
+    const normalizedQuery = deferredQuery.trim().toLocaleLowerCase()
+    if (!normalizedQuery) return sortedEntries
+    return sortedEntries.filter((entry) =>
+      (entry.kind === "muse"
+        ? `${entry.session.title} ${entry.session.preview}`
+        : `${entry.thread.name || ""} ${entry.thread.preview || ""} ${entry.thread.cwd || ""}`
+      )
+        .toLocaleLowerCase()
+        .includes(normalizedQuery),
+    )
+  }, [deferredQuery, sortedEntries])
 
   const selectionMode = selectedIds.size > 0
 
@@ -149,19 +152,48 @@ export function SessionListPage() {
     })
   }
 
-  const beginLongPress = (sessionId: string) => {
+  const beginLongPress = (sessionId: string, event: React.PointerEvent) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return
+    cancelLongPress()
+    suppressClickRef.current = false
+    pointerStartRef.current = { x: event.clientX, y: event.clientY }
+    setPressedId(sessionId)
     longPressTriggeredRef.current = false
     longPressTimerRef.current = setTimeout(() => {
+      longPressTimerRef.current = null
       longPressTriggeredRef.current = true
-      toggleSelection(sessionId)
-      navigator.vibrate?.(35)
-    }, 520)
+      suppressClickRef.current = true
+      setPressedId(null)
+      if (!selectedIds.has(sessionId)) toggleSelection(sessionId)
+      navigator.vibrate?.([12, 28, 18])
+    }, 460)
   }
 
   const cancelLongPress = () => {
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current)
     longPressTimerRef.current = null
+    pointerStartRef.current = null
+    setPressedId(null)
   }
+
+  const moveLongPress = (event: React.PointerEvent) => {
+    const start = pointerStartRef.current
+    if (
+      start &&
+      Math.hypot(event.clientX - start.x, event.clientY - start.y) > 10
+    ) {
+      cancelLongPress()
+      // Touch scrolling may still synthesize a click on release.
+      suppressClickRef.current = true
+    }
+  }
+
+  useEffect(
+    () => () => {
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current)
+    },
+    [],
+  )
 
   const openSession = async (sessionId: string) => {
     const session = sessions.find((item) => item.id === sessionId)
@@ -209,6 +241,7 @@ export function SessionListPage() {
                 size="icon"
                 className="text-destructive size-12 rounded-full"
                 onClick={() => setConfirmBulkDelete(true)}
+                disabled={deleting}
                 aria-label="删除所选会话"
               >
                 <IconTrash className="size-5" />
@@ -269,19 +302,18 @@ export function SessionListPage() {
             </div>
           )}
 
-          <div className="border-border/70 bg-card overflow-hidden rounded-2xl border">
-            {visibleEntries.map((entry, index) => {
+          <div className="space-y-2">
+            {visibleEntries.map((entry) => {
               if (entry.kind === "codex") {
                 const thread = entry.thread
                 return (
                   <div
                     key={`codex:${thread.id}`}
-                    className={`flex min-h-23 items-center gap-3 px-3 py-3 sm:px-4 ${index > 0 ? "border-border/60 border-t" : ""}`}
+                    className="border-border/55 bg-card flex min-h-20 items-center gap-3 rounded-2xl border px-3 py-3 shadow-sm sm:px-4"
                   >
                     <button
                       type="button"
                       className="focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left focus-visible:ring-2 focus-visible:outline-none"
-                      disabled={selectionMode}
                       onClick={() =>
                         void navigate({
                           to: "/codex",
@@ -315,23 +347,29 @@ export function SessionListPage() {
               return (
                 <div
                   key={session.id}
-                  className={`group flex min-h-23 items-center gap-3 px-3 py-3 sm:px-4 ${index > 0 ? "border-border/60 border-t" : ""}`}
+                  className={`group border-border/55 bg-card flex min-h-20 items-center gap-3 rounded-2xl border px-3 py-3 shadow-sm transition-[transform,background-color,box-shadow] duration-150 sm:px-4 ${selectedIds.has(session.id) ? "border-secondary/60 bg-secondary/10 shadow-md" : pressedId === session.id ? "bg-muted/80 scale-[0.985] shadow-inner" : "active:scale-[0.99]"}`}
                 >
                   <button
                     type="button"
-                    className={`focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left focus-visible:ring-2 focus-visible:outline-none ${selectedIds.has(session.id) ? "bg-secondary/10 ring-secondary ring-2" : ""}`}
-                    onPointerDown={() => beginLongPress(session.id)}
+                    className="focus-visible:ring-ring flex min-w-0 flex-1 touch-pan-y items-center gap-3 rounded-xl text-left select-none focus-visible:ring-2 focus-visible:outline-none"
+                    onPointerDown={(event) => beginLongPress(session.id, event)}
+                    onPointerMove={moveLongPress}
                     onPointerUp={cancelLongPress}
                     onPointerCancel={cancelLongPress}
                     onPointerLeave={cancelLongPress}
                     onContextMenu={(event) => {
                       event.preventDefault()
                       cancelLongPress()
+                      suppressClickRef.current = true
                       if (!selectedIds.has(session.id))
                         toggleSelection(session.id)
                     }}
                     onClick={() => {
-                      if (longPressTriggeredRef.current) {
+                      if (
+                        suppressClickRef.current ||
+                        longPressTriggeredRef.current
+                      ) {
+                        suppressClickRef.current = false
                         longPressTriggeredRef.current = false
                         return
                       }
@@ -342,7 +380,9 @@ export function SessionListPage() {
                     <span
                       className={`flex size-14 shrink-0 items-center justify-center rounded-2xl ${isWeixin ? "bg-emerald-500/15 text-emerald-400" : isActive ? "bg-accent text-accent-foreground" : "bg-muted text-muted-foreground"}`}
                     >
-                      {isWeixin ? (
+                      {selectedIds.has(session.id) ? (
+                        <IconCheck className="size-7" aria-label="已选择" />
+                      ) : isWeixin ? (
                         <IconBrandWechat
                           className="size-7"
                           aria-hidden="true"
@@ -418,13 +458,16 @@ export function SessionListPage() {
               onClick={() => {
                 const ids = [...selectedIds]
                 setConfirmBulkDelete(false)
-                void handleDeleteSessions(ids).then((deleted) => {
-                  setSelectedIds((current) => {
-                    const remaining = new Set(current)
-                    for (const id of deleted) remaining.delete(id)
-                    return remaining
+                setDeleting(true)
+                void handleDeleteSessions(ids)
+                  .then((deleted) => {
+                    setSelectedIds((current) => {
+                      const remaining = new Set(current)
+                      for (const id of deleted) remaining.delete(id)
+                      return remaining
+                    })
                   })
-                })
+                  .finally(() => setDeleting(false))
               }}
             >
               {t("chat.deleteSession")}

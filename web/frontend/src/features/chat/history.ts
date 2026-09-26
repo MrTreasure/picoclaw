@@ -198,7 +198,12 @@ function removeShadowedUserHistoryCopies(
 ): ChatMessage[] {
   const unmatchedLiveUsers = new Map<string, number>()
   for (const message of messages) {
-    if (message.role !== "user" || message.id.startsWith("hist-")) continue
+    if (
+      message.role !== "user" ||
+      message.id.startsWith("hist-") ||
+      message.sendStatus
+    )
+      continue
     const signature = reconciliationSignature(message)
     unmatchedLiveUsers.set(
       signature,
@@ -269,17 +274,57 @@ function comparableTimestamp(timestamp: number | string): number {
   return Number.isFinite(numeric) ? numeric : 0
 }
 
+// A local send has no durable identity until the history endpoint confirms it.
+// Match only authoritative history records from this send's time onward, and
+// consume each occurrence at most once (identical consecutive sends are valid).
+function reconcileTransientUsers(
+  history: ChatMessage[],
+  current: ChatMessage[],
+): ChatMessage[] {
+  const candidates = history.filter(
+    (message) => message.role === "user" && message.id.startsWith("hist-"),
+  )
+  const consumed = new Set<string>()
+  return current.filter((message) => {
+    if (message.role !== "user" || !message.sendStatus) return true
+    const sentAt = comparableTimestamp(message.timestamp)
+    const signature = reconciliationSignature(message)
+    const match = candidates
+      .filter(
+        (candidate) =>
+          !consumed.has(candidate.id) &&
+          reconciliationSignature(candidate) === signature &&
+          comparableTimestamp(candidate.timestamp) >= sentAt - 2_000 &&
+          comparableTimestamp(candidate.timestamp) <= sentAt + 5 * 60_000,
+      )
+      .sort(
+        (a, b) =>
+          Math.abs(comparableTimestamp(a.timestamp) - sentAt) -
+          Math.abs(comparableTimestamp(b.timestamp) - sentAt),
+      )[0]
+    if (!match) return true
+    consumed.add(match.id)
+    return false
+  })
+}
+
 export function mergeHistoryMessages(
   historyMessages: ChatMessage[],
   currentMessages: ChatMessage[],
 ): ChatMessage[] {
   historyMessages = splitMarkedAssistantMessages(historyMessages)
   currentMessages = removeShadowedUserHistoryCopies(
-    removeShadowedHistoryCopies(splitMarkedAssistantMessages(currentMessages)),
+    removeShadowedHistoryCopies(
+      reconcileTransientUsers(
+        [...historyMessages, ...currentMessages],
+        splitMarkedAssistantMessages(currentMessages),
+      ),
+    ),
   )
   const currentIds = new Set(currentMessages.map((message) => message.id))
   const unmatchedCurrentSignatures = new Map<string, number>()
   for (const message of currentMessages) {
+    if (message.sendStatus) continue
     const signature = reconciliationSignature(message)
     unmatchedCurrentSignatures.set(
       signature,

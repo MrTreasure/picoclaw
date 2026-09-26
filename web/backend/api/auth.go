@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,8 +45,16 @@ type launcherAuthSetupBody struct {
 }
 
 type launcherAuthStatusResponse struct {
-	Authenticated bool `json:"authenticated"`
-	Initialized   bool `json:"initialized"`
+	Authenticated bool   `json:"authenticated"`
+	Initialized   bool   `json:"initialized"`
+	CacheScope    string `json:"cache_scope,omitempty"`
+}
+
+// dashboardCacheScope is a non-secret cache namespace, not an auth credential.
+// The domain separator prevents reuse of the cookie hash for another purpose.
+func dashboardCacheScope(sessionCookie string) string {
+	sum := sha256.Sum256([]byte("musec137-dashboard-cache-scope-v1\x00" + sessionCookie))
+	return hex.EncodeToString(sum[:])
 }
 
 // RegisterLauncherAuthRoutes registers /api/auth/login|logout|status|setup.
@@ -234,6 +244,9 @@ func (h *launcherAuthHandlers) handleStatus(w http.ResponseWriter, r *http.Reque
 	resp := launcherAuthStatusResponse{
 		Authenticated: authed,
 		Initialized:   initialized,
+	}
+	if authed && h.sessionCookie != "" {
+		resp.CacheScope = dashboardCacheScope(h.sessionCookie)
 	}
 	enc, err := json.Marshal(resp)
 	if err != nil {

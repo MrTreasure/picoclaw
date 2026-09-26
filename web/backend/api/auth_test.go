@@ -362,3 +362,70 @@ func TestLauncherAuthLogoutRejectsTrailingJSON(t *testing.T) {
 		t.Fatalf("want 400 got %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestLauncherAuthStatusCacheScope(t *testing.T) {
+	store := &fakePasswordStore{initialized: true, password: "correct-password"}
+	status := func(t *testing.T, mux *http.ServeMux, cookie string) map[string]json.RawMessage {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/auth/status", nil)
+		if cookie != "" {
+			req.AddCookie(&http.Cookie{Name: middleware.LauncherDashboardCookieName, Value: cookie})
+		}
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status code = %d body=%s", rec.Code, rec.Body.String())
+		}
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+
+	const first = "high-entropy-session-cookie-A"
+	const second = "high-entropy-session-cookie-B"
+	makeMux := func(cookie string) *http.ServeMux {
+		mux := http.NewServeMux()
+		RegisterLauncherAuthRoutes(mux, LauncherAuthRouteOpts{SessionCookie: cookie, PasswordStore: store})
+		return mux
+	}
+	mux := makeMux(first)
+	for _, cookie := range []string{"", "invalid-session-cookie"} {
+		body := status(t, mux, cookie)
+		if _, ok := body["cache_scope"]; ok {
+			t.Fatalf("unauthenticated status with cookie %q leaked cache_scope: %s", cookie, body["cache_scope"])
+		}
+		if string(body["authenticated"]) != "false" || string(body["initialized"]) != "true" {
+			t.Fatalf("unexpected unauthenticated status: %v", body)
+		}
+	}
+
+	var scope string
+	for i := 0; i < 2; i++ {
+		body := status(t, mux, first)
+		if string(body["authenticated"]) != "true" || string(body["initialized"]) != "true" {
+			t.Fatalf("unexpected authenticated status: %v", body)
+		}
+		var got string
+		if err := json.Unmarshal(body["cache_scope"], &got); err != nil {
+			t.Fatalf("missing or invalid cache_scope: %v", err)
+		}
+		if len(got) != 64 || strings.Contains(got, first) {
+			t.Fatalf("cache_scope must be a non-secret SHA-256 digest, got %q", got)
+		}
+		if i == 0 {
+			scope = got
+		} else if scope != got {
+			t.Fatalf("same session returned different scopes: %q vs %q", scope, got)
+		}
+	}
+	other := status(t, makeMux(second), second)
+	var otherScope string
+	if err := json.Unmarshal(other["cache_scope"], &otherScope); err != nil {
+		t.Fatal(err)
+	}
+	if otherScope == "" || otherScope == scope {
+		t.Fatalf("distinct session cookies must have distinct scopes: %q vs %q", scope, otherScope)
+	}
+}

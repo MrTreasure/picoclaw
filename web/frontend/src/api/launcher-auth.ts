@@ -1,3 +1,5 @@
+import { invalidateSessionListCache } from "@/hooks/session-list-cache"
+
 /**
  * Dashboard launcher auth API.
  * Uses plain fetch (not launcherFetch) to avoid redirect loops on auth pages.
@@ -26,6 +28,7 @@ export async function postLauncherDashboardLogin(
 
 export type LauncherAuthStatus = {
   authenticated: boolean
+  cache_scope?: string
   /** true when a bcrypt password has been stored in the DB */
   initialized: boolean
 }
@@ -42,6 +45,8 @@ export async function getLauncherAuthStatus(): Promise<LauncherAuthStatus> {
 }
 
 export async function postLauncherDashboardLogout(): Promise<boolean> {
+  // Revoke pending writes immediately and clear the persistent list before navigation.
+  await invalidateSessionListCache()
   const res = await fetch("/api/auth/logout", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

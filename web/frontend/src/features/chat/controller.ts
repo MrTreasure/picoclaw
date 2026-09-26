@@ -13,6 +13,7 @@ import {
   saveCachedSession,
 } from "@/features/chat/local-cache"
 import { type PicoMessage, handlePicoMessage } from "@/features/chat/protocol"
+import { createStreamUpdateBatcher } from "@/features/chat/stream-update-batcher"
 import {
   generateSessionId,
   normalizeSessionId,
@@ -54,6 +55,7 @@ let cachedMessagesRef: ChatMessage[] = []
 let hiddenCachedMessagesRef: ChatMessage[] = []
 let olderCursorRef: number | null = null
 const sentRequestIDs = new Set<string>()
+const streamUpdates = createStreamUpdateBatcher(handlePicoMessage)
 
 function clearCacheTimer() {
   if (cacheTimer !== null) {
@@ -66,7 +68,12 @@ function persistCurrentSession() {
   clearCacheTimer()
   const state = getChatState()
   if (state.activeSessionId !== cacheSessionIdRef) return
-  cachedMessagesRef = mergeCachedMessages(cachedMessagesRef, state.messages)
+  // Preserve the uncertainty, not just the text. A restored pending send is
+  // downgraded to unconfirmed by the cache loader; nothing is auto-resubmitted.
+  cachedMessagesRef = mergeCachedMessages(
+    mergeHistoryMessages(state.messages, cachedMessagesRef),
+    state.messages,
+  )
   void saveCachedSession({
     id: state.activeSessionId,
     messages: cachedMessagesRef,
@@ -103,6 +110,16 @@ function clearProbeTimer() {
   }
 }
 
+function markPendingUnconfirmed() {
+  updateChatStore((prev) => ({
+    messages: prev.messages.map((message) =>
+      message.sendStatus === "pending"
+        ? { ...message, sendStatus: "unconfirmed" as const }
+        : message,
+    ),
+  }))
+}
+
 function reconnectStaleSocket() {
   if (
     !shouldMaintainConnection ||
@@ -117,7 +134,9 @@ function reconnectStaleSocket() {
   wsRef = null
   isConnecting = false
   invalidateSocket(socket)
-  updateChatStore({ connectionState: "connecting" })
+  streamUpdates.discard()
+  markPendingUnconfirmed()
+  updateChatStore({ pendingConfirmations: [], connectionState: "connecting" })
   void connectChat()
 }
 
@@ -199,6 +218,10 @@ async function reconcileSessionAfterConnect({
       return
     }
 
+    cachedMessagesRef = mergeHistoryMessages(
+      historyPage.messages,
+      cachedMessagesRef,
+    )
     updateChatStore((prev) => ({
       messages: mergeHistoryMessages(historyPage.messages, prev.messages),
       hasOlderMessages:
@@ -239,8 +262,11 @@ function disconnectChatInternal({
   isConnecting = false
 
   invalidateSocket(socket)
+  streamUpdates.discard()
+  markPendingUnconfirmed()
 
   updateChatStore({
+    pendingConfirmations: [],
     connectionState: "disconnected",
     isTyping: false,
     assistantActivity: undefined,
@@ -326,7 +352,7 @@ export async function connectChat() {
           lastPongAt = Date.now()
           clearProbeTimer()
         }
-        handlePicoMessage(message, sessionId)
+        streamUpdates.receive(message, sessionId)
       } catch {
         console.warn("Non-JSON message from pico:", event.data)
       }
@@ -347,6 +373,9 @@ export async function connectChat() {
       }
       wsRef = null
       isConnecting = false
+      streamUpdates.discard()
+      markPendingUnconfirmed()
+      updateChatStore({ pendingConfirmations: [] })
       updateChatStore(
         document.visibilityState === "hidden"
           ? { isTyping: false, assistantActivity: undefined }
@@ -443,7 +472,7 @@ export async function hydrateActiveSession() {
       }
 
       cachedMessagesRef = mergeCachedMessages(
-        cachedMessagesRef,
+        mergeHistoryMessages(historyPage.messages, cachedMessagesRef),
         historyPage.messages,
       )
       if (olderCursorRef === null) {
@@ -547,7 +576,7 @@ export async function loadOlderChatMessages(): Promise<boolean> {
     if (getChatState().activeSessionId !== sessionId) return false
     olderCursorRef = historyPage.nextBefore
     cachedMessagesRef = mergeCachedMessages(
-      cachedMessagesRef,
+      mergeHistoryMessages(historyPage.messages, cachedMessagesRef),
       historyPage.messages,
     )
     updateChatStore((prev) => ({
@@ -562,6 +591,52 @@ export async function loadOlderChatMessages(): Promise<boolean> {
     if (getChatState().activeSessionId === sessionId) {
       updateChatStore({ isLoadingOlderMessages: false })
     }
+    return false
+  }
+}
+
+export function respondToConfirmation(
+  requestId: string,
+  approved: boolean,
+): boolean {
+  const socket = wsRef
+  const state = getChatState()
+  if (
+    !socket ||
+    socket.readyState !== WebSocket.OPEN ||
+    state.connectionState !== "connected" ||
+    state.activeSessionId !== activeSessionIdRef ||
+    !state.pendingConfirmations.some(
+      (item) =>
+        item.requestId === requestId &&
+        item.sessionId === activeSessionIdRef &&
+        item.status === "awaiting",
+    )
+  )
+    return false
+
+  // Lock synchronously before sending, preventing a second click. An ambiguous
+  // transport failure must not make a potentially delivered decision retryable.
+  updateChatStore((prev) => ({
+    pendingConfirmations: prev.pendingConfirmations.map((item) =>
+      item.requestId === requestId && item.sessionId === activeSessionIdRef
+        ? { ...item, status: "submitted" as const, approved }
+        : item,
+    ),
+  }))
+  try {
+    socket.send(
+      JSON.stringify({
+        type: "confirmation.respond",
+        id: requestId,
+        session_id: activeSessionIdRef,
+        payload: { request_id: requestId, approved, accepted: approved },
+      }),
+    )
+    return true
+  } catch (error) {
+    console.error("Failed to send confirmation response:", error)
+    // Do not automatically resend an ambiguous decision.
     return false
   }
 }
@@ -611,6 +686,7 @@ export function sendChatMessage({
         attachments:
           normalizedAttachments.length > 0 ? normalizedAttachments : undefined,
         timestamp: Date.now(),
+        sendStatus: "pending",
       },
     ],
     isTyping: true,
@@ -634,10 +710,19 @@ export function sendChatMessage({
     )
     return true
   } catch (error) {
-    sentRequestIDs.delete(id)
+    // Keep the request ID reserved: retrying the same ID can duplicate a
+    // request if a transport reports an ambiguous send outcome.
     console.error("Failed to send pico message:", error)
     updateChatStore((prev) => ({
-      messages: prev.messages.filter((message) => message.id !== id),
+      messages: prev.messages.map((message) =>
+        message.id === id
+          ? {
+              ...message,
+              sendStatus: "failed" as const,
+              sendError: "Socket send failed",
+            }
+          : message,
+      ),
       isTyping: false,
       assistantActivity: undefined,
     }))
@@ -681,7 +766,7 @@ export async function switchChatSession(sessionId: string) {
     sessionSwitchGeneration === generation && activeSessionIdRef === sessionId
   const cachePromise = loadCachedSession(sessionId).then((cached) => {
     if (!isCurrent() || !cached) return cached
-    cachedMessagesRef = mergeCachedMessages(cached.messages, cachedMessagesRef)
+    cachedMessagesRef = mergeHistoryMessages(cachedMessagesRef, cached.messages)
     hiddenCachedMessagesRef = cached.messages.slice(0, -CHAT_HISTORY_PAGE_SIZE)
     if (olderCursorRef === null) olderCursorRef = cached.nextBefore
     updateChatStore((prev) => ({
@@ -700,7 +785,7 @@ export async function switchChatSession(sessionId: string) {
   const historyPromise = loadSessionMessages(sessionId).then((historyPage) => {
     if (!isCurrent()) return
     cachedMessagesRef = mergeCachedMessages(
-      cachedMessagesRef,
+      mergeHistoryMessages(historyPage.messages, cachedMessagesRef),
       historyPage.messages,
     )
     if (olderCursorRef === null) olderCursorRef = historyPage.nextBefore
@@ -727,7 +812,7 @@ export async function newChatSession(force = false) {
   }
 
   sessionSwitchGeneration += 1
-  if (!force) persistCurrentSession()
+  persistCurrentSession()
   disconnectChatInternal({ clearDesiredConnection: false })
   const sessionId = generateSessionId()
   setActiveSessionId(sessionId)

@@ -67,17 +67,35 @@ export function mergeCachedMessages(
     .slice(-MAX_CACHED_MESSAGES)
 }
 
+function restoreTransientStatus(message: ChatMessage): ChatMessage {
+  return message.sendStatus === "pending"
+    ? { ...message, sendStatus: "unconfirmed" }
+    : message
+}
+
+const pendingWrites = new Map<string, Promise<void>>()
+
 export async function loadCachedSession(
   id: string,
 ): Promise<CachedChatSession | null> {
   try {
+    await pendingWrites.get(id)?.catch(() => {})
     const database = await openDatabase()
     if (!database) return null
     return await new Promise((resolve, reject) => {
       const transaction = database.transaction(SESSION_STORE, "readonly")
       const request = transaction.objectStore(SESSION_STORE).get(id)
       request.onsuccess = () =>
-        resolve((request.result as CachedChatSession | undefined) ?? null)
+        resolve(
+          request.result
+            ? {
+                ...(request.result as CachedChatSession),
+                messages: (request.result as CachedChatSession).messages.map(
+                  restoreTransientStatus,
+                ),
+              }
+            : null,
+        )
       request.onerror = () => reject(request.error)
       transaction.oncomplete = () => database.close()
     })
@@ -90,27 +108,39 @@ export async function loadCachedSession(
 export async function saveCachedSession(
   session: CachedChatSession,
 ): Promise<void> {
-  try {
-    const database = await openDatabase()
-    if (!database) return
-    await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction(SESSION_STORE, "readwrite")
-      transaction.objectStore(SESSION_STORE).put({
-        ...session,
-        messages: session.messages
-          .map(cacheSafeMessage)
-          .slice(-MAX_CACHED_MESSAGES),
-        updatedAt: Date.now(),
-      } satisfies CachedChatSession)
-      transaction.oncomplete = () => {
-        database.close()
-        resolve()
+  const previous = pendingWrites.get(session.id) ?? Promise.resolve()
+  const write = previous
+    .catch(() => {})
+    .then(async () => {
+      try {
+        const database = await openDatabase()
+        if (!database) return
+        await new Promise<void>((resolve, reject) => {
+          const transaction = database.transaction(SESSION_STORE, "readwrite")
+          transaction.objectStore(SESSION_STORE).put({
+            ...session,
+            messages: session.messages
+              .map(cacheSafeMessage)
+              .slice(-MAX_CACHED_MESSAGES),
+            updatedAt: Date.now(),
+          } satisfies CachedChatSession)
+          transaction.oncomplete = () => {
+            database.close()
+            resolve()
+          }
+          transaction.onerror = () => reject(transaction.error)
+          transaction.onabort = () => reject(transaction.error)
+        })
+      } catch (error) {
+        console.warn("Failed to save local chat cache:", error)
       }
-      transaction.onerror = () => reject(transaction.error)
-      transaction.onabort = () => reject(transaction.error)
     })
-  } catch (error) {
-    console.warn("Failed to save local chat cache:", error)
+  pendingWrites.set(session.id, write)
+  try {
+    await write
+  } finally {
+    if (pendingWrites.get(session.id) === write)
+      pendingWrites.delete(session.id)
   }
 }
 

@@ -53,6 +53,8 @@ export interface ChatMessage {
   attachments?: ChatAttachment[]
   toolCalls?: ChatToolCall[]
   streaming?: boolean
+  sendStatus?: "pending" | "failed" | "unconfirmed"
+  sendError?: string
 }
 
 export interface ContextUsage {
@@ -73,7 +75,16 @@ export type ConnectionState =
 
 export type AssistantActivity = "thinking" | "tool"
 
+export interface PendingConfirmation {
+  requestId: string
+  sessionId: string
+  prompt: string
+  status: "awaiting" | "submitted"
+  approved?: boolean
+}
+
 export interface ChatStoreState {
+  pendingConfirmations: PendingConfirmation[]
   messages: ChatMessage[]
   connectionState: ConnectionState
   isTyping: boolean
@@ -89,6 +100,7 @@ export interface ChatStoreState {
 type ChatStorePatch = Partial<ChatStoreState>
 
 const DEFAULT_CHAT_STATE: ChatStoreState = {
+  pendingConfirmations: [],
   messages: [],
   connectionState: "idle",
   isTyping: false,

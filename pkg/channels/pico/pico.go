@@ -36,6 +36,7 @@ type picoConn struct {
 	sessionID string
 	writeMu   sync.Mutex
 	closed    atomic.Bool
+	done      chan struct{}
 	cancel    context.CancelFunc // cancels per-connection goroutines (e.g. pingLoop)
 }
 
@@ -87,6 +88,9 @@ func (pc *picoConn) writeJSON(v any) error {
 // close closes the connection.
 func (pc *picoConn) close() {
 	if pc.closed.CompareAndSwap(false, true) {
+		if pc.done != nil {
+			close(pc.done)
+		}
 		if pc.cancel != nil {
 			pc.cancel()
 		}
@@ -109,8 +113,10 @@ type PicoChannel struct {
 	progress           *channels.ToolFeedbackAnimator
 	deleteMessageFn    func(context.Context, string, string) error
 	// broadcastFn lets tests intercept outbound broadcasts. nil → broadcastToSession.
-	broadcastFn func(chatID string, msg PicoMessage) error
-	webPush     *picoPushService
+	broadcastFn    func(chatID string, msg PicoMessage) error
+	webPush        *picoPushService
+	confirmationMu sync.Mutex
+	confirmations  map[string]*pendingConfirmation
 }
 
 // NewPicoChannel creates a new Pico Protocol channel.
@@ -150,6 +156,7 @@ func NewPicoChannel(
 		},
 		connections:        make(map[string]*picoConn),
 		sessionConnections: make(map[string]map[string]*picoConn),
+		confirmations:      make(map[string]*pendingConfirmation),
 	}
 	ch.progress = channels.NewToolFeedbackAnimator(ch.EditMessage)
 	ch.deleteMessageFn = ch.DeleteMessage
@@ -177,6 +184,7 @@ func (c *PicoChannel) createAndAddConnection(conn *websocket.Conn, sessionID str
 		id:        connID,
 		conn:      conn,
 		sessionID: sessionID,
+		done:      make(chan struct{}),
 	}
 
 	c.connections[pc.id] = pc
@@ -1373,6 +1381,9 @@ func (c *PicoChannel) handleMessage(pc *picoConn, msg PicoMessage) {
 		pong.ID = msg.ID
 		pc.writeJSON(pong)
 
+	case TypeConfirmationRespond:
+		c.handleConfirmationResponse(pc, msg)
+
 	case TypeMessageSend:
 		c.handleMessageSend(pc, msg)
 
@@ -1411,10 +1422,7 @@ func (c *PicoChannel) handleMessageSend(pc *picoConn, msg PicoMessage) {
 		content += strings.Join(annotations, "\n")
 	}
 
-	sessionID := msg.SessionID
-	if sessionID == "" {
-		sessionID = pc.sessionID
-	}
+	sessionID := pc.sessionID // Never trust a client-supplied session_id over the authenticated connection.
 
 	chatID := "pico:" + sessionID
 	senderID := "pico-user"

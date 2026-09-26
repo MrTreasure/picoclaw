@@ -882,7 +882,7 @@ func TestHandleWebSocketProxyRejectsStalePidDataAfterProcessExit(t *testing.T) {
 	}
 }
 
-func TestHandleWebSocketProxy_AllowsArbitraryOrigin(t *testing.T) {
+func TestHandleWebSocketProxy_RejectsCrossOrigin(t *testing.T) {
 	origMatcher := gatewayProcessMatcher
 	gatewayProcessMatcher = func(int) (bool, bool) { return true, true }
 	t.Cleanup(func() { gatewayProcessMatcher = origMatcher })
@@ -949,8 +949,8 @@ func TestHandleWebSocketProxy_AllowsArbitraryOrigin(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusForbidden)
 	}
 }
 

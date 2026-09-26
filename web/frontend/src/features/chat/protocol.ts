@@ -116,6 +116,70 @@ export function handlePicoMessage(
 
   const payload = message.payload || {}
 
+  // Confirmation events must carry an explicit session ID; the generic
+  // message handler allows older event types without one for compatibility.
+  if (
+    message.type === "confirmation.request" ||
+    message.type === "confirmation.resolved"
+  ) {
+    if (
+      message.session_id !== expectedSessionId ||
+      !message.payload ||
+      typeof message.payload !== "object" ||
+      Array.isArray(message.payload)
+    )
+      return
+    const requestId = payload.request_id ?? message.id
+    if (
+      typeof requestId !== "string" ||
+      !requestId.trim() ||
+      requestId.length > 256
+    )
+      return
+    if (message.type === "confirmation.request") {
+      const prompt = payload.prompt
+      if (
+        typeof prompt !== "string" ||
+        !prompt.trim() ||
+        prompt.length > 16_384
+      )
+        return
+      updateChatStore((prev) => {
+        if (
+          prev.activeSessionId !== expectedSessionId ||
+          prev.pendingConfirmations.some(
+            (item) => item.requestId === requestId,
+          ) ||
+          prev.pendingConfirmations.length >= 8
+        )
+          return {}
+        return {
+          pendingConfirmations: [
+            ...prev.pendingConfirmations,
+            {
+              requestId,
+              sessionId: expectedSessionId,
+              prompt,
+              status: "awaiting" as const,
+            },
+          ],
+        }
+      })
+    } else {
+      if (typeof payload.approved !== "boolean") return
+      updateChatStore((prev) => ({
+        pendingConfirmations: prev.pendingConfirmations.filter(
+          (item) =>
+            !(
+              item.requestId === requestId &&
+              item.sessionId === expectedSessionId
+            ),
+        ),
+      }))
+    }
+    return
+  }
+
   switch (message.type) {
     case "message.create":
     case "media.create": {
@@ -328,7 +392,15 @@ export function handlePicoMessage(
       }
       updateChatStore((prev) => ({
         messages: requestId
-          ? prev.messages.filter((msg) => msg.id !== requestId)
+          ? prev.messages.map((msg) =>
+              msg.id === requestId && msg.role === "user" && msg.sendStatus
+                ? {
+                    ...msg,
+                    sendStatus: "failed" as const,
+                    sendError: errorMessage || undefined,
+                  }
+                : msg,
+            )
           : prev.messages,
         isTyping: false,
         assistantActivity: undefined,

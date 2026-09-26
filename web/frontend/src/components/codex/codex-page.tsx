@@ -1,4 +1,5 @@
 import {
+  IconArrowDown,
   IconArrowLeft,
   IconPlayerStop,
   IconPlus,
@@ -7,6 +8,7 @@ import {
 } from "@tabler/icons-react"
 import { useNavigate } from "@tanstack/react-router"
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -81,7 +83,13 @@ export function CodexPage({ threadId }: CodexPageProps) {
 function CodexConversationPage({ threadId }: { threadId?: string }) {
   const navigate = useNavigate()
   const rpcRef = useRef<CodexRpcClient | null>(null)
-  const listBottomRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLElement>(null)
+  const followRef = useRef(true)
+  const lastScrollTopRef = useRef(0)
+  const scrollThreadRef = useRef(threadId)
+  const positionedThreadRef = useRef<string | undefined>(undefined)
+  const [showJump, setShowJump] = useState(false)
+  const [loadedThreadId, setLoadedThreadId] = useState<string | null>(null)
   const [connected, setConnected] = useState(false)
   const [error, setError] = useState("")
   const [threads, setThreads] = useState<CodexThread[]>([])
@@ -129,7 +137,28 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
     const rpc = new CodexRpcClient()
     rpcRef.current = rpc
     let cancelled = false
+    // Keep item events in arrival order; a completed item must replace all
+    // preceding deltas, not be overwritten by a later frame callback.
+    let pendingItems: Array<(items: CodexItem[]) => CodexItem[]> = []
+    let frame: number | null = null
+    const flushItems = () => {
+      if (frame !== null) {
+        cancelAnimationFrame(frame)
+        frame = null
+      }
+      if (!pendingItems.length) return
+      const updates = pendingItems
+      pendingItems = []
+      setItems((current) =>
+        updates.reduce((items, update) => update(items), current),
+      )
+    }
+    const queueItem = (update: (items: CodexItem[]) => CodexItem[]) => {
+      pendingItems.push(update)
+      if (frame === null) frame = requestAnimationFrame(flushItems)
+    }
     rpc.onClose = () => {
+      flushItems()
       if (!cancelled) setConnected(false)
     }
     rpc.onEvent = (message: CodexRpcMessage) => {
@@ -155,12 +184,16 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
       ) {
         if (params.threadId !== threadId) return
         const item = params.item as CodexItem | undefined
-        if (!item) return
-        setItems((current) => {
+        if (!item) {
+          if (message.method === "item/completed") flushItems()
+          return
+        }
+        queueItem((current) => {
           const index = current.findIndex((existing) => existing.id === item.id)
           if (index < 0) return [...current, item]
           return current.map((existing, at) => (at === index ? item : existing))
         })
+        if (message.method === "item/completed") flushItems()
       }
       if (
         message.method === "item/agentMessage/delta" ||
@@ -170,7 +203,7 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
         const itemId = params.itemId as string | undefined
         const delta = params.delta as string | undefined
         if (!itemId || !delta) return
-        setItems((current) => {
+        queueItem((current) => {
           const index = current.findIndex((existing) => existing.id === itemId)
           const type =
             message.method === "item/agentMessage/delta"
@@ -204,9 +237,12 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
       }
       if (message.method === "turn/started" && params.threadId === threadId)
         setRunning(true)
-      if (message.method === "turn/completed" && params.threadId === threadId)
+      if (message.method === "turn/completed" && params.threadId === threadId) {
+        flushItems()
         setRunning(false)
+      }
       if (message.method === "error" && params.threadId === threadId) {
+        flushItems()
         const detail = params.error as { message?: string } | undefined
         setError(detail?.message ?? "Codex 运行失败")
       }
@@ -228,7 +264,9 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
               await navigate({ to: "/codex", search: {} })
               return
             }
+            flushItems()
             setItems(flattenThread(result.thread))
+            setLoadedThreadId(threadId)
             setTitle(result.thread.name || result.thread.preview || "Codex")
             setWorkspace(result.thread.cwd || "")
             setRunning(result.thread.status?.type === "active")
@@ -245,15 +283,64 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
       })
     return () => {
       cancelled = true
+      // The next mount restores durable thread state; never schedule a state
+      // update on a conversation that has already unmounted.
+      if (frame !== null) cancelAnimationFrame(frame)
+      pendingItems = []
       rpc.close()
       rpcRef.current = null
     }
   }, [loadLists, navigate, threadId])
 
-  useLayoutEffect(
-    () => listBottomRef.current?.scrollIntoView({ block: "end" }),
-    [items, running, approval],
-  )
+  const threadReady = !!threadId && loadedThreadId === threadId
+
+  useLayoutEffect(() => {
+    if (scrollThreadRef.current !== threadId) {
+      scrollThreadRef.current = threadId
+      followRef.current = true
+      positionedThreadRef.current = undefined
+      lastScrollTopRef.current = 0
+      setShowJump(false)
+      setApproval(null)
+    }
+    const list = listRef.current
+    if (!list || !threadReady) return
+    if (positionedThreadRef.current !== threadId) {
+      // Initial positioning happens before paint, even for long histories.
+      positionedThreadRef.current = threadId
+      followRef.current = true
+      list.scrollTop = list.scrollHeight
+      lastScrollTopRef.current = list.scrollTop
+      setShowJump(false)
+    } else if (followRef.current) {
+      list.scrollTop = list.scrollHeight
+      lastScrollTopRef.current = list.scrollTop
+    }
+  }, [threadId, threadReady, items, running, approval])
+
+  const onListScroll = () => {
+    const list = listRef.current
+    if (!list || !threadReady || positionedThreadRef.current !== threadId)
+      return
+    const nearBottom =
+      list.scrollHeight - list.clientHeight - list.scrollTop <= 96
+    // Content growth can increase distance from bottom without a user scroll.
+    // Only scrolling upward (including scrollbar drags) suspends auto-follow.
+    if (nearBottom) followRef.current = true
+    else if (list.scrollTop < lastScrollTopRef.current - 1)
+      followRef.current = false
+    lastScrollTopRef.current = list.scrollTop
+    setShowJump(!followRef.current)
+  }
+
+  const jumpToLatest = () => {
+    const list = listRef.current
+    if (!list || !threadReady) return
+    followRef.current = true
+    list.scrollTop = list.scrollHeight
+    lastScrollTopRef.current = list.scrollTop
+    setShowJump(false)
+  }
 
   const createThread = async () => {
     const rpc = rpcRef.current
@@ -459,142 +546,180 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
         </main>
       ) : (
         <>
-          <main className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
-            <div className="mx-auto max-w-3xl space-y-4">
-              {items.filter(displayItem).map((item) => (
-                <CodexItemView key={item.id} item={item} />
-              ))}
-              {running && (
-                <div className="text-muted-foreground px-2 text-sm">
-                  Codex 正在处理…
-                </div>
-              )}
-              {approval && (
-                <div className="bg-card rounded-2xl border border-amber-500/50 p-4">
-                  {approval.method === "item/tool/requestUserInput" ? (
-                    <>
-                      <h2 className="font-semibold">Codex 需要你的回答</h2>
-                      {(
-                        (approval.params.questions as CodexQuestion[]) ?? []
-                      ).map((question) => (
-                        <label key={question.id} className="mt-3 block text-sm">
-                          <span className="font-medium">{question.header}</span>
-                          <span className="mt-1 block">
-                            {question.question}
-                          </span>
-                          {question.options?.length ? (
-                            <select
-                              className="bg-background border-border mt-2 min-h-11 w-full rounded-xl border px-3"
-                              value={answers[question.id] ?? ""}
-                              onChange={(event) =>
-                                setAnswers((current) => ({
-                                  ...current,
-                                  [question.id]: event.target.value,
-                                }))
-                              }
-                            >
-                              <option value="">请选择</option>
-                              {question.options.map((option) => (
-                                <option key={option.label} value={option.label}>
-                                  {option.label} — {option.description}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <input
-                              type={question.isSecret ? "password" : "text"}
-                              className="bg-background border-border mt-2 min-h-11 w-full rounded-xl border px-3"
-                              value={answers[question.id] ?? ""}
-                              onChange={(event) =>
-                                setAnswers((current) => ({
-                                  ...current,
-                                  [question.id]: event.target.value,
-                                }))
-                              }
-                            />
-                          )}
-                        </label>
-                      ))}
-                      <Button
-                        className="mt-3 min-h-11"
-                        onClick={() => {
-                          const questions =
-                            (approval.params.questions as CodexQuestion[]) ?? []
-                          rpcRef.current?.respond(approval.id, {
-                            answers: Object.fromEntries(
-                              questions.map((question) => [
-                                question.id,
-                                { answers: [answers[question.id] ?? ""] },
-                              ]),
-                            ),
-                          })
-                          setApproval(null)
-                        }}
-                      >
-                        提交回答
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      <h2 className="font-semibold">需要你确认</h2>
-                      <p className="text-muted-foreground mt-1 text-sm">
-                        {String(approval.params.reason || approval.method)}
-                      </p>
-                      <pre className="bg-background mt-2 max-h-36 overflow-auto rounded-xl p-3 text-xs whitespace-pre-wrap">
-                        {String(
-                          approval.params.command ||
-                            JSON.stringify(
-                              approval.params.permissions ?? approval.params,
-                              null,
-                              2,
-                            ),
-                        )}
-                      </pre>
-                      <div className="mt-3 flex gap-2">
-                        <Button
-                          variant="outline"
-                          className="min-h-11"
-                          onClick={() => {
-                            rpcRef.current?.respond(
-                              approval.id,
-                              approval.method ===
-                                "item/permissions/requestApproval"
-                                ? { permissions: {}, scope: "turn" }
-                                : { decision: "decline" },
-                            )
-                            setApproval(null)
-                          }}
-                        >
-                          拒绝
-                        </Button>
-                        <Button
-                          className="min-h-11"
-                          onClick={() => {
-                            rpcRef.current?.respond(
-                              approval.id,
-                              approval.method ===
-                                "item/permissions/requestApproval"
-                                ? {
-                                    permissions: grantedPermissions(
-                                      approval.params.permissions,
-                                    ),
-                                    scope: "turn",
-                                  }
-                                : { decision: "accept" },
-                            )
-                            setApproval(null)
-                          }}
-                        >
-                          允许本次
-                        </Button>
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <main
+              ref={listRef}
+              onScroll={onListScroll}
+              className="min-h-0 flex-1 overflow-y-auto px-3 py-4"
+            >
+              <div className="mx-auto max-w-3xl space-y-4">
+                {threadReady && (
+                  <>
+                    {items.filter(displayItem).map((item) => (
+                      <CodexItemView key={item.id} item={item} />
+                    ))}
+                    {running && (
+                      <div className="text-muted-foreground px-2 text-sm">
+                        Codex 正在处理…
                       </div>
-                    </>
-                  )}
-                </div>
-              )}
-              <div ref={listBottomRef} />
-            </div>
-          </main>
+                    )}
+                    {approval && (
+                      <div className="bg-card rounded-2xl border border-amber-500/50 p-4">
+                        {approval.method === "item/tool/requestUserInput" ? (
+                          <>
+                            <h2 className="font-semibold">
+                              Codex 需要你的回答
+                            </h2>
+                            {(
+                              (approval.params.questions as CodexQuestion[]) ??
+                              []
+                            ).map((question) => (
+                              <label
+                                key={question.id}
+                                className="mt-3 block text-sm"
+                              >
+                                <span className="font-medium">
+                                  {question.header}
+                                </span>
+                                <span className="mt-1 block">
+                                  {question.question}
+                                </span>
+                                {question.options?.length ? (
+                                  <select
+                                    className="bg-background border-border mt-2 min-h-11 w-full rounded-xl border px-3"
+                                    value={answers[question.id] ?? ""}
+                                    onChange={(event) =>
+                                      setAnswers((current) => ({
+                                        ...current,
+                                        [question.id]: event.target.value,
+                                      }))
+                                    }
+                                  >
+                                    <option value="">请选择</option>
+                                    {question.options.map((option) => (
+                                      <option
+                                        key={option.label}
+                                        value={option.label}
+                                      >
+                                        {option.label} — {option.description}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <input
+                                    type={
+                                      question.isSecret ? "password" : "text"
+                                    }
+                                    className="bg-background border-border mt-2 min-h-11 w-full rounded-xl border px-3"
+                                    value={answers[question.id] ?? ""}
+                                    onChange={(event) =>
+                                      setAnswers((current) => ({
+                                        ...current,
+                                        [question.id]: event.target.value,
+                                      }))
+                                    }
+                                  />
+                                )}
+                              </label>
+                            ))}
+                            <Button
+                              className="mt-3 min-h-11"
+                              onClick={() => {
+                                const questions =
+                                  (approval.params
+                                    .questions as CodexQuestion[]) ?? []
+                                rpcRef.current?.respond(approval.id, {
+                                  answers: Object.fromEntries(
+                                    questions.map((question) => [
+                                      question.id,
+                                      { answers: [answers[question.id] ?? ""] },
+                                    ]),
+                                  ),
+                                })
+                                setApproval(null)
+                              }}
+                            >
+                              提交回答
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <h2 className="font-semibold">需要你确认</h2>
+                            <p className="text-muted-foreground mt-1 text-sm">
+                              {String(
+                                approval.params.reason || approval.method,
+                              )}
+                            </p>
+                            <pre className="bg-background mt-2 max-h-36 overflow-auto rounded-xl p-3 text-xs whitespace-pre-wrap">
+                              {String(
+                                approval.params.command ||
+                                  JSON.stringify(
+                                    approval.params.permissions ??
+                                      approval.params,
+                                    null,
+                                    2,
+                                  ),
+                              )}
+                            </pre>
+                            <div className="mt-3 flex gap-2">
+                              <Button
+                                variant="outline"
+                                className="min-h-11"
+                                onClick={() => {
+                                  rpcRef.current?.respond(
+                                    approval.id,
+                                    approval.method ===
+                                      "item/permissions/requestApproval"
+                                      ? { permissions: {}, scope: "turn" }
+                                      : { decision: "decline" },
+                                  )
+                                  setApproval(null)
+                                }}
+                              >
+                                拒绝
+                              </Button>
+                              <Button
+                                className="min-h-11"
+                                onClick={() => {
+                                  rpcRef.current?.respond(
+                                    approval.id,
+                                    approval.method ===
+                                      "item/permissions/requestApproval"
+                                      ? {
+                                          permissions: grantedPermissions(
+                                            approval.params.permissions,
+                                          ),
+                                          scope: "turn",
+                                        }
+                                      : { decision: "accept" },
+                                  )
+                                  setApproval(null)
+                                }}
+                              >
+                                允许本次
+                              </Button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </main>
+            {showJump && threadReady && (
+              <Button
+                className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full shadow-lg"
+                onClick={jumpToLatest}
+                aria-label={
+                  approval ? "跳转到 Codex 待处理请求" : "跳转到最新消息"
+                }
+              >
+                <IconArrowDown className="size-4" />
+                {approval ? "有待处理请求 · 跳转到底部" : "跳转到最新消息"}
+              </Button>
+            )}
+          </div>
           <div className="bg-background border-border shrink-0 border-t px-3 pt-3 pb-[calc(.75rem+env(safe-area-inset-bottom))]">
             <div className="mx-auto flex max-w-3xl items-end gap-2">
               <Textarea
@@ -621,7 +746,11 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
   )
 }
 
-function CodexItemView({ item }: { item: CodexItem }) {
+const CodexItemView = memo(function CodexItemView({
+  item,
+}: {
+  item: CodexItem
+}) {
   if (item.type === "userMessage")
     return (
       <div className="bg-secondary text-secondary-foreground ml-auto max-w-[90%] rounded-2xl px-4 py-3 whitespace-pre-wrap">
@@ -662,4 +791,4 @@ function CodexItemView({ item }: { item: CodexItem }) {
       </pre>
     </details>
   )
-}
+})
