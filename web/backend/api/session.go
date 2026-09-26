@@ -1085,6 +1085,49 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	items := h.cachedSessionSummaries(dir, toolFeedbackMaxArgsLength)
+
+	// Pagination parameters
+	offsetStr := r.URL.Query().Get("offset")
+	limitStr := r.URL.Query().Get("limit")
+
+	offset := 0
+	limit := 20 // Default limit
+
+	if val, err := strconv.Atoi(offsetStr); err == nil && val >= 0 {
+		offset = val
+	}
+	if val, err := strconv.Atoi(limitStr); err == nil && val > 0 {
+		limit = val
+	}
+	if channel := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("channel"))); channel != "" {
+		filtered := items[:0]
+		for _, item := range items {
+			if item.Channel == channel {
+				filtered = append(filtered, item)
+			}
+		}
+		items = filtered
+	}
+
+	totalItems := len(items)
+
+	end := offset + limit
+	if offset >= totalItems {
+		items = []sessionListItem{} // Out of bounds, return empty
+	} else {
+		if end > totalItems {
+			end = totalItems
+		}
+		items = items[offset:end]
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
+}
+
+// scanSessionSummaries reads the entire unfiltered listing for cache population.
+func (h *Handler) scanSessionSummaries(dir string, toolFeedbackMaxArgsLength int) []sessionListItem {
 	items := []sessionListItem{}
 	seen := make(map[string]struct{})
 
@@ -1129,43 +1172,7 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		return items[i].Updated > items[j].Updated
 	})
 
-	// Pagination parameters
-	offsetStr := r.URL.Query().Get("offset")
-	limitStr := r.URL.Query().Get("limit")
-
-	offset := 0
-	limit := 20 // Default limit
-
-	if val, err := strconv.Atoi(offsetStr); err == nil && val >= 0 {
-		offset = val
-	}
-	if val, err := strconv.Atoi(limitStr); err == nil && val > 0 {
-		limit = val
-	}
-	if channel := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("channel"))); channel != "" {
-		filtered := items[:0]
-		for _, item := range items {
-			if item.Channel == channel {
-				filtered = append(filtered, item)
-			}
-		}
-		items = filtered
-	}
-
-	totalItems := len(items)
-
-	end := offset + limit
-	if offset >= totalItems {
-		items = []sessionListItem{} // Out of bounds, return empty
-	} else {
-		if end > totalItems {
-			end = totalItems
-		}
-		items = items[offset:end]
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
+	return items
 }
 
 // handleGetSession returns the full message history for a specific session.
