@@ -75,6 +75,18 @@ export type ConnectionState =
 
 export type AssistantActivity = "thinking" | "tool"
 
+export interface TodoItem {
+  short: string
+  content: string
+  status: "pending" | "in_progress" | "completed"
+}
+
+export interface SessionTodoList {
+  sessionId: string
+  revision: number
+  items: TodoItem[]
+}
+
 export interface PendingConfirmation {
   requestId: string
   sessionId: string
@@ -84,6 +96,7 @@ export interface PendingConfirmation {
 }
 
 export interface ChatStoreState {
+  todoList?: SessionTodoList
   pendingConfirmations: PendingConfirmation[]
   messages: ChatMessage[]
   connectionState: ConnectionState

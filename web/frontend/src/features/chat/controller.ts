@@ -13,13 +13,13 @@ import {
   saveCachedSession,
 } from "@/features/chat/local-cache"
 import { type PicoMessage, handlePicoMessage } from "@/features/chat/protocol"
-import { createStreamUpdateBatcher } from "@/features/chat/stream-update-batcher"
 import {
   generateSessionId,
   normalizeSessionId,
   readStoredSessionId,
   writeStoredSessionId,
 } from "@/features/chat/state"
+import { createStreamUpdateBatcher } from "@/features/chat/stream-update-batcher"
 import { invalidateSocket, isCurrentSocket } from "@/features/chat/websocket"
 import i18n from "@/i18n"
 import {
@@ -136,7 +136,11 @@ function reconnectStaleSocket() {
   invalidateSocket(socket)
   streamUpdates.discard()
   markPendingUnconfirmed()
-  updateChatStore({ pendingConfirmations: [], connectionState: "connecting" })
+  updateChatStore({
+    pendingConfirmations: [],
+    todoList: undefined,
+    connectionState: "connecting",
+  })
   void connectChat()
 }
 
@@ -241,7 +245,7 @@ async function reconcileSessionAfterConnect({
 function setActiveSessionId(sessionId: string) {
   activeSessionIdRef = sessionId
   writeStoredSessionId(sessionId)
-  updateChatStore({ activeSessionId: sessionId })
+  updateChatStore({ activeSessionId: sessionId, todoList: undefined })
 }
 
 function disconnectChatInternal({
@@ -267,6 +271,7 @@ function disconnectChatInternal({
 
   updateChatStore({
     pendingConfirmations: [],
+    todoList: undefined,
     connectionState: "disconnected",
     isTyping: false,
     assistantActivity: undefined,
@@ -325,7 +330,7 @@ export async function connectChat() {
       ) {
         return
       }
-      updateChatStore({ connectionState: "connected" })
+      updateChatStore({ connectionState: "connected", todoList: undefined })
       isConnecting = false
       reconnectAttempts = 0
       lastPongAt = Date.now()
@@ -375,7 +380,7 @@ export async function connectChat() {
       isConnecting = false
       streamUpdates.discard()
       markPendingUnconfirmed()
-      updateChatStore({ pendingConfirmations: [] })
+      updateChatStore({ pendingConfirmations: [], todoList: undefined })
       updateChatStore(
         document.visibilityState === "hidden"
           ? { isTyping: false, assistantActivity: undefined }

@@ -122,6 +122,11 @@ func (al *AgentLoop) prepareInboundMessageForAgent(
 }
 
 func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	// A plan draft cannot invoke audio transcription, attachment processing or
+	// other pre-turn transforms. Reject media rather than silently losing it.
+	if msg.Channel == "pico" && msg.Context.Raw["pico_mode"] == "plan" && len(msg.Media) > 0 {
+		return "Plan Mode currently supports text only. No actions were executed.", nil
+	}
 	msg = al.prepareInboundMessageForAgent(ctx, msg)
 
 	// Add message preview to log (show full content for error messages)
@@ -159,27 +164,22 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	scopeKey := resolveScopeKey(allocation.SessionKey, msg.SessionKey)
 	sessionKey := scopeKey
 
-	if err := al.maybeResetDailySession(ctx, agent, sessionKey, msg.Channel, time.Now()); err != nil {
-		logger.WarnCF("agent", "Daily session reset failed", map[string]any{
-			"agent_id":    agent.ID,
-			"channel":     msg.Channel,
-			"session_key": sessionKey,
-			"error":       err.Error(),
-		})
-	}
-	if err := al.maybeMaintainSession(ctx, agent, sessionKey, msg.Channel); err != nil {
-		logger.WarnCF("agent", "Session maintenance failed", map[string]any{
-			"agent_id":    agent.ID,
-			"channel":     msg.Channel,
-			"session_key": sessionKey,
-			"error":       err.Error(),
-		})
-	}
-
-	// Reset message-tool state for this round so we don't skip publishing due to a previous round.
-	if tool, ok := agent.Tools.Get("message"); ok {
-		if resetter, ok := tool.(interface{ ResetSentInRound(sessionKey string) }); ok {
-			resetter.ResetSentInRound(sessionKey)
+	if msg.Context.Raw["pico_mode"] != "plan" {
+		if err := al.maybeResetDailySession(ctx, agent, sessionKey, msg.Channel, time.Now()); err != nil {
+			logger.WarnCF("agent", "Daily session reset failed", map[string]any{
+				"agent_id":    agent.ID,
+				"channel":     msg.Channel,
+				"session_key": sessionKey,
+				"error":       err.Error(),
+			})
+		}
+		if err := al.maybeMaintainSession(ctx, agent, sessionKey, msg.Channel); err != nil {
+			logger.WarnCF("agent", "Session maintenance failed", map[string]any{
+				"agent_id":    agent.ID,
+				"channel":     msg.Channel,
+				"session_key": sessionKey,
+				"error":       err.Error(),
+			})
 		}
 	}
 
@@ -215,6 +215,18 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	opts, err = resolveTurnProfileOptions(al.GetConfig(), opts)
 	if err != nil {
 		return "", err
+	}
+
+	// Commands can modify state; never route an explicit Plan Mode message to them.
+	if msg.Channel == "pico" && msg.Context.Raw["pico_mode"] == "plan" {
+		return al.processPicoPlan(ctx, agent, opts)
+	}
+
+	// Reset message-tool state for this round so we don't skip publishing due to a previous round.
+	if tool, ok := agent.Tools.Get("message"); ok {
+		if resetter, ok := tool.(interface{ ResetSentInRound(sessionKey string) }); ok {
+			resetter.ResetSentInRound(sessionKey)
+		}
 	}
 
 	// context-dependent commands check their own Runtime fields and report

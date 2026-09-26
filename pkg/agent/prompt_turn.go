@@ -28,6 +28,11 @@ func promptBuildRequestForTurn(
 		ActiveSkills:      activeSkillNames(ts.agent, ts.opts),
 		Overlays:          promptOverlaysForOptions(ts.opts),
 	}
+	if ts.opts.PlanDraft {
+		req.SuppressSkillContext = true
+		req.SuppressToolUseRule = true
+		req.ActiveSkills = nil
+	}
 	hasCallableTools := true
 	if ts.profile.Enabled {
 		hasCallableTools = turnProfileHasCallableTools(ts.profile, ts.agent.Tools.ToProviderDefs()) ||

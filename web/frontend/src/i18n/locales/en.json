@@ -61,6 +61,16 @@
     "confirmationReject": "Reject",
     "confirmationWaiting": "Decision submitted; awaiting server confirmation…",
     "confirmationOffline": "Connection lost. This request cannot be answered offline.",
+    "todoTitle": "Tasks",
+    "planMode": "Plan Mode",
+    "planModeDescription": "Draft a plan first; execute only after your approval. Sensitive actions still require separate confirmation.",
+    "todoSummary": "{{completed}}/{{total}} completed",
+    "todoProgressOpen": "{{completed}}/{{total}} · {{task}}, view all tasks",
+    "todoStatus": {
+      "pending": "Pending",
+      "in_progress": "In progress",
+      "completed": "Completed"
+    },
     "thinking": {
       "step1": "Thinking...",
       "step2": "Analyzing your request...",

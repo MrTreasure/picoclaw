@@ -22,6 +22,7 @@ import {
 import { ChatControls } from "@/components/chat/chat-controls"
 import { ChatEmptyState } from "@/components/chat/chat-empty-state"
 import { ConfirmationCard } from "@/components/chat/confirmation-card"
+import { TodoProgress } from "@/components/chat/todo-progress"
 import { TypingIndicator } from "@/components/chat/typing-indicator"
 import { UserMessage } from "@/components/chat/user-message"
 import { Button } from "@/components/ui/button"
@@ -113,6 +114,7 @@ export function ChatPage() {
 function SessionChatPage({ sessionId }: { sessionId: string }) {
   const { t } = useTranslation()
   const pendingConfirmations = useAtomValue(chatAtom).pendingConfirmations
+  const todoList = useAtomValue(chatAtom).todoList
   const scrollRef = useRef<HTMLDivElement>(null)
   const scrollContentRef = useRef<HTMLDivElement>(null)
   const galleryInputRef = useRef<HTMLInputElement>(null)
@@ -770,6 +772,9 @@ function SessionChatPage({ sessionId }: { sessionId: string }) {
         onChange={handleDocumentSelection}
       />
 
+      <TodoProgress
+        list={todoList?.sessionId === sessionId ? todoList : undefined}
+      />
       <ChatComposer
         input={input}
         attachments={attachments}

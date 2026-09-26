@@ -129,6 +129,13 @@ toolLoop:
 			return ToolControlBreak
 		}
 
+		// A provider may emit unadvertised tool calls. Never dispatch one during
+		// drafting, including hidden/MCP/delegation tools and hook rewrites.
+		if ts.opts.PlanDraft {
+			_ = ts.requestHardAbort()
+			exec.abortedByHardAbort = true
+			return ToolControlBreak
+		}
 		toolName := tc.Name
 		toolArgs := cloneStringAnyMap(tc.Arguments)
 		denyByTurnProfile := func() bool {

@@ -329,6 +329,9 @@ func commitConfiguredStreamingBeforeTool(
 }
 
 func (p *Pipeline) configuredStreamingEligible(ts *turnState, exec *turnExecution) bool {
+	if ts != nil && ts.opts.PlanDraft {
+		return false
+	}
 	if p == nil || ts == nil || exec == nil || p.Bus == nil {
 		logger.DebugCF("agent", "configured streaming not used", map[string]any{
 			"reason": "missing_pipeline_state",

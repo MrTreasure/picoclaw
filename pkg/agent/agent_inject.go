@@ -8,6 +8,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/media"
 	"github.com/sipeed/picoclaw/pkg/tools"
+	"path/filepath"
 )
 
 func (al *AgentLoop) RegisterTool(tool tools.Tool) {
@@ -21,6 +22,7 @@ func (al *AgentLoop) RegisterTool(tool tools.Tool) {
 
 func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 	al.channelManager = cm
+	al.planConfirmation = nil
 	if cm == nil {
 		return
 	}
@@ -32,7 +34,14 @@ func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 	if !ok {
 		return
 	}
+	al.planConfirmation = bridge
 	al.RegisterTool(tools.NewAskUserConfirmationTool(bridge))
+	if todoBridge, ok := ch.(tools.PicoTodoBridge); ok {
+		if store, ok := ch.(interface{ SetTodoStorage(string) }); ok {
+			store.SetTodoStorage(filepath.Join(al.cfg.WorkspacePath(), "pico-todos"))
+		}
+		al.RegisterTool(tools.NewUpdateTodoListTool(todoBridge))
+	}
 }
 
 func (al *AgentLoop) GetRegistry() *AgentRegistry {

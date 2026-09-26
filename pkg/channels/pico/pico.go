@@ -117,6 +117,7 @@ type PicoChannel struct {
 	webPush        *picoPushService
 	confirmationMu sync.Mutex
 	confirmations  map[string]*pendingConfirmation
+	todos          *picoTodoStore
 }
 
 // NewPicoChannel creates a new Pico Protocol channel.
@@ -157,6 +158,7 @@ func NewPicoChannel(
 		connections:        make(map[string]*picoConn),
 		sessionConnections: make(map[string]map[string]*picoConn),
 		confirmations:      make(map[string]*pendingConfirmation),
+		todos:              newPicoTodoStore(),
 	}
 	ch.progress = channels.NewToolFeedbackAnimator(ch.EditMessage)
 	ch.deleteMessageFn = ch.DeleteMessage
@@ -1241,6 +1243,7 @@ func (c *PicoChannel) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		"session_id": sessionID,
 	})
 
+	c.sendTodoSnapshot(pc)
 	go c.readLoop(pc)
 }
 
@@ -1381,6 +1384,9 @@ func (c *PicoChannel) handleMessage(pc *picoConn, msg PicoMessage) {
 		pong.ID = msg.ID
 		pc.writeJSON(pong)
 
+	case TypeTodoSnapshot:
+		c.sendTodoSnapshot(pc)
+
 	case TypeConfirmationRespond:
 		c.handleConfirmationResponse(pc, msg)
 
@@ -1398,6 +1404,15 @@ func (c *PicoChannel) handleMessage(pc *picoConn, msg PicoMessage) {
 
 // handleMessageSend processes an inbound message.send from a client.
 func (c *PicoChannel) handleMessageSend(pc *picoConn, msg PicoMessage) {
+	// Plan Mode must fail closed before media parsing or any other processing.
+	if msg.Payload["mode"] == "plan" {
+		pc.writeJSON(newErrorWithPayload("plan_unavailable", "Plan Mode is not available yet", map[string]any{"request_id": msg.ID}))
+		return
+	}
+	if _, present := msg.Payload["mode"]; present {
+		pc.writeJSON(newErrorWithPayload("invalid_mode", "unsupported message mode", map[string]any{"request_id": msg.ID}))
+		return
+	}
 	content, _ := msg.Payload["content"].(string)
 	mediaRefs, annotations, err := c.parseInboundMedia(msg.Payload)
 	if err != nil {
@@ -1426,13 +1441,11 @@ func (c *PicoChannel) handleMessageSend(pc *picoConn, msg PicoMessage) {
 
 	chatID := "pico:" + sessionID
 	senderID := "pico-user"
-
 	metadata := map[string]string{
 		"platform":   "pico",
 		"session_id": sessionID,
 		"conn_id":    pc.id,
 	}
-
 	logger.DebugCF("pico", "Received message", map[string]any{
 		"session_id": sessionID,
 		"preview":    truncate(content, 50),

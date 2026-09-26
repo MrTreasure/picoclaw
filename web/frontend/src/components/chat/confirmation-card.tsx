@@ -17,41 +17,41 @@ export function ConfirmationCard({
     <section
       role="group"
       aria-label={t("chat.confirmationTitle")}
-      className="w-full rounded-xl border border-amber-500/40 bg-amber-500/10 p-4"
+      className="bg-card text-card-foreground ml-auto w-full max-w-xl rounded-2xl border border-border/70 px-4 py-3.5 shadow-sm sm:px-5 sm:py-4"
     >
-      <p className="mb-2 text-sm font-semibold">
+      <p className="text-muted-foreground mb-2 text-xs font-medium tracking-wide">
         {t("chat.confirmationTitle")}
       </p>
-      <p className="mb-3 text-sm break-words whitespace-pre-wrap">
+      <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">
         {confirmation.prompt}
       </p>
       {confirmation.status === "submitted" && (
-        <p role="status" className="text-muted-foreground mb-2 text-xs">
+        <p role="status" className="text-muted-foreground mt-2 text-xs">
           {t("chat.confirmationWaiting")}
         </p>
       )}
       {!connected && (
-        <p role="status" className="text-muted-foreground mb-2 text-xs">
+        <p role="status" className="text-muted-foreground mt-2 text-xs">
           {t("chat.confirmationOffline")}
         </p>
       )}
-      <div className="flex gap-2">
+      <div className="mt-4 flex items-center justify-end gap-2">
         <Button
           type="button"
-          size="sm"
-          disabled={disabled}
-          onClick={() => respondToConfirmation(confirmation.requestId, true)}
-        >
-          {t("chat.confirmationApprove")}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
           variant="outline"
+          className="min-h-11 min-w-20 rounded-xl px-4"
           disabled={disabled}
           onClick={() => respondToConfirmation(confirmation.requestId, false)}
         >
           {t("chat.confirmationReject")}
+        </Button>
+        <Button
+          type="button"
+          className="min-h-11 min-w-20 rounded-xl px-4"
+          disabled={disabled}
+          onClick={() => respondToConfirmation(confirmation.requestId, true)}
+        >
+          {t("chat.confirmationApprove")}
         </Button>
       </div>
     </section>

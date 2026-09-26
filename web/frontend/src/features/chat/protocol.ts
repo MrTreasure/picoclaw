@@ -116,6 +116,56 @@ export function handlePicoMessage(
 
   const payload = message.payload || {}
 
+  // TODO state comes only from server-issued versioned snapshots.
+  if (message.type === "todo.snapshot" || message.type === "todo.updated") {
+    if (
+      message.session_id !== expectedSessionId ||
+      !message.payload ||
+      typeof message.payload !== "object" ||
+      Array.isArray(message.payload) ||
+      !Number.isSafeInteger(payload.revision) ||
+      Number(payload.revision) < 0 ||
+      !Array.isArray(payload.items) ||
+      payload.items.length > 50
+    )
+      return
+    const items = [] as Array<{
+      short: string
+      content: string
+      status: "pending" | "in_progress" | "completed"
+    }>
+    for (const value of payload.items) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return
+      const item = value as Record<string, unknown>
+      if (
+        typeof item.content !== "string" ||
+        !item.content.trim() ||
+        item.content.length > 500 ||
+        typeof item.short !== "string" ||
+        !item.short.trim() ||
+        item.short.length > 80 ||
+        (item.status !== "pending" &&
+          item.status !== "in_progress" &&
+          item.status !== "completed")
+      )
+        return
+      items.push({
+        content: item.content,
+        short: item.short,
+        status: item.status,
+      })
+    }
+    const revision = payload.revision as number
+    updateChatStore((prev) =>
+      prev.activeSessionId === expectedSessionId &&
+      (prev.todoList?.sessionId !== expectedSessionId ||
+        revision >= prev.todoList.revision)
+        ? { todoList: { sessionId: expectedSessionId, revision, items } }
+        : {},
+    )
+    return
+  }
+
   // Confirmation events must carry an explicit session ID; the generic
   // message handler allows older event types without one for compatibility.
   if (

@@ -28,6 +28,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/routing"
 	"github.com/sipeed/picoclaw/pkg/session"
 	"github.com/sipeed/picoclaw/pkg/state"
+	"github.com/sipeed/picoclaw/pkg/tools"
 	"github.com/sipeed/picoclaw/pkg/utils"
 )
 
@@ -47,20 +48,21 @@ type AgentLoop struct {
 	hooks              *HookManager
 
 	// Runtime state
-	running        atomic.Bool
-	contextManager ContextManager
-	fallback       *providers.FallbackChain
-	channelManager interfaces.ChannelManager
-	mediaStore     media.MediaStore
-	transcriber    asr.Transcriber
-	cmdRegistry    *commands.Registry
-	mcp            mcpRuntime
-	evolution      *evolutionBridge
-	hookRuntime    hookRuntime
-	steering       *steeringQueue
-	pendingSkills  sync.Map
-	pendingStops   sync.Map
-	mu             sync.RWMutex
+	running          atomic.Bool
+	contextManager   ContextManager
+	fallback         *providers.FallbackChain
+	channelManager   interfaces.ChannelManager
+	planConfirmation tools.PicoConfirmationBridge
+	mediaStore       media.MediaStore
+	transcriber      asr.Transcriber
+	cmdRegistry      *commands.Registry
+	mcp              mcpRuntime
+	evolution        *evolutionBridge
+	hookRuntime      hookRuntime
+	steering         *steeringQueue
+	pendingSkills    sync.Map
+	pendingStops     sync.Map
+	mu               sync.RWMutex
 
 	// workerSem limits concurrent turn processing workers.
 	workerSem chan struct{}
@@ -106,6 +108,7 @@ type processOptions struct {
 	AllowInterimPicoPublish bool                   // Whether pico tool-call interim text can be published when SendResponse is false
 	SuppressToolFeedback    bool                   // Whether to suppress inline tool feedback messages
 	NoHistory               bool                   // If true, don't load session history (for heartbeat)
+	PlanDraft               bool                   // Server-enforced tool-free Pico draft phase
 	SkipInitialSteeringPoll bool                   // If true, skip the steering poll at loop start (used by Continue)
 	InboundContext          *bus.InboundContext    // Normalized inbound facts for events/hooks
 	RouteResult             *routing.ResolvedRoute // Route decision snapshot for events/hooks
@@ -535,6 +538,12 @@ func (al *AgentLoop) runAgentLoop(
 	opts, err = resolveTurnProfileOptions(al.GetConfig(), opts)
 	if err != nil {
 		return "", err
+	}
+	if opts.PlanDraft {
+		// Configuration must never widen the explicit draft policy.
+		opts.TurnProfile = config.EffectiveTurnProfile{Enabled: true, ToolsMode: config.TurnProfileModeOff, SkillsMode: config.TurnProfileModeOff}
+		opts.NoHistory = true
+		opts.EnableSummary = false
 	}
 
 	// Record last channel for heartbeat notifications (skip internal channels and cli)

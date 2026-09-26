@@ -14,6 +14,8 @@ const (
 	TypeConfirmationRespond  = "confirmation.respond"
 	TypeConfirmationRequest  = "confirmation.request"
 	TypeConfirmationResolved = "confirmation.resolved"
+	TypeTodoSnapshot         = "todo.snapshot"
+	TypeTodoUpdated          = "todo.updated"
 
 	// TypeMessageCreate is sent from server to client.
 	TypeMessageCreate = "message.create"

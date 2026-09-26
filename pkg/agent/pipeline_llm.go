@@ -39,8 +39,12 @@ func (p *Pipeline) CallLLM(
 	exec.providerToolDefs = ts.agent.Tools.ToProviderDefs()
 	exec.providerToolDefs = filterToolsByTurnProfile(exec.providerToolDefs, ts.profile)
 
+	if ts.opts.PlanDraft {
+		exec.providerToolDefs = nil
+	}
+
 	// Native web search support
-	webSearchEnabled := al.cfg.Tools.IsToolEnabled("web") && turnProfileToolAllowed(ts.profile, "web_search")
+	webSearchEnabled := !ts.opts.PlanDraft && al.cfg.Tools.IsToolEnabled("web") && turnProfileToolAllowed(ts.profile, "web_search")
 	exec.useNativeSearch = webSearchEnabled && al.cfg.Tools.Web.PreferNative &&
 		func() bool {
 			if ns, ok := exec.activeProvider.(providers.NativeSearchCapable); ok {
@@ -131,6 +135,10 @@ func (p *Pipeline) CallLLM(
 			filterToolsByTurnProfile(ts.agent.Tools.ToProviderDefs(), ts.profile),
 			"web_search",
 		)
+	}
+	if ts.opts.PlanDraft {
+		// Hooks and fallback providers cannot expose tools or native search in draft.
+		exec.providerToolDefs = nil
 	}
 	if exec.useNativeSearch {
 		exec.providerToolDefs = filterClientWebSearch(exec.providerToolDefs)
@@ -394,7 +402,7 @@ func (p *Pipeline) CallLLM(
 				},
 			)
 
-			if retry == 0 && !constants.IsInternalChannel(ts.channel) {
+			if retry == 0 && !ts.opts.PlanDraft && !constants.IsInternalChannel(ts.channel) {
 				al.bus.PublishOutbound(ctx, outboundMessageForTurn(
 					ts,
 					"Context window exceeded. Compressing history and retrying...",
@@ -655,6 +663,9 @@ func (p *Pipeline) CallLLM(
 				"content_chars": len(exec.finalContent),
 			})
 		return ControlBreak, nil
+	}
+	if ts.opts.PlanDraft {
+		return ControlBreak, fmt.Errorf("plan draft provider emitted an unauthorized tool call")
 	}
 	committedStream := commitConfiguredStreamingBeforeTool(turnCtx, ts, exec)
 
