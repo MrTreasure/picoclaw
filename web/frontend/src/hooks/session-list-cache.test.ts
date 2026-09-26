@@ -215,7 +215,7 @@ const thread = (id: string) => ({
   updatedAt: 1_700_000_001,
 })
 
-describe("account-scoped Codex legacy list cache", () => {
+describe("account-scoped Codex list cache", () => {
   it("isolates accounts and Pico, caps 50, strips message/status fields", async () => {
     const records = mockStorage()
     await writeSessionListCache(A, {
@@ -235,15 +235,22 @@ describe("account-scoped Codex legacy list cache", () => {
       source: "private",
     }))
     await writeCodexSessionListCache(A, [
-      ...many,
-      { ...thread("nonlegacy"), historyMode: "new" },
+      ...many.slice(0, MAX_CODEX_THREADS - 1),
+      { ...thread("paginated"), historyMode: "paginated" },
     ])
     await writeCodexSessionListCache(B, [thread("B")])
     expect((await readCodexSessionListCache(A))?.length).toBe(MAX_CODEX_THREADS)
+    expect((await readCodexSessionListCache(A))?.at(-1)?.historyMode).toBe(
+      "paginated",
+    )
     expect(JSON.stringify(records.get(`codex:${A}`))).not.toMatch(
       /raw message|secret|private|active/,
     )
     expect(await readCodexSessionListCache(B)).toEqual([thread("B")])
+    await writeCodexSessionListCache(A, many)
+    expect(await readCodexSessionListCache(A)).toBeNull()
+    expect(await readCodexSessionListCache(B)).toEqual([thread("B")])
+    await writeCodexSessionListCache(A, many.slice(0, MAX_CODEX_THREADS))
     await invalidateSessionListCache(A)
     expect(await readSessionListCache(A)).toBeNull()
     expect(await readCodexSessionListCache(A)).toHaveLength(MAX_CODEX_THREADS)

@@ -6,6 +6,7 @@ export interface SessionSummary {
   title: string
   preview: string
   message_count: number
+  sub_agent?: boolean
   created: string
   updated: string
 }

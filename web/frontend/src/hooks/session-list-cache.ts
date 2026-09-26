@@ -43,7 +43,7 @@ function validCodexThread(value: unknown): value is CachedCodexThread {
     typeof t.id === "string" &&
     t.id.length > 0 &&
     t.id.length <= 256 &&
-    t.historyMode === "legacy" &&
+    (t.historyMode === "legacy" || t.historyMode === "paginated") &&
     (t.name === undefined ||
       t.name === null ||
       (typeof t.name === "string" && t.name.length <= 256)) &&
@@ -87,7 +87,7 @@ function cleanCodexThreads(threads: CodexThread[]): CachedCodexThread[] {
   for (const t of threads) {
     if (!validCodexThread(t) || ids.has(t.id)) continue
     ids.add(t.id)
-    const clean: CachedCodexThread = { id: t.id, historyMode: "legacy" }
+    const clean: CachedCodexThread = { id: t.id, historyMode: t.historyMode }
     if (t.name !== undefined) clean.name = t.name
     if (t.preview !== undefined) clean.preview = t.preview
     if (t.cwd !== undefined) clean.cwd = t.cwd
@@ -149,6 +149,7 @@ function validSnapshot(value: unknown, scope: string): value is StoredSnapshot {
       typeof item.preview !== "string" ||
       !Number.isSafeInteger(item.message_count) ||
       item.message_count < 0 ||
+      (item.sub_agent !== undefined && typeof item.sub_agent !== "boolean") ||
       typeof item.created !== "string" ||
       typeof item.updated !== "string"
     )
@@ -255,7 +256,7 @@ export function writeSessionListCache(
   })
 }
 
-/** Account-scoped legacy Codex list; old v1 IndexedDB store needs no migration. */
+/** Account-scoped Codex list; old v1 IndexedDB store needs no migration. */
 export function readCodexSessionListCache(
   scope: string,
 ): Promise<CodexThread[] | null> {
@@ -279,10 +280,17 @@ export function writeCodexSessionListCache(
 ): Promise<void> {
   if (!validCacheScope(scope)) return Promise.resolve()
   const version = codexGeneration
+  // The fixed-size local cache cannot honestly represent a longer list.
   const clean = cleanCodexThreads(threads)
+  const incomplete =
+    threads.length > MAX_CODEX_THREADS || clean.length !== threads.length
   return ordered(async () => {
     if (version !== codexGeneration) return
     await operation<void>("readwrite", (store) => {
+      if (incomplete) {
+        store.delete(codexKey(scope))
+        return
+      }
       store.put({
         id: codexKey(scope),
         savedAt: Date.now(),

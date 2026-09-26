@@ -154,19 +154,31 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
     if (!client) return
     try {
       const [threadResult, workspaceResult] = await Promise.all([
-        client.request<{ data: CodexThread[] }>("thread/list", {
-          limit: 50,
-          sortKey: "recency_at",
-          // Codex app-server reports newly created PWA threads as source "vscode"
-          // in current releases; restricting to "appServer" hides them entirely.
-        }),
+        (async () => {
+          const threads: CodexThread[] = []
+          const cursors = new Set<string>()
+          let cursor: string | null = null
+          do {
+            const page: { data: CodexThread[]; nextCursor?: string | null } =
+              await client.request("thread/list", {
+                limit: 50,
+                sortKey: "recency_at",
+                // Newly created PWA threads may report source "vscode".
+                ...(cursor ? { cursor } : {}),
+              })
+            threads.push(...(page.data ?? []))
+            cursor = page.nextCursor ?? null
+            if (cursor) {
+              if (cursors.has(cursor))
+                throw new Error("Codex pagination cursor repeated")
+              cursors.add(cursor)
+            }
+          } while (cursor)
+          return threads
+        })(),
         getCodexWorkspaces(),
       ])
-      setThreads(
-        (threadResult.data ?? []).filter(
-          (thread) => thread.historyMode === "legacy",
-        ),
-      )
+      setThreads(threadResult)
       setWorkspaces(workspaceResult)
       setWorkspace((current) => current || workspaceResult[0]?.path || "")
     } catch (cause) {
@@ -333,7 +345,7 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
               includeTurns: true,
             })
             .then((result) => {
-              if (!cancelled && result.thread?.historyMode === "legacy")
+              if (!cancelled && result.thread)
                 void writeCodexHistoryCache(scope, threadId, result.thread)
             })
             .catch(() => {})
@@ -378,9 +390,8 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
               { threadId, includeTurns: true },
             )
             if (cancelled) return
-            if (result.thread.historyMode !== "legacy") {
-              await navigate({ to: "/codex", search: {} })
-              return
+            if (!result.thread || !Array.isArray(result.thread.turns)) {
+              throw new Error("Codex did not return complete thread turns")
             }
             flushItems()
             liveHydratedThreadRef.current = threadId

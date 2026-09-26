@@ -116,6 +116,7 @@ type sessionListItem struct {
 	Title        string `json:"title"`
 	Preview      string `json:"preview"`
 	MessageCount int    `json:"message_count"`
+	SubAgent     bool   `json:"sub_agent,omitempty"`
 	Created      string `json:"created"`
 	Updated      string `json:"updated"`
 }
@@ -129,6 +130,7 @@ type sessionChatMessage struct {
 	Media       []string                `json:"media,omitempty"`
 	Attachments []sessionChatAttachment `json:"attachments,omitempty"`
 	ToolCalls   []utils.VisibleToolCall `json:"tool_calls,omitempty"`
+	synthetic   bool                    // persisted tool results, not conversation prose
 }
 
 type sessionChatAttachment struct {
@@ -588,17 +590,30 @@ func (h *Handler) findLegacyPicoSession(dir, sessionID string) (picoLegacySessio
 func buildSessionListItem(sessionID, channel string, sess sessionFile, toolFeedbackMaxArgsLength int) sessionListItem {
 	transcript := visibleSessionMessages(sess.Messages, toolFeedbackMaxArgsLength)
 
+	// Select the latest substantive *visible* prose, not the first prompt. Tool
+	// plumbing and media payloads must never be exposed as list titles.
 	preview := ""
-	for _, msg := range transcript {
-		if msg.Role == "user" {
-			preview = sessionChatMessagePreview(msg)
+	fallback := ""
+	for i := len(transcript) - 1; i >= 0; i-- {
+		msg := transcript[i]
+		if msg.synthetic || msg.Kind == "thought" || msg.Kind == "tool_calls" {
+			continue
 		}
-		if preview != "" {
+		content := strings.TrimSpace(msg.Content)
+		if content != "" && !containsSessionMediaPayload(content) {
+			preview = content
 			break
 		}
+		if fallback == "" {
+			media := msg
+			media.Content = ""
+			fallback = sessionChatMessagePreview(media)
+		}
+	}
+	if preview == "" {
+		preview = fallback
 	}
 	preview = truncateRunes(preview, maxSessionTitleRunes)
-
 	if preview == "" {
 		preview = "(empty)"
 	}
@@ -610,9 +625,43 @@ func buildSessionListItem(sessionID, channel string, sess sessionFile, toolFeedb
 		Title:        title,
 		Preview:      preview,
 		MessageCount: len(transcript),
+		SubAgent:     isSubAgentConversation(sessionID, channel, sess.Messages),
 		Created:      sess.Created.Format(time.RFC3339),
 		Updated:      sess.Updated.Format(time.RFC3339),
 	}
+}
+
+// A semantic _sub ID is a sub-turn; old opaque sessions can instead contain
+// only async:spawn delivery messages. Mark the latter as subtask records only
+// when every user entry is an async spawn receipt, never from the title text.
+func isSubAgentConversation(id, channel string, messages []providers.Message) bool {
+	if channel != "pico" {
+		return false
+	}
+	if session.IsSemanticSessionKey(id) && strings.HasSuffix(id, "_sub") {
+		return true
+	}
+	if !session.IsOpaqueSessionKey(id) || len(messages) == 0 {
+		return false
+	}
+	found := false
+	for _, msg := range messages {
+		if msg.Role != "user" || msg.ToolCallID != "" {
+			continue
+		}
+		if !strings.HasPrefix(strings.TrimSpace(msg.Content), "[System: async:spawn]") {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
+// A raw media reference/data URL is not human-readable prose and may contain
+// private bytes or tokens. Prefer an earlier text message instead.
+func containsSessionMediaPayload(content string) bool {
+	lower := strings.ToLower(content)
+	return strings.Contains(lower, "data:") || strings.Contains(lower, "media://")
 }
 
 func isEmptySession(sess sessionFile) bool {
@@ -710,6 +759,7 @@ func sessionTranscriptMessages(
 			chatMsg := sessionChatMessage{
 				Role:        "user",
 				Content:     msg.Content,
+				synthetic:   msg.ToolCallID != "",
 				ModelName:   msg.ModelName,
 				CreatedAt:   msg.CreatedAt,
 				Media:       append([]string(nil), msg.Media...),
@@ -957,6 +1007,7 @@ func visibleAssistantToolMessages(
 		messages = append(messages, sessionChatMessage{
 			Role:      "assistant",
 			Content:   content,
+			synthetic: true,
 			ModelName: modelName,
 			CreatedAt: createdAt,
 		})

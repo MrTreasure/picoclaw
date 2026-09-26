@@ -81,11 +81,39 @@ function cleanThread(thread: CodexThread, id: string): CodexThread | null {
   if (
     !thread ||
     thread.id !== id ||
-    thread.historyMode !== "legacy" ||
+    (thread.historyMode !== "legacy" && thread.historyMode !== "paginated") ||
     !Array.isArray(thread.turns)
   )
     return null
   if (thread.turns.length > 200) return null // avoid silently caching partial histories
+  // A paginated thread/read with includeTurns may be cached only if every
+  // returned text field fits our bounds. Never present clipped text as complete.
+  if (
+    thread.historyMode === "paginated" &&
+    thread.turns.some(
+      (turn) =>
+        !turn ||
+        !Array.isArray(turn.items) ||
+        turn.items.some(
+          (item) =>
+            !item ||
+            ["text", "command", "aggregatedOutput"].some(
+              (field) =>
+                typeof item[field as keyof CodexItem] === "string" &&
+                (item[field as keyof CodexItem] as string).length > 32768,
+            ) ||
+            (Array.isArray(item.content) &&
+              (item.content.length > 64 ||
+                item.content.some(
+                  (part) =>
+                    part?.type === "text" &&
+                    typeof part.text === "string" &&
+                    part.text.length > 32768,
+                ))),
+        ),
+    )
+  )
+    return null
   const turns: CodexTurn[] = []
   let count = 0
   for (const turn of thread.turns) {
@@ -102,7 +130,7 @@ function cleanThread(thread: CodexThread, id: string): CodexThread | null {
     if (typeof turn.status === "string") out.status = text(turn.status, 128)
     turns.push(out)
   }
-  const out: CodexThread = { id, historyMode: "legacy", turns }
+  const out: CodexThread = { id, historyMode: thread.historyMode, turns }
   if (thread.name === null) out.name = null
   else if (typeof thread.name === "string") out.name = text(thread.name, 256)
   if (typeof thread.preview === "string")

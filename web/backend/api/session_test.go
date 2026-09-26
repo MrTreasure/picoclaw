@@ -154,14 +154,14 @@ func TestHandleListSessions_JSONLStorage(t *testing.T) {
 	if items[0].MessageCount != 2 {
 		t.Fatalf("items[0].MessageCount = %d, want 2", items[0].MessageCount)
 	}
-	if items[0].Title != "Explain why the history API is empty after migration." {
+	if items[0].Title != "Because the API still reads only legacy JSON session files." {
 		t.Fatalf(
 			"items[0].Title = %q, want %q",
 			items[0].Title,
-			"Explain why the history API is empty after migration.",
+			"Because the API still reads only legacy JSON session files.",
 		)
 	}
-	if items[0].Preview != "Explain why the history API is empty after migration." {
+	if items[0].Preview != "Because the API still reads only legacy JSON session files." {
 		t.Fatalf("items[0].Preview = %q", items[0].Preview)
 	}
 }
@@ -353,7 +353,7 @@ func TestHandleListSessions_TransientThoughtDoesNotInflateMessageCount(t *testin
 	}
 }
 
-func TestHandleListSessions_TitleUsesFirstUserMessage(t *testing.T) {
+func TestHandleListSessions_TitleUsesVisibleMessageNotSummary(t *testing.T) {
 	configPath, cleanup := setupOAuthTestEnv(t)
 	defer cleanup()
 
@@ -2080,5 +2080,54 @@ func TestSessionRefFromMetaExcludesCronWithPicoScope(t *testing.T) {
 	}
 	if ref, ok := sessionRefFromMeta(memory.SessionMeta{Key: "pico_20260926t111111111_main", Scope: scope}); !ok || ref.ID != "visible" {
 		t.Fatalf("real Pico session missing: %+v, %v", ref, ok)
+	}
+}
+
+func TestBuildSessionListItem_LatestSubstantiveVisibleMessage(t *testing.T) {
+	cases := []struct {
+		name     string
+		messages []providers.Message
+		want     string
+		count    int
+	}{
+		{"latest assistant reply", []providers.Message{{Role: "user", Content: "first question"}, {Role: "assistant", Content: "first answer"}, {Role: "user", Content: "later question"}, {Role: "assistant", Content: "latest answer"}}, "latest answer", 4},
+		{"latest user turn", []providers.Message{{Role: "user", Content: "first"}, {Role: "assistant", Content: "answer"}, {Role: "user", Content: "new request"}}, "new request", 3},
+		{"tool result and call skipped", []providers.Message{{Role: "user", Content: "first"}, {Role: "assistant", Content: "real response"}, {Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "call", Function: &providers.FunctionCall{Name: "exec", Arguments: `{}`}}}}, {Role: "user", ToolCallID: "call", Content: "secret tool output"}, {Role: "tool", ToolCallID: "call", Content: "secret result"}}, "real response", 4},
+		{"message tool synthetic skipped", []providers.Message{{Role: "user", Content: "real request"}, {Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "msg", Function: &providers.FunctionCall{Name: "message", Arguments: `{"content":"synthetic delivery"}`}}}}}, "real request", 3},
+		{"later media falls back to prose", []providers.Message{{Role: "user", Content: "describe this"}, {Role: "user", Media: []string{"data:image/png;base64,secret"}}}, "describe this", 2},
+		{"media only placeholder", []providers.Message{{Role: "user", Media: []string{"data:image/png;base64,secret"}}}, "[image]", 1},
+		{"raw media payload not title", []providers.Message{{Role: "user", Content: "safe request"}, {Role: "assistant", Content: "data:image/png;base64,secret"}}, "safe request", 2},
+		{"no visible text", []providers.Message{{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "call", Function: &providers.FunctionCall{Name: "exec", Arguments: `{}`}}}}, {Role: "tool", ToolCallID: "call", Content: "secret"}}, "(empty)", 1},
+		{"transient thought excluded", []providers.Message{{Role: "user", Content: "visible"}, {Role: "assistant", ReasoningContent: "internal thought"}}, "visible", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			item := buildSessionListItem("id", "pico", sessionFile{Messages: tc.messages}, 100)
+			if item.Title != tc.want || item.Preview != tc.want || item.MessageCount != tc.count {
+				t.Fatalf("item = %#v, want title/preview %q and count %d", item, tc.want, tc.count)
+			}
+		})
+	}
+}
+
+func TestIsSubAgentConversation(t *testing.T) {
+	cases := []struct {
+		name, id, channel string
+		messages          []providers.Message
+		want              bool
+	}{
+		{"semantic subturn", "pico_20260926t110855845_sub", "pico", []providers.Message{{Role: "user", Content: "work"}}, true},
+		{"async spawn receipts", "sk_v1_legacy", "pico", []providers.Message{{Role: "user", Content: "[System: async:spawn] result"}, {Role: "assistant", Content: "received"}}, true},
+		{"ordinary opaque", "sk_v1_legacy", "pico", []providers.Message{{Role: "user", Content: "hello"}}, false},
+		{"ordinary conversation mentioning spawn", "pico_20260926t110855845_main", "pico", []providers.Message{{Role: "user", Content: "spawn an agent"}}, false},
+		{"mixed opaque", "sk_v1_legacy", "pico", []providers.Message{{Role: "user", Content: "[System: async:spawn] result"}, {Role: "user", Content: "real user"}}, false},
+		{"weixin not subturn", "pico_20260926t110855845_sub", "weixin", []providers.Message{{Role: "user", Content: "[System: async:spawn] result"}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isSubAgentConversation(tc.id, tc.channel, tc.messages); got != tc.want {
+				t.Fatalf("isSubAgentConversation() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

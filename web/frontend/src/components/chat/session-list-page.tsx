@@ -61,7 +61,8 @@ const codexKey = (id: string) => `codex:${id}`
 // provenance from message text or from legacy opaque session IDs.
 const isSubAgentSession = (session: SessionSummary) =>
   session.channel === "pico" &&
-  /^[a-z0-9][a-z0-9-]*_\d{8}t\d{9}_sub$/.test(session.id)
+  (session.sub_agent === true ||
+    /^[a-z0-9][a-z0-9-]*_\d{8}t\d{9}_sub$/.test(session.id))
 
 export function SessionListPage() {
   const { t } = useTranslation()
@@ -129,12 +130,27 @@ export function SessionListPage() {
       const scope = status.cache_scope
       codexScopeRef.current = scope
       const cached = readCodexSessionListCache(scope)
-      const live = rpc.connect().then(() =>
-        rpc.request<{ data: CodexThread[] }>("thread/list", {
-          limit: 50,
-          sortKey: "recency_at",
-        }),
-      )
+      const live = rpc.connect().then(async () => {
+        const threads: CodexThread[] = []
+        const cursors = new Set<string>()
+        let cursor: string | null = null
+        do {
+          const page: { data: CodexThread[]; nextCursor?: string | null } =
+            await rpc.request("thread/list", {
+              limit: 50,
+              sortKey: "recency_at",
+              ...(cursor ? { cursor } : {}),
+            })
+          threads.push(...(page.data ?? []))
+          cursor = page.nextCursor ?? null
+          if (cursor) {
+            if (cursors.has(cursor))
+              throw new Error("Codex pagination cursor repeated")
+            cursors.add(cursor)
+          }
+        } while (cursor)
+        return threads
+      })
       // Ensure the live request cannot reject before a handler is attached.
       let liveSettled = false
       const settledLive = live.then(
@@ -164,9 +180,7 @@ export function SessionListPage() {
         setCodexStatus("error")
         return
       }
-      const threads = (outcome.result.data ?? []).filter(
-        (thread) => thread.historyMode === "legacy",
-      )
+      const threads = outcome.result
       setCodexThreads(threads)
       setCodexStatus("ready")
       void writeCodexSessionListCache(scope, threads)

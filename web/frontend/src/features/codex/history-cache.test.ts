@@ -120,7 +120,33 @@ describe("Codex history cache", () => {
     expect(await codexHistoryCacheStats(B)).toEqual({ count: 0, bytes: 0 })
   })
 
-  it("rejects invalid scopes, oversized histories and nonlegacy threads", async () => {
+  it("accepts complete paginated turns without changing their history mode", async () => {
+    mockIDB()
+    const t = { ...thread("paged"), historyMode: "paginated" }
+    await writeCodexHistoryCache(A, t.id, t)
+    expect(await readCodexHistoryCache(A, t.id)).toMatchObject({
+      historyMode: "paginated",
+      turns: [{ id: "turn", items: [{ id: "user" }, { id: "reply" }] }],
+    })
+    await writeCodexHistoryCache(A, "missing", {
+      id: "missing",
+      historyMode: "paginated",
+    })
+    expect(await readCodexHistoryCache(A, "missing")).toBeNull()
+    await writeCodexHistoryCache(A, "oversized", {
+      id: "oversized",
+      historyMode: "paginated",
+      turns: [
+        {
+          id: "t",
+          items: [{ id: "i", type: "agentMessage", text: "x".repeat(32769) }],
+        },
+      ],
+    })
+    expect(await readCodexHistoryCache(A, "oversized")).toBeNull()
+  })
+
+  it("rejects invalid scopes, oversized histories and unsupported modes", async () => {
     mockIDB()
     await writeCodexHistoryCache("token:bad", "one", thread("one"))
     await writeCodexHistoryCache(A, "one", {
