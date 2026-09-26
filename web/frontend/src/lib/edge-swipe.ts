@@ -6,6 +6,8 @@ const CHAT_FROM_SESSIONS_KEY = "picoclaw:chat-from-sessions"
 
 export function edgeSwipeAction(pathname: string): EdgeSwipeAction {
   if (pathname === "/") return "sessions"
+  if (pathname === "/codex") return "sessions"
+  if (pathname.startsWith("/sessions/")) return "sessions"
   if (pathname === "/sessions" || pathname === "/me") return "exit"
   return null
 }
@@ -23,10 +25,6 @@ export function clearChatNavigationOrigin() {
 }
 
 export function returnToSessions(fallback: () => void) {
-  if (window.sessionStorage.getItem(CHAT_FROM_SESSIONS_KEY) === "1") {
-    window.sessionStorage.removeItem(CHAT_FROM_SESSIONS_KEY)
-    window.history.back()
-    return
-  }
+  clearChatNavigationOrigin()
   fallback()
 }

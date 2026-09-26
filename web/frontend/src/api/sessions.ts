@@ -91,6 +91,27 @@ export async function getSessionHistory(
   return res.json()
 }
 
+export interface SessionToolCallDetail {
+  name: string
+  arguments: string
+  explanation: string
+  result: string
+  result_found: boolean
+}
+
+export async function getSessionToolCall(
+  sessionId: string,
+  callId: string,
+): Promise<SessionToolCallDetail> {
+  const res = await launcherFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/tool-calls/${encodeURIComponent(callId)}`,
+  )
+  if (!res.ok) {
+    throw new Error(`Failed to fetch tool call: ${res.status}`)
+  }
+  return res.json()
+}
+
 export async function deleteSession(id: string): Promise<void> {
   const res = await launcherFetch(`/api/sessions/${encodeURIComponent(id)}`, {
     method: "DELETE",

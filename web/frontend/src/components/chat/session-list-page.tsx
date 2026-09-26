@@ -1,5 +1,6 @@
 import {
   IconBrandWechat,
+  IconCode,
   IconMessageCircle,
   IconMessagePlus,
   IconSearch,
@@ -11,6 +12,8 @@ import dayjs from "dayjs"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 
+import { CodexRpcClient, type CodexThread } from "@/api/codex"
+import type { SessionSummary } from "@/api/sessions"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,6 +25,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { usePicoChat } from "@/hooks/use-pico-chat"
 import { useSessionHistory } from "@/hooks/use-session-history"
@@ -30,6 +40,10 @@ import {
   markChatOpenedFromSessions,
 } from "@/lib/edge-swipe"
 
+type SessionListEntry =
+  | { kind: "muse"; session: SessionSummary; updated: number }
+  | { kind: "codex"; thread: CodexThread; updated: number }
+
 export function SessionListPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -37,6 +51,8 @@ export function SessionListPage() {
   const [query, setQuery] = useState("")
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
+  const [showNewSession, setShowNewSession] = useState(false)
+  const [codexThreads, setCodexThreads] = useState<CodexThread[]>([])
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const longPressTriggeredRef = useRef(false)
   const loadedRef = useRef(false)
@@ -50,7 +66,7 @@ export function SessionListPage() {
     handleDeleteSessions,
   } = useSessionHistory({
     activeSessionId,
-    onDeletedActiveSession: newChat,
+    onDeletedActiveSession: () => void newChat(true),
   })
 
   useEffect(() => {
@@ -63,15 +79,64 @@ export function SessionListPage() {
     void loadSessions(true)
   }, [loadSessions])
 
-  const filteredSessions = useMemo(() => {
+  useEffect(() => {
+    let cancelled = false
+    const rpc = new CodexRpcClient()
+    void rpc
+      .connect()
+      .then(() =>
+        rpc.request<{ data: CodexThread[] }>("thread/list", {
+          limit: 50,
+          sortKey: "recency_at",
+        }),
+      )
+      .then((result) => {
+        if (!cancelled)
+          setCodexThreads(
+            (result.data ?? []).filter(
+              (thread) => thread.historyMode === "legacy",
+            ),
+          )
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+      rpc.close()
+    }
+  }, [])
+
+  const visibleEntries = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase()
-    if (!normalizedQuery) return sessions
-    return sessions.filter((session) =>
-      `${session.title} ${session.preview}`
-        .toLocaleLowerCase()
-        .includes(normalizedQuery),
+    const museEntries: SessionListEntry[] = sessions
+      .filter(
+        (session) =>
+          !normalizedQuery ||
+          `${session.title} ${session.preview}`
+            .toLocaleLowerCase()
+            .includes(normalizedQuery),
+      )
+      .map((session) => ({
+        kind: "muse",
+        session,
+        updated: dayjs(session.updated).valueOf(),
+      }))
+    const codexEntries: SessionListEntry[] = codexThreads
+      .filter(
+        (thread) =>
+          !normalizedQuery ||
+          `${thread.name || ""} ${thread.preview || ""} ${thread.cwd || ""}`
+            .toLocaleLowerCase()
+            .includes(normalizedQuery),
+      )
+      .map((thread) => ({
+        kind: "codex",
+        thread,
+        updated: (thread.updatedAt ?? thread.createdAt ?? 0) * 1000,
+      }))
+    return [...museEntries, ...codexEntries].sort(
+      (a, b) => b.updated - a.updated,
     )
-  }, [query, sessions])
+  }, [query, sessions, codexThreads])
 
   const selectionMode = selectedIds.size > 0
 
@@ -107,9 +172,12 @@ export function SessionListPage() {
       })
       return
     }
-    await switchSession(sessionId)
     markChatOpenedFromSessions()
-    await navigate({ to: "/" })
+    // Start navigation before changing the shared chat atom so the list does
+    // not paint once more with a different active session.
+    const navigation = navigate({ to: "/" })
+    void switchSession(sessionId)
+    await navigation
   }
 
   const createSession = async () => {
@@ -154,7 +222,7 @@ export function SessionListPage() {
                 variant="ghost"
                 size="icon"
                 className="size-12 rounded-full"
-                onClick={() => void createSession()}
+                onClick={() => setShowNewSession(true)}
                 aria-label={t("chat.newChat")}
               >
                 <IconMessagePlus className="size-6" aria-hidden="true" />
@@ -189,7 +257,7 @@ export function SessionListPage() {
             </div>
           )}
 
-          {!loadError && filteredSessions.length === 0 && (
+          {!loadError && visibleEntries.length === 0 && (
             <div className="text-muted-foreground flex flex-col items-center px-6 py-20 text-center">
               <div className="bg-muted mb-5 flex size-16 items-center justify-center rounded-2xl">
                 <IconMessageCircle className="size-8" aria-hidden="true" />
@@ -202,7 +270,46 @@ export function SessionListPage() {
           )}
 
           <div className="border-border/70 bg-card overflow-hidden rounded-2xl border">
-            {filteredSessions.map((session, index) => {
+            {visibleEntries.map((entry, index) => {
+              if (entry.kind === "codex") {
+                const thread = entry.thread
+                return (
+                  <div
+                    key={`codex:${thread.id}`}
+                    className={`flex min-h-23 items-center gap-3 px-3 py-3 sm:px-4 ${index > 0 ? "border-border/60 border-t" : ""}`}
+                  >
+                    <button
+                      type="button"
+                      className="focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left focus-visible:ring-2 focus-visible:outline-none"
+                      disabled={selectionMode}
+                      onClick={() =>
+                        void navigate({
+                          to: "/codex",
+                          search: { thread: thread.id },
+                        })
+                      }
+                    >
+                      <span className="bg-secondary/10 text-secondary flex size-14 shrink-0 items-center justify-center rounded-2xl">
+                        <IconCode className="size-7" aria-hidden="true" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center justify-between gap-3">
+                          <span className="truncate text-[17px] font-semibold">
+                            {thread.name || thread.preview || "Codex 对话"}
+                          </span>
+                          <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+                            {dayjs(entry.updated).format("HH:mm")}
+                          </span>
+                        </span>
+                        <span className="text-muted-foreground mt-1 block truncate text-sm">
+                          {thread.cwd || "Codex 对话"}
+                        </span>
+                      </span>
+                    </button>
+                  </div>
+                )
+              }
+              const session = entry.session
               const isActive = session.id === activeSessionId
               const isWeixin = session.channel === "weixin"
               return (
@@ -312,7 +419,11 @@ export function SessionListPage() {
                 const ids = [...selectedIds]
                 setConfirmBulkDelete(false)
                 void handleDeleteSessions(ids).then((deleted) => {
-                  if (deleted) setSelectedIds(new Set())
+                  setSelectedIds((current) => {
+                    const remaining = new Set(current)
+                    for (const id of deleted) remaining.delete(id)
+                    return remaining
+                  })
                 })
               }}
             >
@@ -321,6 +432,37 @@ export function SessionListPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={showNewSession} onOpenChange={setShowNewSession}>
+        <DialogContent className="rounded-3xl">
+          <DialogHeader>
+            <DialogTitle>新建会话</DialogTitle>
+            <DialogDescription>选择要对话的助手</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <Button
+              variant="outline"
+              className="min-h-14 justify-start text-base"
+              onClick={() => {
+                setShowNewSession(false)
+                void createSession()
+              }}
+            >
+              <IconMessageCircle className="size-5" /> MuseC137
+            </Button>
+            <Button
+              variant="outline"
+              className="min-h-14 justify-start text-base"
+              onClick={() => {
+                setShowNewSession(false)
+                void navigate({ to: "/codex", search: {} })
+              }}
+            >
+              <IconCode className="size-5" /> Codex
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -155,7 +155,7 @@ export function ChatComposer({
     if (menuOpen) void loadSkills()
     // Opening the menu is the prefetch boundary; state changes inside
     // loadSkills must not restart the request.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react/exhaustive-deps
   }, [menuOpen])
 
   const handleMenuOpenChange = (open: boolean) => {

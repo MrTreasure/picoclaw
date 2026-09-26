@@ -118,7 +118,7 @@ export function MessageCodeBlock({
     >
       <div className="flex items-center justify-between gap-2 border-b border-[#d0d7de] bg-black/[0.03] px-3 py-2 dark:border-[#30363d] dark:bg-white/[0.03]">
         <span
-          className="text-[11px] font-medium text-zinc-600 dark:text-zinc-400"
+          className="text-[11px] font-medium text-zinc-700 dark:text-zinc-300"
           style={{ fontFamily: CODE_LABEL_FONT_FAMILY }}
         >
           {blockLabel}
@@ -195,7 +195,7 @@ export function MessageCodeBlock({
                   } as CSSProperties
                 }
               >
-                <span className="sticky left-0 z-1 select-none bg-[#f6f8fa] text-right text-zinc-500/80 dark:bg-[#0d1117] dark:text-zinc-500">
+                <span className="sticky left-0 z-1 select-none bg-[#f6f8fa] text-right text-zinc-600 dark:bg-[#0d1117] dark:text-zinc-400">
                   {index + 1}
                 </span>
                 {!children && highlightedLines ? (

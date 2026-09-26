@@ -74,10 +74,10 @@ export const UserMessage = memo(function UserMessage({
         <div className="relative max-w-[86%] sm:max-w-[72%]">
           <div
             className={cn(
-              "wrap-break-word whitespace-pre-wrap",
+              "wrap-break-word whitespace-pre-wrap shadow-sm",
               isCommand
-                ? "border-border bg-card text-card-foreground rounded-xl border px-3.5 py-2.5 font-mono text-[14px]"
-                : "bg-accent text-accent-foreground rounded-2xl rounded-tr-[5px] px-4 py-2.5 text-[15px] leading-relaxed",
+                ? "border-border bg-card text-foreground rounded-xl border px-3.5 py-2.5 font-mono text-[14px] dark:border-zinc-600"
+                : "bg-accent text-accent-foreground rounded-2xl rounded-tr-[5px] border border-emerald-700/30 px-4 py-2.5 text-[15px] leading-relaxed dark:border-emerald-300/35",
             )}
           >
             {isCommand ? (
@@ -95,7 +95,7 @@ export const UserMessage = memo(function UserMessage({
       )}
 
       {formattedTimestamp && (
-        <span className="px-1 text-[11px] text-zinc-400">
+        <span className="px-1 text-[11px] text-foreground/70">
           {formattedTimestamp}
         </span>
       )}

@@ -105,7 +105,7 @@ export function AudioMessage({ attachment }: { attachment: ChatAttachment }) {
                 if (audioRef.current) audioRef.current.currentTime = nextTime
               }}
             />
-            <span className="text-muted-foreground w-16 text-right font-mono text-[11px] tabular-nums">
+            <span className="text-foreground/75 w-16 text-right font-mono text-[11px] tabular-nums">
               {formatDuration(currentTime)} / {formatDuration(duration)}
             </span>
           </div>
@@ -114,7 +114,7 @@ export function AudioMessage({ attachment }: { attachment: ChatAttachment }) {
       <Button
         variant="ghost"
         size="icon"
-        className="text-muted-foreground size-11 shrink-0 rounded-full"
+        className="text-foreground/75 size-11 shrink-0 rounded-full"
         asChild
       >
         <a

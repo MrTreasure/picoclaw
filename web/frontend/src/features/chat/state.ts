@@ -2,9 +2,13 @@ const LAST_SESSION_STORAGE_KEY = "picoclaw:last-session-id"
 const UNIX_MS_THRESHOLD = 1e12
 
 function readStorageValue() {
-  return (
-    globalThis.localStorage?.getItem(LAST_SESSION_STORAGE_KEY)?.trim() || ""
+  return normalizeSessionId(
+    globalThis.localStorage?.getItem(LAST_SESSION_STORAGE_KEY) ?? "",
   )
+}
+
+export function normalizeSessionId(sessionId: string): string {
+  return sessionId.trim().replace(/^(pico_\d{8})T(?=\d{9}_main$)/, "$1t")
 }
 
 export function readStoredSessionId(): string {
@@ -12,8 +16,9 @@ export function readStoredSessionId(): string {
 }
 
 export function writeStoredSessionId(sessionId: string) {
-  if (sessionId) {
-    globalThis.localStorage?.setItem(LAST_SESSION_STORAGE_KEY, sessionId)
+  const normalized = normalizeSessionId(sessionId)
+  if (normalized) {
+    globalThis.localStorage?.setItem(LAST_SESSION_STORAGE_KEY, normalized)
     return
   }
 
@@ -31,16 +36,17 @@ export function generateSessionId(): string {
     `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}T` +
     `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}` +
     pad(now.getMilliseconds(), 3)
-  return `pico_${starttime}_main`
+  return `pico_${starttime.replace("T", "t")}_main`
 }
 
 export function getInitialActiveSessionId(): string {
   const linkedSession = new URLSearchParams(
     globalThis.location?.search ?? "",
   ).get("session_id")
-  if (linkedSession?.trim()) {
-    writeStoredSessionId(linkedSession.trim())
-    return linkedSession.trim()
+  const normalizedLinkedSession = normalizeSessionId(linkedSession ?? "")
+  if (normalizedLinkedSession) {
+    writeStoredSessionId(normalizedLinkedSession)
+    return normalizedLinkedSession
   }
   const storedSession = readStorageValue()
   if (storedSession) return storedSession

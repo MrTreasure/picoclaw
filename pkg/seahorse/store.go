@@ -331,7 +331,7 @@ func partsToReadableContent(parts []MessagePart) string {
 		case "tool_result":
 			fmt.Fprintf(&b, "Tool result: %s", p.Text)
 		case "media":
-			fmt.Fprintf(&b, "[media: %s (%s)]", p.MediaURI, p.MimeType)
+			b.WriteString("[media attachment]")
 		default:
 			if p.Text != "" {
 				b.WriteString(p.Text)

@@ -5,7 +5,9 @@ import {
   type ChangeEvent,
   type ClipboardEvent,
   type DragEvent,
+  useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -29,6 +31,7 @@ import {
   getTransferredFiles,
   hasFileTransfer,
 } from "@/features/chat/image-input"
+import { shouldShowTypingIndicator } from "@/features/chat/typing-indicator-state"
 import { useChatModels } from "@/hooks/use-chat-models"
 import { useGateway } from "@/hooks/use-gateway"
 import { usePicoChat } from "@/hooks/use-pico-chat"
@@ -99,17 +102,26 @@ function resolveChatInputDisabledReason({
 export function ChatPage() {
   const { t } = useTranslation()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const scrollContentRef = useRef<HTMLDivElement>(null)
   const galleryInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const documentInputRef = useRef<HTMLInputElement>(null)
   const draftMessageIdRef = useRef(`msg-${crypto.randomUUID()}`)
   const dragDepthRef = useRef(0)
   const loadingOlderRef = useRef(false)
+  const olderScrollAnchorRef = useRef<{ height: number; top: number } | null>(
+    null,
+  )
   const didInitialScrollRef = useRef(false)
+  const shouldFollowOutputRef = useRef(true)
+  const touchStartYRef = useRef<number | null>(null)
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [input, setInput] = useState("")
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [isDragActive, setIsDragActive] = useState(false)
+  const [expandedDetailMessageIds, setExpandedDetailMessageIds] = useState<
+    Set<string>
+  >(() => new Set())
   const [assistantDetailVisibility, setAssistantDetailVisibility] = useAtom(
     assistantDetailVisibilityAtom,
   )
@@ -119,7 +131,9 @@ export function ChatPage() {
     activeSessionId,
     connectionState,
     isTyping,
+    assistantActivity,
     contextUsage,
+    isOpeningSession,
     hasOlderMessages,
     isLoadingOlderMessages,
     loadOlderMessages,
@@ -155,39 +169,67 @@ export function ChatPage() {
       ),
     [assistantDetailVisibility, messages],
   )
+  const showTypingIndicator = shouldShowTypingIndicator(
+    visibleMessages,
+    isTyping,
+    assistantActivity,
+    expandedDetailMessageIds,
+  )
+  // Keep the live end of the conversation in normal flow. Streaming text can
+  // grow between virtualizer measurements, which otherwise lets absolute rows
+  // overlap the typing indicator or the next message.
+  const liveStartIndex = Math.max(0, visibleMessages.length - 10)
+  const virtualMessages = visibleMessages.slice(0, liveStartIndex)
+  const liveMessages = visibleMessages.slice(liveStartIndex)
+  const handleDetailExpandedChange = useCallback(
+    (messageId: string, expanded: boolean) => {
+      setExpandedDetailMessageIds((previous) => {
+        const next = new Set(previous)
+        if (expanded) {
+          next.add(messageId)
+        } else {
+          next.delete(messageId)
+        }
+        return next
+      })
+    },
+    [],
+  )
   // Variable-height chat bubbles require the virtualizer's imperative
   // measurements; this hook intentionally opts out of React Compiler memoizing.
-  // eslint-disable-next-line react-hooks/incompatible-library
+  // oxlint-disable-next-line react/incompatible-library
   const virtualizer = useVirtualizer({
-    count: visibleMessages.length + (isTyping ? 1 : 0),
+    count: virtualMessages.length,
     getScrollElement: () => scrollRef.current,
     estimateSize: (index) =>
-      index >= visibleMessages.length
-        ? 64
-        : visibleMessages[index]?.role === "assistant"
-          ? 180
-          : 92,
-    getItemKey: (index) =>
-      index >= visibleMessages.length
-        ? "typing-indicator"
-        : (visibleMessages[index]?.id ?? index),
+      virtualMessages[index]?.role === "assistant" ? 180 : 92,
+    getItemKey: (index) => virtualMessages[index]?.id ?? index,
     overscan: 6,
+    useAnimationFrameWithResizeObserver: true,
   })
 
   useEffect(() => {
     didInitialScrollRef.current = false
     loadingOlderRef.current = false
+    olderScrollAnchorRef.current = null
+    shouldFollowOutputRef.current = true
     setIsAtBottom(true)
+    setExpandedDetailMessageIds(new Set())
   }, [activeSessionId])
 
   const syncScrollState = (element: HTMLDivElement) => {
     const { clientHeight, scrollHeight, scrollTop } = element
-    setIsAtBottom(scrollHeight - scrollTop <= clientHeight + 10)
+    const atBottom = scrollHeight - scrollTop <= clientHeight + 48
+    setIsAtBottom(atBottom)
+    return atBottom
   }
 
   const handleScroll = async (e: React.UIEvent<HTMLDivElement>) => {
     const element = e.currentTarget
-    syncScrollState(element)
+    const atBottom = syncScrollState(element)
+    if (atBottom && !loadingOlderRef.current)
+      shouldFollowOutputRef.current = true
+    else if (didInitialScrollRef.current) shouldFollowOutputRef.current = false
     if (
       !didInitialScrollRef.current ||
       element.scrollTop > 160 ||
@@ -199,14 +241,20 @@ export function ChatPage() {
     }
 
     loadingOlderRef.current = true
-    const previousHeight = element.scrollHeight
-    const previousTop = element.scrollTop
+    shouldFollowOutputRef.current = false
+    olderScrollAnchorRef.current = {
+      height: element.scrollHeight,
+      top: element.scrollTop,
+    }
     const loaded = await loadOlderMessages()
+    if (!loaded) olderScrollAnchorRef.current = null
     requestAnimationFrame(() => {
       const current = scrollRef.current
-      if (loaded && current) {
-        current.scrollTop = current.scrollHeight - previousHeight + previousTop
+      const anchor = olderScrollAnchorRef.current
+      if (loaded && current && anchor) {
+        current.scrollTop = current.scrollHeight - anchor.height + anchor.top
       }
+      olderScrollAnchorRef.current = null
       loadingOlderRef.current = false
     })
   }
@@ -214,6 +262,8 @@ export function ChatPage() {
   const scrollToBottom = () => {
     const element = scrollRef.current
     if (!element) return
+    shouldFollowOutputRef.current = true
+    setIsAtBottom(true)
     const reduceMotion = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches
@@ -223,22 +273,81 @@ export function ChatPage() {
     })
   }
 
+  useLayoutEffect(() => {
+    const element = scrollRef.current
+    const anchor = olderScrollAnchorRef.current
+    if (anchor && element) {
+      element.scrollTop = element.scrollHeight - anchor.height + anchor.top
+      syncScrollState(element)
+      return
+    }
+    if (!shouldFollowOutputRef.current || isOpeningSession) {
+      return
+    }
+
+    if (element) {
+      element.scrollTop = element.scrollHeight
+      didInitialScrollRef.current = true
+      syncScrollState(element)
+    }
+    const frame = requestAnimationFrame(() => {
+      const element = scrollRef.current
+      if (
+        !element ||
+        !shouldFollowOutputRef.current ||
+        olderScrollAnchorRef.current
+      )
+        return
+      element.scrollTop = element.scrollHeight
+      didInitialScrollRef.current = true
+      syncScrollState(element)
+    })
+
+    return () => cancelAnimationFrame(frame)
+  }, [messages, isTyping, isOpeningSession, virtualizer])
+
   useEffect(() => {
-    if (scrollRef.current) {
-      if (isAtBottom) {
-        requestAnimationFrame(() => {
-          const element = scrollRef.current
-          if (!element) return
-          element.scrollTop = element.scrollHeight
-          didInitialScrollRef.current = true
-          syncScrollState(element)
-        })
+    const content = scrollContentRef.current
+    if (!content || typeof ResizeObserver === "undefined") {
+      return
+    }
+
+    let frame: number | undefined
+    const observer = new ResizeObserver(() => {
+      if (!shouldFollowOutputRef.current || olderScrollAnchorRef.current) {
+        return
+      }
+
+      if (frame !== undefined) {
+        cancelAnimationFrame(frame)
+      }
+      frame = requestAnimationFrame(() => {
+        const element = scrollRef.current
+        if (
+          !element ||
+          !shouldFollowOutputRef.current ||
+          olderScrollAnchorRef.current
+        )
+          return
+        element.scrollTop = element.scrollHeight
+        didInitialScrollRef.current = true
+        syncScrollState(element)
+      })
+    })
+
+    observer.observe(content)
+    return () => {
+      observer.disconnect()
+      if (frame !== undefined) {
+        cancelAnimationFrame(frame)
       }
     }
-  }, [messages, isTyping, isAtBottom, virtualizer])
+  }, [])
 
   const handleSend = () => {
     if ((!input.trim() && attachments.length === 0) || !canInput) return
+    shouldFollowOutputRef.current = true
+    setIsAtBottom(true)
     if (
       sendMessage({
         content: input,
@@ -276,7 +385,12 @@ export function ChatPage() {
       return
     }
 
-    const nextAttachments = await buildChatImageAttachments(files, t)
+    const nextAttachments = await buildChatImageAttachments(
+      files,
+      t,
+      activeSessionId,
+      draftMessageIdRef.current,
+    )
     if (nextAttachments.length === 0) {
       return
     }
@@ -402,10 +516,38 @@ export function ChatPage() {
         <div
           ref={scrollRef}
           onScroll={handleScroll}
+          onWheel={(event) => {
+            if (event.deltaY < 0) shouldFollowOutputRef.current = false
+          }}
+          onTouchStart={(event) => {
+            touchStartYRef.current = event.touches[0]?.clientY ?? null
+          }}
+          onTouchMove={(event) => {
+            const startY = touchStartYRef.current
+            const currentY = event.touches[0]?.clientY
+            if (
+              startY !== null &&
+              currentY !== undefined &&
+              currentY > startY + 8
+            ) {
+              shouldFollowOutputRef.current = false
+            }
+          }}
+          onTouchEnd={() => {
+            touchStartYRef.current = null
+          }}
           className="h-full [scrollbar-gutter:stable] overflow-y-auto px-3 pt-[calc(4.75rem+env(safe-area-inset-top))] pb-3 md:px-8 lg:px-24 xl:px-48"
         >
-          <div className="mx-auto w-full max-w-225 pb-5">
-            {messages.length === 0 && !isTyping && (
+          <div ref={scrollContentRef} className="mx-auto w-full max-w-225 pb-5">
+            {isOpeningSession && messages.length === 0 && (
+              <p
+                className="text-muted-foreground py-16 text-center text-sm"
+                role="status"
+              >
+                正在加载对话记录…
+              </p>
+            )}
+            {!isOpeningSession && messages.length === 0 && !isTyping && (
               <ChatEmptyState
                 hasAvailableModels={hasAvailableModels}
                 defaultModelName={defaultModelName}
@@ -423,7 +565,7 @@ export function ChatPage() {
               style={{ height: `${virtualizer.getTotalSize()}px` }}
             >
               {virtualizer.getVirtualItems().map((virtualItem) => {
-                const msg = visibleMessages[virtualItem.index]
+                const msg = virtualMessages[virtualItem.index]
                 return (
                   <div
                     key={virtualItem.key}
@@ -434,7 +576,7 @@ export function ChatPage() {
                       transform: `translateY(${virtualItem.start}px)`,
                     }}
                   >
-                    {msg ? (
+                    {msg && (
                       <div className="flex w-full">
                         {msg.role === "assistant" ? (
                           <AssistantMessage
@@ -445,6 +587,11 @@ export function ChatPage() {
                             toolCalls={msg.toolCalls}
                             isStreaming={msg.streaming}
                             timestamp={msg.timestamp}
+                            sessionId={activeSessionId}
+                            expanded={expandedDetailMessageIds.has(msg.id)}
+                            onExpandedChange={(expanded) =>
+                              handleDetailExpandedChange(msg.id, expanded)
+                            }
                           />
                         ) : (
                           <UserMessage
@@ -454,18 +601,47 @@ export function ChatPage() {
                           />
                         )}
                       </div>
-                    ) : (
-                      <TypingIndicator />
                     )}
                   </div>
                 )
               })}
             </div>
+            <div className="flex flex-col gap-3 md:gap-4">
+              {liveMessages.map((msg) => (
+                <div key={msg.id} className="flex w-full">
+                  {msg.role === "assistant" ? (
+                    <AssistantMessage
+                      content={msg.content}
+                      attachments={msg.attachments}
+                      kind={msg.kind}
+                      modelName={msg.modelName}
+                      toolCalls={msg.toolCalls}
+                      isStreaming={msg.streaming}
+                      timestamp={msg.timestamp}
+                      sessionId={activeSessionId}
+                      expanded={expandedDetailMessageIds.has(msg.id)}
+                      onExpandedChange={(expanded) =>
+                        handleDetailExpandedChange(msg.id, expanded)
+                      }
+                    />
+                  ) : (
+                    <UserMessage
+                      content={msg.content}
+                      attachments={msg.attachments}
+                      timestamp={msg.timestamp}
+                    />
+                  )}
+                </div>
+              ))}
+              {showTypingIndicator && (
+                <TypingIndicator activity={assistantActivity} />
+              )}
+            </div>
           </div>
         </div>
 
         {isLoadingOlderMessages && (
-          <div className="bg-background/80 text-muted-foreground pointer-events-none absolute top-[calc(5rem+env(safe-area-inset-top))] left-1/2 z-30 -translate-x-1/2 rounded-full border px-3 py-1 text-xs shadow-sm backdrop-blur-xl">
+          <div className="bg-background/95 text-foreground/85 border-border pointer-events-none absolute top-[calc(5rem+env(safe-area-inset-top))] left-1/2 z-30 -translate-x-1/2 rounded-full border px-3 py-1 text-xs shadow-sm backdrop-blur-xl">
             {t("common.loading")}
           </div>
         )}
@@ -539,7 +715,7 @@ export function ChatPage() {
             setInput("")
           }
         }}
-        inputDisabledReason={null}
+        inputDisabledReason={inputDisabledReason}
         canSend={canSubmit}
         isDragActive={isDragActive}
         contextUsage={contextUsage}

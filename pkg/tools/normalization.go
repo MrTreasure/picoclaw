@@ -217,6 +217,11 @@ func storeInlineDataURL(
 	if err != nil {
 		return "", fmt.Sprintf("[Tool returned inline media content (%s) that could not be decoded.]", mimeType)
 	}
+	if strings.HasPrefix(strings.ToLower(mimeType), "image/") {
+		if err := media.ValidateImage(decoded, mimeType); err != nil {
+			return "", "[Tool returned invalid or unsupported image content; image not attached.]"
+		}
+	}
 
 	dir := media.TempDir()
 	if err = os.MkdirAll(dir, 0o700); err != nil {

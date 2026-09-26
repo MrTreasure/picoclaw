@@ -1,5 +1,6 @@
 import type { TFunction } from "i18next"
 import { toast } from "sonner"
+import { launcherFetch } from "@/api/http"
 
 import type { ChatAttachment } from "@/store/chat"
 
@@ -7,8 +8,6 @@ const CHAT_IMAGE_MIME_TYPES = [
   "image/jpeg",
   "image/png",
   "image/gif",
-  "image/webp",
-  "image/bmp",
 ] as const
 
 const CHAT_IMAGE_MIME_TYPE_SET = new Set<string>(CHAT_IMAGE_MIME_TYPES)
@@ -16,38 +15,18 @@ const CHAT_IMAGE_EXTENSION_BY_MIME: Record<string, string> = {
   "image/jpeg": ".jpg",
   "image/png": ".png",
   "image/gif": ".gif",
-  "image/webp": ".webp",
-  "image/bmp": ".bmp",
 }
 const CHAT_IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".png": "image/png",
   ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".bmp": "image/bmp",
 }
 
 export const CHAT_IMAGE_ACCEPT = CHAT_IMAGE_MIME_TYPES.join(",")
 
 const MAX_CHAT_IMAGE_SIZE_BYTES = 7 * 1024 * 1024
 const MAX_CHAT_IMAGE_SIZE_LABEL = "7 MB"
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        resolve(reader.result)
-        return
-      }
-      reject(new Error("Failed to read file"))
-    }
-    reader.onerror = () =>
-      reject(reader.error || new Error("Failed to read file"))
-    reader.readAsDataURL(file)
-  })
-}
 
 function getFileExtension(fileName: string): string {
   const lastDotIndex = fileName.lastIndexOf(".")
@@ -67,7 +46,7 @@ function getSupportedImageMimeType(file: File): string | null {
   return CHAT_IMAGE_MIME_BY_EXTENSION[extension] ?? null
 }
 
-function normalizeImageFileForDataUrl(file: File, filename: string): File {
+function normalizeImageFileForUpload(file: File, filename: string): File {
   const mimeType = getSupportedImageMimeType(file)
   if (!mimeType || file.type.trim().toLowerCase() === mimeType) {
     return file
@@ -123,6 +102,8 @@ export function getTransferredFiles(dataTransfer: DataTransfer | null) {
 export async function buildChatImageAttachments(
   files: readonly File[],
   t: TFunction,
+  sessionId: string,
+  messageId: string,
 ): Promise<ChatAttachment[]> {
   const nextAttachments: ChatAttachment[] = []
 
@@ -150,12 +131,21 @@ export async function buildChatImageAttachments(
     }
 
     try {
-      const normalizedFile = normalizeImageFileForDataUrl(file, filename)
+      const normalizedFile = normalizeImageFileForUpload(file, filename)
+      const form = new FormData()
+      form.set("session_id", sessionId)
+      form.set("message_id", messageId)
+      form.set("file", normalizedFile, filename)
+      const response = await launcherFetch("/pico/upload", { method: "POST", body: form })
+      if (!response.ok) throw new Error(`Upload failed: ${response.status}`)
+      const result = (await response.json()) as { ref: string; filename?: string; content_type?: string }
+      if (!result.ref?.startsWith("media://")) throw new Error("Missing media reference")
       nextAttachments.push({
         type: "image",
-        filename,
-        url: await readFileAsDataUrl(normalizedFile),
-        contentType: mimeType,
+        filename: result.filename || filename,
+        url: URL.createObjectURL(normalizedFile),
+        mediaRef: result.ref,
+        contentType: result.content_type || mimeType,
       })
     } catch {
       toast.error(

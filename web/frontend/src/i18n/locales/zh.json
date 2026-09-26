@@ -59,8 +59,18 @@
       "step3": "准备回复...",
       "step4": "马上就好..."
     },
+    "activity": {
+      "thinking": "思考中...",
+      "tool": "工具调用中..."
+    },
     "reasoningLabel": "思考",
     "toolCallsLabel": "工具调用",
+    "expandToolCall": "放大查看工具调用",
+    "toolDetailTitle": "工具调用详情",
+    "toolDetailArguments": "完整参数",
+    "toolDetailResult": "响应结果",
+    "toolDetailWaiting": "等待工具结果…",
+    "toolDetailLoadError": "暂时无法加载工具结果",
     "toolCallExplanationLabel": "调用提示",
     "toolCallFunctionLabel": "调用摘要",
     "toolCallArgumentsLabel": "参数",

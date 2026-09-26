@@ -71,12 +71,16 @@ export type ConnectionState =
   | "connected"
   | "error"
 
+export type AssistantActivity = "thinking" | "tool"
+
 export interface ChatStoreState {
   messages: ChatMessage[]
   connectionState: ConnectionState
   isTyping: boolean
+  assistantActivity?: AssistantActivity
   activeSessionId: string
   hasHydratedActiveSession: boolean
+  isOpeningSession: boolean
   hasOlderMessages: boolean
   isLoadingOlderMessages: boolean
   contextUsage?: ContextUsage
@@ -90,6 +94,7 @@ const DEFAULT_CHAT_STATE: ChatStoreState = {
   isTyping: false,
   activeSessionId: getInitialActiveSessionId(),
   hasHydratedActiveSession: false,
+  isOpeningSession: false,
   hasOlderMessages: false,
   isLoadingOlderMessages: false,
 }

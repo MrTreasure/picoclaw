@@ -1,4 +1,4 @@
-const CACHE_VERSION = "musec137-shell-v11"
+const CACHE_VERSION = "musec137-shell-v13"
 const APP_SHELL = [
   "/",
   "/sessions",
@@ -64,10 +64,17 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close()
   event.waitUntil(
     (async () => {
+      const sessionId = (event.notification.data?.sessionId || "").replace(
+        /^(pico_\d{8})T(?=\d{9}_main$)/,
+        "$1t",
+      )
       const target = new URL(
         event.notification.data?.url || "/",
         self.location.origin,
       )
+      if (sessionId) {
+        target.searchParams.set("session_id", sessionId)
+      }
       const windows = await self.clients.matchAll({
         type: "window",
         includeUncontrolled: true,
@@ -76,8 +83,8 @@ self.addEventListener("notificationclick", (event) => {
         (client) => new URL(client.url).origin === target.origin,
       )
       if (existing) {
-        await existing.navigate(target.href)
-        return existing.focus()
+        const navigated = (await existing.navigate(target.href)) || existing
+        return navigated.focus()
       }
       return self.clients.openWindow(target.href)
     })(),

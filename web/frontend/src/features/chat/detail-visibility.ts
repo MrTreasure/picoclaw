@@ -28,7 +28,7 @@ export const ASSISTANT_DETAIL_VISIBILITY_STORAGE_KEY =
 export const LEGACY_SHOW_ASSISTANT_DETAILS_STORAGE_KEY =
   "picoclaw:chat-show-thoughts"
 export const DEFAULT_ASSISTANT_DETAIL_VISIBILITY: AssistantDetailVisibility =
-  "all"
+  "none"
 
 function getSafeLocalStorage(): StorageLike | undefined {
   try {

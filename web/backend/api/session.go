@@ -27,7 +27,75 @@ func (h *Handler) registerSessionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sessions", h.handleListSessions)
 	mux.HandleFunc("DELETE /api/sessions/task-runs", h.handleDeleteTaskRunSessions)
 	mux.HandleFunc("GET /api/sessions/{id}", h.handleGetSession)
+	mux.HandleFunc("GET /api/sessions/{id}/tool-calls/{callID}", h.handleGetSessionToolCall)
 	mux.HandleFunc("DELETE /api/sessions/{id}", h.handleDeleteSession)
+}
+
+// handleGetSessionToolCall returns one persisted call and its result on demand.
+// Keeping the full output out of history pages avoids transferring large tool
+// results whenever a chat opens.
+func (h *Handler) handleGetSessionToolCall(w http.ResponseWriter, r *http.Request) {
+	sessionID, callID := r.PathValue("id"), r.PathValue("callID")
+	if sessionID == "" || callID == "" {
+		http.Error(w, "missing session or tool call ID", http.StatusBadRequest)
+		return
+	}
+	dir, _, err := h.sessionRuntimeSettings()
+	if err != nil {
+		http.Error(w, "failed to resolve sessions directory", http.StatusInternalServerError)
+		return
+	}
+	ref, refErr := h.findPicoJSONLSession(dir, sessionID)
+	if refErr != nil {
+		ref, refErr = h.findWeixinJSONLSession(dir, sessionID)
+	}
+	var sess sessionFile
+	if refErr == nil {
+		sess, err = h.readJSONLSession(dir, ref.Key)
+	} else if legacyRef, legacyErr := h.findLegacyPicoSession(dir, sessionID); legacyErr == nil {
+		sess, err = h.readLegacySession(legacyRef.Path)
+	} else {
+		err = refErr
+	}
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			http.Error(w, "session not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "failed to read session", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	var call *providers.ToolCall
+	var result string
+	resultFound := false
+	for _, msg := range sess.Messages {
+		for i := range msg.ToolCalls {
+			if msg.ToolCalls[i].ID == callID {
+				call = &msg.ToolCalls[i]
+			}
+		}
+		if (msg.Role == "tool" || (msg.Role == "user" && msg.ToolCallID != "")) && msg.ToolCallID == callID {
+			result, resultFound = msg.Content, true
+		}
+	}
+	if call == nil {
+		http.Error(w, "tool call not found", http.StatusNotFound)
+		return
+	}
+	name, arguments := utils.VisibleToolCallNameAndArguments(*call)
+	explanation := ""
+	if call.ExtraContent != nil {
+		explanation = strings.TrimSpace(call.ExtraContent.ToolFeedbackExplanation)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"name":         name,
+		"arguments":    arguments,
+		"explanation":  explanation,
+		"result":       result,
+		"result_found": resultFound,
+	})
 }
 
 // sessionFile mirrors the on-disk session JSON structure from pkg/session.
@@ -1185,8 +1253,27 @@ func (h *Handler) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 			removed = true
 		}
 	}
-	if ref, err := h.findPicoJSONLSession(dir, sessionID); err == nil {
-		base := filepath.Join(dir, sanitizeSessionKey(ref.Key))
+	// A Pico ID can have multiple canonical keys after scope migration. The
+	// listing intentionally shows only the newest one, so deleting just that
+	// selected key makes an older copy reappear on the next list request.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		http.Error(w, "failed to list sessions", http.StatusInternalServerError)
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".meta.json") {
+			continue
+		}
+		meta, readErr := h.readSessionMeta(filepath.Join(dir, entry.Name()), "")
+		if readErr != nil {
+			continue
+		}
+		ref, ok := sessionRefFromMeta(meta)
+		if !ok || ref.ID != sessionID {
+			continue
+		}
+		base := filepath.Join(dir, strings.TrimSuffix(entry.Name(), ".meta.json"))
 		for _, path := range []string{base + ".jsonl", base + ".meta.json"} {
 			if err := os.Remove(path); err != nil {
 				if os.IsNotExist(err) {
@@ -1197,6 +1284,24 @@ func (h *Handler) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 			}
 			removed = true
 		}
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		baseName := strings.TrimSuffix(entry.Name(), ".jsonl")
+		if _, statErr := os.Stat(filepath.Join(dir, baseName+".meta.json")); !os.IsNotExist(statErr) {
+			continue
+		}
+		ref, ok := jsonlSessionRefFromFilename(entry.Name())
+		if !ok || ref.ID != sessionID {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil && !os.IsNotExist(err) {
+			http.Error(w, "failed to delete session", http.StatusInternalServerError)
+			return
+		}
+		removed = true
 	}
 	if legacyRef, err := h.findLegacyPicoSession(dir, sessionID); err == nil {
 		if err := os.Remove(legacyRef.Path); err != nil {

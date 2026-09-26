@@ -723,7 +723,7 @@ func (s *picoStreamer) sendLockedWithFinal(
 		if err := s.channel.broadcast(s.chatID, outMsg); err != nil {
 			return err
 		}
-	} else if content != s.lastContent || contextUsage != nil {
+	} else if final || content != s.lastContent || contextUsage != nil {
 		payload := map[string]any{
 			PayloadKeyContent: content,
 			"message_id":      s.messageID,
@@ -1112,6 +1112,13 @@ func (c *PicoChannel) handleMediaUpload(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	if savedPath != "" && strings.HasPrefix(strings.ToLower(contentType), "image/") {
+		bytes, readErr := os.ReadFile(savedPath)
+		if readErr != nil || media.ValidateImage(bytes, contentType) != nil {
+			http.Error(w, "invalid or unsupported image", http.StatusUnsupportedMediaType)
+			return
+		}
+	}
 	if savedPath == "" || sessionID == "" || messageID == "" {
 		http.Error(w, "session_id, message_id and file are required", http.StatusBadRequest)
 		return
@@ -1447,6 +1454,12 @@ func (c *PicoChannel) handleMessageSend(pc *picoConn, msg PicoMessage) {
 }
 
 func (c *PicoChannel) parseInboundMedia(payload map[string]any) ([]string, []string, error) {
+	if raw := payload["media"]; raw != nil {
+		return nil, nil, fmt.Errorf("inline images are no longer supported; upload them first")
+	}
+	if raw := payload["attachments"]; raw != nil {
+		return nil, nil, fmt.Errorf("inline attachments are no longer supported; upload them first")
+	}
 	legacy, err := parseInlineImageMedia(payload)
 	if err != nil {
 		return nil, nil, err

@@ -174,6 +174,9 @@ export function ChatControls({
                   </button>
                 ))}
               </div>
+              <p className="text-muted-foreground text-xs">
+                思考和工具详情默认折叠，展开工具可查看完整参数
+              </p>
             </div>
           </PopoverContent>
         </Popover>

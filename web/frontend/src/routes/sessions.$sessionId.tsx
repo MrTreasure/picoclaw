@@ -36,7 +36,7 @@ function WeixinSessionPage() {
     [detailVisibility, messages],
   )
 
-  // eslint-disable-next-line react-hooks/incompatible-library
+  // oxlint-disable-next-line react/incompatible-library
   const virtualizer = useVirtualizer({
     count: visibleMessages.length,
     getScrollElement: () => scrollRef.current,
@@ -161,6 +161,7 @@ function WeixinSessionPage() {
                       modelName={message.modelName}
                       toolCalls={message.toolCalls}
                       timestamp={message.timestamp}
+                      sessionId={sessionId}
                     />
                   ) : (
                     <UserMessage

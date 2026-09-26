@@ -1,0 +1,18 @@
+[Unit]
+Description=MuseC137 Codex App Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/Treasure
+Environment=PATH=/vol1/node/bin:/vol1/pnpm/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/vol1/pnpm/bin/codex app-server --listen ws://127.0.0.1:18802
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

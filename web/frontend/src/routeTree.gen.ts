@@ -18,6 +18,7 @@ import { Route as LauncherSetupRouteImport } from './routes/launcher-setup'
 import { Route as LauncherLoginRouteImport } from './routes/launcher-login'
 import { Route as CredentialsRouteImport } from './routes/credentials'
 import { Route as ConfigRouteImport } from './routes/config'
+import { Route as CodexRouteImport } from './routes/codex'
 import { Route as AgentRouteImport } from './routes/agent'
 import { Route as ChannelsRouteRouteImport } from './routes/channels/route'
 import { Route as IndexRouteImport } from './routes/index'
@@ -72,6 +73,11 @@ const CredentialsRoute = CredentialsRouteImport.update({
 const ConfigRoute = ConfigRouteImport.update({
   id: '/config',
   path: '/config',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CodexRoute = CodexRouteImport.update({
+  id: '/codex',
+  path: '/codex',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AgentRoute = AgentRouteImport.update({
@@ -129,6 +135,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/channels': typeof ChannelsRouteRouteWithChildren
   '/agent': typeof AgentRouteWithChildren
+  '/codex': typeof CodexRoute
   '/config': typeof ConfigRouteWithChildren
   '/credentials': typeof CredentialsRoute
   '/launcher-login': typeof LauncherLoginRoute
@@ -150,6 +157,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/channels': typeof ChannelsRouteRouteWithChildren
   '/agent': typeof AgentRouteWithChildren
+  '/codex': typeof CodexRoute
   '/config': typeof ConfigRouteWithChildren
   '/credentials': typeof CredentialsRoute
   '/launcher-login': typeof LauncherLoginRoute
@@ -172,6 +180,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/channels': typeof ChannelsRouteRouteWithChildren
   '/agent': typeof AgentRouteWithChildren
+  '/codex': typeof CodexRoute
   '/config': typeof ConfigRouteWithChildren
   '/credentials': typeof CredentialsRoute
   '/launcher-login': typeof LauncherLoginRoute
@@ -195,6 +204,7 @@ export interface FileRouteTypes {
     | '/'
     | '/channels'
     | '/agent'
+    | '/codex'
     | '/config'
     | '/credentials'
     | '/launcher-login'
@@ -216,6 +226,7 @@ export interface FileRouteTypes {
     | '/'
     | '/channels'
     | '/agent'
+    | '/codex'
     | '/config'
     | '/credentials'
     | '/launcher-login'
@@ -237,6 +248,7 @@ export interface FileRouteTypes {
     | '/'
     | '/channels'
     | '/agent'
+    | '/codex'
     | '/config'
     | '/credentials'
     | '/launcher-login'
@@ -259,6 +271,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ChannelsRouteRoute: typeof ChannelsRouteRouteWithChildren
   AgentRoute: typeof AgentRouteWithChildren
+  CodexRoute: typeof CodexRoute
   ConfigRoute: typeof ConfigRouteWithChildren
   CredentialsRoute: typeof CredentialsRoute
   LauncherLoginRoute: typeof LauncherLoginRoute
@@ -334,6 +347,13 @@ declare module '@tanstack/react-router' {
       path: '/config'
       fullPath: '/config'
       preLoaderRoute: typeof ConfigRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/codex': {
+      id: '/codex'
+      path: '/codex'
+      fullPath: '/codex'
+      preLoaderRoute: typeof CodexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/agent': {
@@ -462,6 +482,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ChannelsRouteRoute: ChannelsRouteRouteWithChildren,
   AgentRoute: AgentRouteWithChildren,
+  CodexRoute: CodexRoute,
   ConfigRoute: ConfigRouteWithChildren,
   CredentialsRoute: CredentialsRoute,
   LauncherLoginRoute: LauncherLoginRoute,

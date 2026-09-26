@@ -26,7 +26,7 @@ const DEFAULT_GATEWAY_STATE: GatewayStoreState = {
   restartRequired: false,
 }
 
-const GATEWAY_POLL_INTERVAL_MS = 2000
+const GATEWAY_POLL_INTERVAL_MS = 5000
 const GATEWAY_TRANSIENT_POLL_INTERVAL_MS = 1000
 const GATEWAY_STOPPING_TIMEOUT_MS = 5000
 
@@ -150,7 +150,10 @@ function nextGatewayPollInterval() {
 }
 
 function scheduleGatewayPoll(delay = nextGatewayPollInterval()) {
-  if (gatewayPollingSubscribers === 0) {
+  if (
+    gatewayPollingSubscribers === 0 ||
+    document.visibilityState === "hidden"
+  ) {
     return
   }
 
@@ -199,17 +202,35 @@ export async function refreshGatewayState(
   return getDefaultStore().get(gatewayAtom)
 }
 
+function handleGatewayVisibilityChange() {
+  if (document.visibilityState === "hidden") {
+    if (gatewayPollingTimer !== null) {
+      clearTimeout(gatewayPollingTimer)
+      gatewayPollingTimer = null
+    }
+  } else if (gatewayPollingSubscribers > 0) {
+    void refreshGatewayState({ force: true })
+  }
+}
+
 export function subscribeGatewayPolling() {
   gatewayPollingSubscribers += 1
   if (gatewayPollingSubscribers === 1) {
-    void refreshGatewayState()
+    document.addEventListener("visibilitychange", handleGatewayVisibilityChange)
+    if (document.visibilityState !== "hidden") void refreshGatewayState()
   }
 
   return () => {
     gatewayPollingSubscribers = Math.max(0, gatewayPollingSubscribers - 1)
-    if (gatewayPollingSubscribers === 0 && gatewayPollingTimer !== null) {
-      clearTimeout(gatewayPollingTimer)
-      gatewayPollingTimer = null
+    if (gatewayPollingSubscribers === 0) {
+      document.removeEventListener(
+        "visibilitychange",
+        handleGatewayVisibilityChange,
+      )
+      if (gatewayPollingTimer !== null) {
+        clearTimeout(gatewayPollingTimer)
+        gatewayPollingTimer = null
+      }
     }
   }
 }

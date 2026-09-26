@@ -52,6 +52,50 @@ func assertVisibleToolCallMessage(
 	return msg.ToolCalls[0]
 }
 
+func TestHandleGetSessionToolCall_ReturnsFullArgumentsAndMatchingResult(t *testing.T) {
+	configPath, cleanup := setupOAuthTestEnv(t)
+	defer cleanup()
+	store, err := memory.NewJSONLStore(sessionsTestDir(t, configPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := picoSessionPrefix + "tool-detail"
+	args := `{"command":"printf a very long command with all its arguments"}`
+	result := "full tool response\nsecond line"
+	for _, msg := range []providers.Message{
+		{Role: "user", Content: "run it"},
+		{Role: "assistant", ToolCalls: []providers.ToolCall{{
+			ID: "call_1", Function: &providers.FunctionCall{Name: "exec", Arguments: args},
+		}}},
+		{Role: "tool", ToolCallID: "other_call", Content: "wrong result"},
+		{Role: "tool", ToolCallID: "call_1", Content: result},
+	} {
+		if err := store.AddFullMessage(nil, key, msg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := NewHandler(configPath)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/sessions/tool-detail/tool-calls/call_1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var detail struct {
+		Name        string `json:"name"`
+		Arguments   string `json:"arguments"`
+		Result      string `json:"result"`
+		ResultFound bool   `json:"result_found"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail.Name != "exec" || detail.Arguments != args || detail.Result != result || !detail.ResultFound {
+		t.Fatalf("unexpected tool detail: %+v", detail)
+	}
+}
+
 func TestHandleListSessions_JSONLStorage(t *testing.T) {
 	configPath, cleanup := setupOAuthTestEnv(t)
 	defer cleanup()
@@ -234,6 +278,20 @@ func TestHandleListSessions_DuplicateScopeUsesNewestCanonicalSession(t *testing.
 	mux.ServeHTTP(detailRec, detailReq)
 	if detailRec.Code != http.StatusOK || !strings.Contains(detailRec.Body.String(), "latest conversation") {
 		t.Fatalf("detail status = %d, body=%s", detailRec.Code, detailRec.Body.String())
+	}
+
+	deleteRec := httptest.NewRecorder()
+	mux.ServeHTTP(deleteRec, httptest.NewRequest(http.MethodDelete, "/api/sessions/duplicate-session", nil))
+	if deleteRec.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, body=%s", deleteRec.Code, deleteRec.Body.String())
+	}
+	for _, key := range []string{oldKey, newKey} {
+		base := filepath.Join(dir, sanitizeSessionKey(key))
+		for _, path := range []string{base + ".jsonl", base + ".meta.json"} {
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("expected duplicate %s removed, stat err = %v", path, err)
+			}
+		}
 	}
 }
 

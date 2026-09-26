@@ -193,6 +193,31 @@ function removeShadowedHistoryCopies(messages: ChatMessage[]): ChatMessage[] {
     : messages.filter((_, index) => !removed.has(index))
 }
 
+function removeShadowedUserHistoryCopies(
+  messages: ChatMessage[],
+): ChatMessage[] {
+  const unmatchedLiveUsers = new Map<string, number>()
+  for (const message of messages) {
+    if (message.role !== "user" || message.id.startsWith("hist-")) continue
+    const signature = reconciliationSignature(message)
+    unmatchedLiveUsers.set(
+      signature,
+      (unmatchedLiveUsers.get(signature) ?? 0) + 1,
+    )
+  }
+
+  return messages.filter((message) => {
+    if (message.role !== "user" || !message.id.startsWith("hist-")) {
+      return true
+    }
+    const signature = reconciliationSignature(message)
+    const matches = unmatchedLiveUsers.get(signature) ?? 0
+    if (matches === 0) return true
+    unmatchedLiveUsers.set(signature, matches - 1)
+    return false
+  })
+}
+
 export function removeMatchingHistoryCopies(
   messages: ChatMessage[],
   liveMessage: ChatMessage,
@@ -249,8 +274,8 @@ export function mergeHistoryMessages(
   currentMessages: ChatMessage[],
 ): ChatMessage[] {
   historyMessages = splitMarkedAssistantMessages(historyMessages)
-  currentMessages = removeShadowedHistoryCopies(
-    splitMarkedAssistantMessages(currentMessages),
+  currentMessages = removeShadowedUserHistoryCopies(
+    removeShadowedHistoryCopies(splitMarkedAssistantMessages(currentMessages)),
   )
   const currentIds = new Set(currentMessages.map((message) => message.id))
   const unmatchedCurrentSignatures = new Map<string, number>()

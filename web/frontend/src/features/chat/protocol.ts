@@ -7,6 +7,7 @@ import {
 import { removeMatchingHistoryCopies } from "@/features/chat/history"
 import { normalizeUnixTimestamp } from "@/features/chat/state"
 import {
+  type AssistantActivity,
   type ChatAttachment,
   type ContextUsage,
   updateChatStore,
@@ -20,53 +21,11 @@ export interface PicoMessage {
   payload?: Record<string, unknown>
 }
 
-const pendingMessageUpdates = new Map<
-  string,
-  { message: PicoMessage; expectedSessionId: string }
->()
-let pendingMessageUpdateFrame: number | null = null
-
-function flushPendingMessageUpdates() {
-  pendingMessageUpdateFrame = null
-  const updates = [...pendingMessageUpdates.values()]
-  pendingMessageUpdates.clear()
-  for (const { message, expectedSessionId } of updates) {
-    handlePicoMessage(message, expectedSessionId)
-  }
-}
-
-export function queuePicoMessage(
-  message: PicoMessage,
-  expectedSessionId: string,
-) {
-  if (message.type !== "message.update") {
-    handlePicoMessage(message, expectedSessionId)
-    return
-  }
-
-  const messageId = message.payload?.message_id
-  if (typeof messageId !== "string" || !messageId) {
-    handlePicoMessage(message, expectedSessionId)
-    return
-  }
-
-  pendingMessageUpdates.set(`${expectedSessionId}\u0000${messageId}`, {
-    message,
-    expectedSessionId,
-  })
-  if (pendingMessageUpdateFrame === null) {
-    pendingMessageUpdateFrame = window.requestAnimationFrame(
-      flushPendingMessageUpdates,
-    )
-  }
-}
-
-export function cancelQueuedPicoMessages() {
-  if (pendingMessageUpdateFrame !== null) {
-    window.cancelAnimationFrame(pendingMessageUpdateFrame)
-    pendingMessageUpdateFrame = null
-  }
-  pendingMessageUpdates.clear()
+function activityForKind(
+  kind: string,
+  fallback: AssistantActivity = "thinking",
+): AssistantActivity {
+  return kind === "tool_calls" || kind === "tool_feedback" ? "tool" : fallback
 }
 
 function parseAttachments(
@@ -196,10 +155,15 @@ export function handlePicoMessage(
           nextMessage,
         ),
         isTyping:
-          !isPlaceholder &&
-          (kind === "normal" || message.type === "media.create")
-            ? false
-            : prev.isTyping,
+          kind === "normal" || message.type === "media.create"
+            ? !isPlaceholder && isStreaming
+            : true,
+        assistantActivity:
+          kind === "normal" || message.type === "media.create"
+            ? isStreaming
+              ? "thinking"
+              : undefined
+            : activityForKind(kind, prev.assistantActivity),
         ...(contextUsage ? { contextUsage } : {}),
       }))
       break
@@ -218,6 +182,21 @@ export function handlePicoMessage(
       if (!messageId) {
         break
       }
+      const explicitKind =
+        typeof payload.kind === "string"
+          ? payload.kind.trim().toLowerCase()
+          : ""
+      const isDetailUpdate =
+        explicitKind === "thought" ||
+        explicitKind === "tool_calls" ||
+        explicitKind === "tool_feedback" ||
+        payload.tool_calls !== undefined
+      const updateActivity: AssistantActivity =
+        explicitKind === "tool_calls" ||
+        explicitKind === "tool_feedback" ||
+        payload.tool_calls !== undefined
+          ? "tool"
+          : "thinking"
 
       updateChatStore((prev) => ({
         messages: (() => {
@@ -268,6 +247,12 @@ export function handlePicoMessage(
           messages = [...messages, liveMessage]
           return removeMatchingHistoryCopies(messages, liveMessage)
         })(),
+        isTyping: isDetailUpdate ? true : payload.final === false,
+        assistantActivity: !isDetailUpdate
+          ? payload.final === false
+            ? "thinking"
+            : undefined
+          : updateActivity,
         ...(contextUsage ? { contextUsage } : {}),
       }))
       break
@@ -286,7 +271,10 @@ export function handlePicoMessage(
     }
 
     case "typing.start":
-      updateChatStore({ isTyping: true })
+      updateChatStore((prev) => ({
+        isTyping: true,
+        assistantActivity: prev.assistantActivity ?? "thinking",
+      }))
       break
 
     case "typing.stop":
@@ -298,22 +286,32 @@ export function handlePicoMessage(
             break
           }
         }
-        const hasAssistantReply = prev.messages
-          .slice(lastUserIndex + 1)
-          .some(
-            (chatMessage) =>
-              chatMessage.role === "assistant" &&
-              (chatMessage.kind ?? "normal") === "normal" &&
-              (chatMessage.content.trim().length > 0 ||
-                Boolean(chatMessage.attachments?.length)),
-          )
+        const replies = prev.messages.slice(lastUserIndex + 1)
+        const hasStreamingReply = replies.some(
+          (chatMessage) =>
+            chatMessage.role === "assistant" && chatMessage.streaming === true,
+        )
+        const hasFinalAssistantReply = replies.some(
+          (chatMessage) =>
+            chatMessage.role === "assistant" &&
+            (chatMessage.kind ?? "normal") === "normal" &&
+            chatMessage.streaming !== true &&
+            (chatMessage.content.trim().length > 0 ||
+              Boolean(chatMessage.attachments?.length)),
+        )
+
+        const isTyping =
+          hasStreamingReply || (lastUserIndex >= 0 && !hasFinalAssistantReply)
 
         return {
           // The server can stop its typing event shortly before the first
           // response chunk reaches the browser. Keep feedback visible until
           // real assistant content arrives so the conversation never appears
           // to stall between the indicator and the reply.
-          isTyping: lastUserIndex >= 0 && !hasAssistantReply,
+          isTyping,
+          assistantActivity: isTyping
+            ? (prev.assistantActivity ?? "thinking")
+            : undefined,
         }
       })
       break
@@ -333,6 +331,7 @@ export function handlePicoMessage(
           ? prev.messages.filter((msg) => msg.id !== requestId)
           : prev.messages,
         isTyping: false,
+        assistantActivity: undefined,
       }))
       break
     }

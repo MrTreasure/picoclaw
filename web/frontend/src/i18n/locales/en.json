@@ -59,8 +59,18 @@
       "step3": "Preparing response...",
       "step4": "Almost there..."
     },
+    "activity": {
+      "thinking": "Thinking...",
+      "tool": "Calling tools..."
+    },
     "reasoningLabel": "Reasoning",
     "toolCallsLabel": "Tool calls",
+    "expandToolCall": "Expand tool call",
+    "toolDetailTitle": "Tool call details",
+    "toolDetailArguments": "Full arguments",
+    "toolDetailResult": "Response",
+    "toolDetailWaiting": "Waiting for tool result…",
+    "toolDetailLoadError": "Could not load the tool result",
     "toolCallExplanationLabel": "Call note",
     "toolCallFunctionLabel": "Call summary",
     "toolCallArgumentsLabel": "Arguments",

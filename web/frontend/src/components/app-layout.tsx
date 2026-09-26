@@ -16,6 +16,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
       const path = state.location.pathname
       return (
         path === "/" ||
+        path === "/codex" ||
         path.startsWith("/sessions") ||
         path.startsWith("/tasks") ||
         path.startsWith("/me") ||

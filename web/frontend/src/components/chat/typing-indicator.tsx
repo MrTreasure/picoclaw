@@ -1,28 +1,30 @@
-import { useEffect, useState } from "react"
+import { IconBrain, IconTool } from "@tabler/icons-react"
 import { useTranslation } from "react-i18next"
 
-export function TypingIndicator() {
-  const { t } = useTranslation()
-  const thinkingSteps = [
-    t("chat.thinking.step1"),
-    t("chat.thinking.step2"),
-    t("chat.thinking.step3"),
-    t("chat.thinking.step4"),
-  ]
-  const [stepIndex, setStepIndex] = useState(0)
+import type { AssistantActivity } from "@/store/chat"
 
-  useEffect(() => {
-    const stepsCount = thinkingSteps.length
-    const interval = setInterval(() => {
-      setStepIndex((prev) => (prev + 1) % stepsCount)
-    }, 3000)
-    return () => clearInterval(interval)
-  }, [thinkingSteps.length])
+export function TypingIndicator({
+  activity = "thinking",
+}: {
+  activity?: AssistantActivity
+}) {
+  const { t } = useTranslation()
 
   return (
     <div className="flex w-full flex-col gap-1.5">
-      <div className="bg-muted text-muted-foreground inline-flex w-fit max-w-xs flex-col gap-2.5 rounded-2xl rounded-tl-[5px] px-4 py-3">
-        <div className="flex items-center gap-1.5">
+      <div
+        className={
+          activity === "tool"
+            ? "inline-flex w-fit max-w-xs flex-col gap-2.5 rounded-2xl rounded-tl-[5px] border border-cyan-800/70 bg-cyan-950/55 px-4 py-3 text-cyan-50"
+            : "inline-flex w-fit max-w-xs flex-col gap-2.5 rounded-2xl rounded-tl-[5px] border border-violet-800/70 bg-violet-950/55 px-4 py-3 text-violet-50"
+        }
+      >
+        <div className="flex items-center gap-2">
+          {activity === "tool" ? (
+            <IconTool className="size-4 text-cyan-300" aria-hidden="true" />
+          ) : (
+            <IconBrain className="size-4 text-violet-300" aria-hidden="true" />
+          )}
           <span className="bg-secondary size-1.5 animate-bounce rounded-full [animation-delay:-0.3s]" />
           <span className="bg-secondary size-1.5 animate-bounce rounded-full [animation-delay:-0.15s]" />
           <span className="bg-secondary size-1.5 animate-bounce rounded-full" />
@@ -32,11 +34,10 @@ export function TypingIndicator() {
           <div className="from-secondary/25 via-secondary/80 to-secondary/25 absolute inset-0 animate-[shimmer_2s_infinite] rounded-full bg-gradient-to-r bg-[length:200%_100%]" />
         </div>
 
-        <p
-          key={stepIndex}
-          className="text-muted-foreground animate-[fadeSlideIn_0.4s_ease-out] text-xs"
-        >
-          {thinkingSteps[stepIndex]}
+        <p className="text-xs font-medium">
+          {activity === "tool"
+            ? t("chat.activity.tool")
+            : t("chat.activity.thinking")}
         </p>
       </div>
     </div>

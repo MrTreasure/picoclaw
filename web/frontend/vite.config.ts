@@ -10,7 +10,10 @@ export default defineConfig({
   plugins: [
     tanstackRouter({
       target: "react",
-      autoCodeSplitting: true,
+      // Auto-split route chunks can import useNavigate from the entry chunk
+      // through a circular reference; the generated import points at a DOM
+      // event constant instead. Keep routes in the entry until this is fixed.
+      autoCodeSplitting: false,
     }),
     react(),
     tailwindcss(),

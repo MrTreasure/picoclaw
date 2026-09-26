@@ -725,6 +725,45 @@ func TestBeginStream_FinalizeIncludesContextUsage(t *testing.T) {
 	}
 }
 
+func TestBeginStream_FinalizeUnchangedContentMarksMessageFinal(t *testing.T) {
+	ch := newTestPicoChannel(t)
+	ch.config.Streaming = config.StreamingConfig{Enabled: true}
+	if err := ch.Start(context.Background()); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	defer ch.Stop(context.Background())
+
+	clientConn, received, cleanup := newTestPicoWebSocket(t)
+	defer cleanup()
+	ch.addConnForTest(&picoConn{id: "conn-1", conn: clientConn, sessionID: "sess-1"})
+
+	streamer, err := ch.BeginStream(context.Background(), "pico:sess-1")
+	if err != nil {
+		t.Fatalf("BeginStream() error = %v", err)
+	}
+	if err := streamer.Update(context.Background(), "complete"); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	first := mustReceivePicoMessage(t, received)
+	if got := first.Payload[PayloadKeyFinal]; got != false {
+		t.Fatalf("first final = %#v, want false", got)
+	}
+
+	if err := streamer.Finalize(context.Background(), "complete"); err != nil {
+		t.Fatalf("Finalize() error = %v", err)
+	}
+	final := mustReceivePicoMessage(t, received)
+	if final.Type != TypeMessageUpdate {
+		t.Fatalf("final type = %q, want %q", final.Type, TypeMessageUpdate)
+	}
+	if got := final.Payload[PayloadKeyFinal]; got != true {
+		t.Fatalf("final final = %#v, want true", got)
+	}
+	if got := final.Payload["message_id"]; got != first.Payload["message_id"] {
+		t.Fatalf("final message_id = %#v, want %#v", got, first.Payload["message_id"])
+	}
+}
+
 func TestCreateAndAddConnection_RespectsMaxConnectionsConcurrently(t *testing.T) {
 	ch := newTestPicoChannel(t)
 

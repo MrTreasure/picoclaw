@@ -169,6 +169,17 @@ func encodeImageToDataURL(localPath, mime string, info os.FileInfo, maxSize int)
 		return ""
 	}
 	defer f.Close()
+	if !strings.HasPrefix(mime, "image/") {
+		return ""
+	}
+	imageData, err := io.ReadAll(io.LimitReader(f, int64(maxSize)+1))
+	if err != nil || len(imageData) > maxSize || media.ValidateImage(imageData, mime) != nil {
+		logger.WarnCF("agent", "Invalid image skipped before model request", map[string]any{"path": localPath})
+		return ""
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return ""
+	}
 
 	prefix := "data:" + mime + ";base64,"
 	encodedLen := base64.StdEncoding.EncodedLen(int(info.Size()))

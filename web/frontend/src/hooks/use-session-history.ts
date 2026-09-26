@@ -3,8 +3,11 @@ import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
 import { type SessionSummary, deleteSession, getSessions } from "@/api/sessions"
+import { deleteCachedSession } from "@/features/chat/local-cache"
 
 const LIMIT = 20
+let cachedSessionList: SessionSummary[] = []
+let listMutationVersion = 0
 
 interface UseSessionHistoryOptions {
   activeSessionId: string
@@ -17,15 +20,18 @@ export function useSessionHistory({
 }: UseSessionHistoryOptions) {
   const { t } = useTranslation()
   const observerRef = useRef<HTMLDivElement>(null)
-  const [sessions, setSessions] = useState<SessionSummary[]>([])
-  const [offset, setOffset] = useState(0)
-  const [hasMore, setHasMore] = useState(true)
+  const [sessions, setSessions] = useState<SessionSummary[]>(cachedSessionList)
+  const [offset, setOffset] = useState(cachedSessionList.length)
+  const [hasMore, setHasMore] = useState(
+    cachedSessionList.length >= LIMIT,
+  )
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [loadError, setLoadError] = useState(false)
 
   const loadSessions = useCallback(
     async (reset = true) => {
       try {
+        const mutationVersion = listMutationVersion
         const currentOffset = reset ? 0 : offset
         if (reset) {
           setLoadError(false)
@@ -34,6 +40,7 @@ export function useSessionHistory({
         }
 
         const data = await getSessions(currentOffset, LIMIT)
+        if (mutationVersion !== listMutationVersion) return
         setLoadError(false)
 
         if (data.length < LIMIT) {
@@ -41,12 +48,14 @@ export function useSessionHistory({
         }
 
         if (reset) {
+          cachedSessionList = data
           setSessions(data)
         } else {
           setSessions((prev) => {
             const existingIds = new Set(prev.map((s) => s.id))
             const newItems = data.filter((s) => !existingIds.has(s.id))
-            return [...prev, ...newItems]
+            cachedSessionList = [...prev, ...newItems]
+            return cachedSessionList
           })
         }
 
@@ -92,13 +101,14 @@ export function useSessionHistory({
         const deletedLoadedSession = sessions.some(
           (session) => session.id === id,
         )
+        if (id === activeSessionId) onDeletedActiveSession()
         await deleteSession(id)
+        await deleteCachedSession(id)
+        listMutationVersion += 1
+        cachedSessionList = cachedSessionList.filter((s) => s.id !== id)
         setSessions((prev) => prev.filter((s) => s.id !== id))
         if (deletedLoadedSession) {
           setOffset((prev) => Math.max(prev - 1, 0))
-        }
-        if (id === activeSessionId) {
-          onDeletedActiveSession()
         }
         toast.success(t("chat.sessionDeleted"))
       } catch (err) {
@@ -111,22 +121,39 @@ export function useSessionHistory({
 
   const handleDeleteSessions = useCallback(
     async (ids: string[]) => {
-      if (ids.length === 0) return false
+      if (ids.length === 0) return []
       try {
-        await Promise.all(ids.map((id) => deleteSession(id)))
-        const deletedIds = new Set(ids)
+        if (ids.includes(activeSessionId)) onDeletedActiveSession()
+        const results = await Promise.allSettled(
+          ids.map(async (id) => {
+            await deleteSession(id)
+            await deleteCachedSession(id)
+            return id
+          }),
+        )
+        const deletedIds = new Set(
+          results.flatMap((result) =>
+            result.status === "fulfilled" ? [result.value] : [],
+          ),
+        )
+        if (deletedIds.size > 0) listMutationVersion += 1
+        cachedSessionList = cachedSessionList.filter(
+          (session) => !deletedIds.has(session.id),
+        )
         setSessions((previous) =>
           previous.filter((session) => !deletedIds.has(session.id)),
         )
-        setOffset((previous) => Math.max(previous - ids.length, 0))
-        if (deletedIds.has(activeSessionId)) onDeletedActiveSession()
-        toast.success(`已删除 ${ids.length} 段会话`)
-        return true
+        setOffset((previous) => Math.max(previous - deletedIds.size, 0))
+        if (deletedIds.size > 0) toast.success(`已删除 ${deletedIds.size} 段会话`)
+        if (deletedIds.size !== ids.length) {
+          toast.error(`${ids.length - deletedIds.size} 段会话删除失败`)
+        }
+        return [...deletedIds]
       } catch (err) {
         console.error("Failed to delete sessions:", err)
         toast.error(t("chat.sessionDeleteFailed"))
         void loadSessions(true)
-        return false
+        return []
       }
     },
     [activeSessionId, loadSessions, onDeletedActiveSession, t],
