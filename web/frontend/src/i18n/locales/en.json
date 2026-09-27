@@ -55,6 +55,8 @@
     "notConnected": "Gateway is not running. Start it to chat.",
     "sendFailed": "Not sent",
     "sendUnconfirmed": "Delivery unconfirmed — connection closed",
+    "uncertainTurnReadOnly": "This connection closed while a turn was unconfirmed. You can read history, but a snapshot cannot prove the turn finished. Check the result before continuing; old messages and confirmations will never be replayed automatically.",
+    "uncertainTurnEnable": "I've checked the result — allow new messages",
     "restoreMessageDraft": "Restore text to draft",
     "confirmationTitle": "Confirm action",
     "confirmationApprove": "Approve",

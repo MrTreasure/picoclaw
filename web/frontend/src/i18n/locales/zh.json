@@ -55,6 +55,8 @@
     "notConnected": "服务未运行，请先启动以进行对话。",
     "sendFailed": "发送失败",
     "sendUnconfirmed": "连接已断开，发送状态待确认",
+    "uncertainTurnReadOnly": "这段对话的连接在结果未确认时断开。历史可查看，但不能凭历史快照认定任务已经结束。请先核对结果；旧消息与确认不会自动重发。",
+    "uncertainTurnEnable": "我已核对结果，允许发送新消息",
     "restoreMessageDraft": "将文字恢复到草稿",
     "confirmationTitle": "请确认操作",
     "confirmationApprove": "同意",

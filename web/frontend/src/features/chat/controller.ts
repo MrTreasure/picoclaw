@@ -88,8 +88,51 @@ export function setChatDetailVisible(visible: boolean): void {
     entry.terminalAt = Date.now()
   scheduleIdle(entry)
 }
-// Lost uncertain turns block their own chat, not unrelated socket slots.
-const blockedSessions = new Set<string>()
+// Unknown turns remain read-only across reloads. A history snapshot is not a
+// completion signal; only an explicit reset may remove this fence.
+const QUARANTINE_KEY = "pico:quarantined-sessions"
+function readQuarantines(): Set<string> {
+  try {
+    const ids: unknown = JSON.parse(
+      localStorage.getItem(QUARANTINE_KEY) ?? "[]",
+    )
+    const remembered = new Set(
+      Array.isArray(ids)
+        ? ids.filter(
+            (id): id is string =>
+              typeof id === "string" && id.length > 0 && id.length < 512,
+          )
+        : [],
+    )
+    // If writes fail (e.g. storage quota/private mode), an earlier uncertain
+    // send could not have persisted its fence. Fail closed for the selected
+    // conversation on reload; never silently permit a new mutation.
+    try {
+      localStorage.setItem(QUARANTINE_KEY, JSON.stringify([...remembered]))
+    } catch {
+      remembered.add(getChatState().activeSessionId)
+    }
+    return remembered
+  } catch {
+    return new Set([getChatState().activeSessionId])
+  }
+}
+const blockedSessions = readQuarantines()
+function quarantineSession(id: string) {
+  blockedSessions.add(id)
+  persistQuarantines()
+}
+function unquarantineSession(id: string) {
+  blockedSessions.delete(id)
+  persistQuarantines()
+}
+function persistQuarantines() {
+  try {
+    localStorage.setItem(QUARANTINE_KEY, JSON.stringify([...blockedSessions]))
+  } catch {
+    /* An in-memory fence still prevents sends in this tab. */
+  }
+}
 const liveSessionMessages = new Map<string, ChatMessage[]>()
 // Successful server deletion permanently fences late local history/cache writes.
 const deletedSessionIds = new Set<string>()
@@ -151,9 +194,10 @@ function scheduleIdle(entry: SessionSocket) {
   // (including pong) must not keep resetting the countdown.
   if (
     (chatDetailVisible && isForeground(entry)) ||
-    entry.busy ||
-    entry.confirmations.length ||
-    (entry.everBusy && !entry.terminal)
+    (!blockedSessions.has(entry.sessionId) &&
+      (entry.busy ||
+        entry.confirmations.length ||
+        (entry.everBusy && !entry.terminal)))
   ) {
     clearIdle(entry)
     return
@@ -163,9 +207,10 @@ function scheduleIdle(entry: SessionSocket) {
     entry.idleTimer = null
     if (
       !(chatDetailVisible && isForeground(entry)) &&
-      !entry.busy &&
-      (!entry.everBusy || entry.terminal) &&
-      !entry.confirmations.length &&
+      (blockedSessions.has(entry.sessionId) ||
+        (!entry.busy &&
+          (!entry.everBusy || entry.terminal) &&
+          !entry.confirmations.length)) &&
       sessionSockets.get(entry.sessionId) === entry
     ) {
       if (isForeground(entry)) {
@@ -204,6 +249,7 @@ function trackSessionEvent(entry: SessionSocket, message: PicoMessage) {
       !entry.confirmations.some((c) => c.requestId === requestId) &&
       entry.confirmations.length < 8
     ) {
+      if (blockedSessions.has(entry.sessionId)) return true
       entry.confirmations.push({
         requestId,
         sessionId: entry.sessionId,
@@ -270,8 +316,10 @@ function showConfirmations(entry: SessionSocket) {
   // confirmation deadline; never show a button that cannot still succeed.
   expireConfirmations(entry)
   updateChatStore({
-    pendingConfirmations: entry.confirmations,
-    isTyping: entry.busy,
+    pendingConfirmations: blockedSessions.has(entry.sessionId)
+      ? []
+      : entry.confirmations,
+    isTyping: !blockedSessions.has(entry.sessionId) && entry.busy,
   })
 }
 
@@ -384,8 +432,7 @@ function reconnectStaleSocket() {
       entry.confirmations.length ||
       (entry.everBusy && !entry.terminal))
   ) {
-    updateChatStore({ connectionState: "error" })
-    return
+    quarantineSession(activeSessionIdRef)
   }
   if (entry) {
     clearIdle(entry)
@@ -406,7 +453,6 @@ function probeActiveConnection() {
   if (document.visibilityState === "hidden") return
   const socket = wsRef
   if (!socket || socket.readyState !== WebSocket.OPEN) {
-    if (sessionSockets.get(activeSessionIdRef)?.busy) return
     reconnectStaleSocket()
     return
   }
@@ -417,15 +463,14 @@ function probeActiveConnection() {
       JSON.stringify({ type: "ping", session_id: activeSessionIdRef }),
     )
   } catch {
-    if (!sessionSockets.get(activeSessionIdRef)?.busy) reconnectStaleSocket()
+    reconnectStaleSocket()
     return
   }
 
   clearProbeTimer()
   probeTimer = window.setTimeout(() => {
     probeTimer = null
-    if (lastPongAt < startedAt && !sessionSockets.get(activeSessionIdRef)?.busy)
-      reconnectStaleSocket()
+    if (lastPongAt < startedAt) reconnectStaleSocket()
   }, 4_000)
 }
 
@@ -514,8 +559,7 @@ function setActiveSessionId(sessionId: string) {
 
 function canEnterSession(sessionId: string): boolean {
   if (deletedSessionIds.has(sessionId)) return false
-  if (blockedSessions.has(sessionId) || sessionSockets.has(sessionId))
-    return true
+  if (sessionSockets.has(sessionId)) return true
   if (sessionSockets.size < MAX_SESSION_SOCKETS) return true
   // A five-minute grace is a promise, not an eviction preference. Do not
   // steal another session's socket before its timer expires, even if idle.
@@ -558,7 +602,7 @@ function disconnectChatInternal({
   isConnecting = false
 
   for (const entry of sessionSockets.values()) releaseEntry(entry)
-  blockedSessions.clear()
+  // Explicit disconnect is not proof the server finished an uncertain turn.
   liveSessionMessages.clear()
   invalidateSocket(socket)
   streamUpdates.discard()
@@ -574,10 +618,7 @@ function disconnectChatInternal({
 }
 
 export async function connectChat() {
-  if (
-    deletedSessionIds.has(activeSessionIdRef) ||
-    blockedSessions.has(activeSessionIdRef)
-  ) {
+  if (deletedSessionIds.has(activeSessionIdRef)) {
     updateChatStore({ connectionState: "error", pendingConfirmations: [] })
     return
   }
@@ -601,7 +642,9 @@ export async function connectChat() {
     })
     showConfirmations(retained)
     if (!isConnecting) {
-      updateChatStore({ isTyping: retained.busy })
+      updateChatStore({
+        isTyping: !blockedSessions.has(retained.sessionId) && retained.busy,
+      })
       void reconcileSessionAfterConnect({
         socket: retained.socket,
         generation: connectionGeneration,
@@ -612,19 +655,12 @@ export async function connectChat() {
     return
   }
   if (retained) {
-    // A lost connection cannot restore the original confirmation/turn.
-    // Keep unknown turns quarantined rather than silently opening a new turn.
     if (
       retained.busy ||
       retained.confirmations.length ||
       (retained.everBusy && !retained.terminal)
-    ) {
-      updateChatStore({ connectionState: "error", pendingConfirmations: [] })
-      toast.error(
-        "This Pico connection was lost during an uncertain turn. Refresh or explicitly disconnect before continuing; no request was replayed.",
-      )
-      return
-    }
+    )
+      quarantineSession(activeSessionIdRef)
     releaseEntry(retained)
   }
   if (
@@ -690,7 +726,7 @@ export async function connectChat() {
       updateChatStore({
         connectionState: "connected",
         todoList: undefined,
-        isTyping: entry.busy,
+        isTyping: !blockedSessions.has(sessionId) && entry.busy,
       })
       showConfirmations(entry)
       scheduleIdle(entry)
@@ -710,6 +746,8 @@ export async function connectChat() {
       try {
         const message = JSON.parse(event.data) as PicoMessage
         if (!trackSessionEvent(entry, message)) return
+        // A terminal pair observed on the replacement socket is not proof
+        // that the lost turn finished: it might belong to another turn.
         if (!isForeground(entry)) return
         if (message.type === "pong") {
           lastPongAt = Date.now()
@@ -734,7 +772,7 @@ export async function connectChat() {
           entry.confirmations.length ||
           (entry.everBusy && !entry.terminal)
         )
-          blockedSessions.add(sessionId)
+          quarantineSession(sessionId)
         releaseEntry(entry)
         return
       }
@@ -758,15 +796,16 @@ export async function connectChat() {
               assistantActivity: undefined,
             },
       )
-      // Do not reconnect uncertain turns: a confirmation is bound to the
-      // original socket and sends must never be replayed automatically.
+      // Reconnect the transport read-only. A confirmation bound to the old
+      // socket and the original send are never replayed.
       if ((entry.terminal || !entry.everBusy) && !entry.confirmations.length) {
         releaseEntry(entry)
         scheduleReconnect(generation, sessionId)
       } else {
-        blockedSessions.add(sessionId)
+        quarantineSession(sessionId)
         releaseEntry(entry)
-        updateChatStore({ connectionState: "error" })
+        updateChatStore({ connectionState: "connecting" })
+        scheduleReconnect(generation, sessionId)
       }
     }
 
@@ -776,7 +815,7 @@ export async function connectChat() {
       }
       isConnecting = false
       updateChatStore({ connectionState: "connecting" })
-      // Wait for onclose; reconnecting an unknown turn is unsafe.
+      // Wait for onclose to fence uncertain turns before reconnecting.
     }
 
     sessionSockets.set(sessionId, entry)
@@ -797,7 +836,7 @@ export async function connectChat() {
 // awaiting IndexedDB cleanup or running an active-session replacement.
 export function evictDeletedChatSession(sessionId: string) {
   deletedSessionIds.add(sessionId)
-  blockedSessions.delete(sessionId)
+  unquarantineSession(sessionId)
   liveSessionMessages.delete(sessionId)
   const entry = sessionSockets.get(sessionId)
   if (entry) releaseEntry(entry)
@@ -817,6 +856,53 @@ export function evictDeletedChatSession(sessionId: string) {
       assistantActivity: undefined,
       todoList: undefined,
     })
+  }
+}
+
+// There is no authoritative active-turn probe in the exposed gateway API.
+// A reset is intentionally explicit and scoped to the selected session; it
+// cannot resend the old request or resurrect a socket-bound confirmation.
+export function isChatSessionQuarantined(sessionId: string): boolean {
+  return blockedSessions.has(sessionId)
+}
+
+export function resetQuarantinedChatSession(sessionId: string): boolean {
+  if (
+    sessionId !== activeSessionIdRef ||
+    !blockedSessions.has(sessionId) ||
+    deletedSessionIds.has(sessionId)
+  )
+    return false
+  const entry = sessionSockets.get(sessionId)
+  if (
+    !entry ||
+    entry.socket !== wsRef ||
+    entry.socket.readyState !== WebSocket.OPEN
+  )
+    return false
+  unquarantineSession(sessionId)
+  entry.confirmations = []
+  entry.busy = false
+  entry.everBusy = false
+  entry.terminal = true
+  entry.terminalAt = Date.now()
+  if (entry.confirmationTimer !== null) clearTimeout(entry.confirmationTimer)
+  entry.confirmationTimer = null
+  updateChatStore({
+    pendingConfirmations: [],
+    isTyping: false,
+    assistantActivity: undefined,
+    connectionState: "connected",
+  })
+  return true
+}
+
+export function clearChatQuarantines(): void {
+  blockedSessions.clear()
+  try {
+    localStorage.removeItem(QUARANTINE_KEY)
+  } catch {
+    /* A later storage failure will fail closed on reload. */
   }
 }
 
@@ -1024,6 +1110,7 @@ export function respondToConfirmation(
     socket.readyState !== WebSocket.OPEN ||
     state.connectionState !== "connected" ||
     state.activeSessionId !== activeSessionIdRef ||
+    blockedSessions.has(activeSessionIdRef) ||
     !sessionSockets
       .get(activeSessionIdRef)
       ?.confirmations.some(
@@ -1088,6 +1175,7 @@ export function clearCompletedTodos(
     state.connectionState !== "connected" ||
     activeSessionIdRef !== sessionId ||
     state.activeSessionId !== sessionId ||
+    blockedSessions.has(sessionId) ||
     state.todoList?.sessionId !== sessionId ||
     state.todoList.revision !== expectedRevision ||
     state.todoList.items.length === 0 ||
@@ -1124,15 +1212,15 @@ export function sendChatMessage({
     !wsRef ||
     wsRef.readyState !== WebSocket.OPEN ||
     getChatState().activeSessionId !== activeSessionIdRef ||
-    sessionSockets.get(activeSessionIdRef)?.socket !== wsRef
+    sessionSockets.get(activeSessionIdRef)?.socket !== wsRef ||
+    blockedSessions.has(activeSessionIdRef)
   ) {
     // A terminal foreground socket may have expired. Reconnect lazily, but
     // never queue or replay this send: the user must explicitly send again.
     if (
       !wsRef &&
       shouldMaintainConnection &&
-      store.get(gatewayAtom).status === "running" &&
-      !blockedSessions.has(activeSessionIdRef)
+      store.get(gatewayAtom).status === "running"
     )
       void connectChat()
     console.warn("WebSocket not connected")
@@ -1244,7 +1332,10 @@ export async function switchChatSession(sessionId: string) {
   resetCacheContext(sessionId)
   updateChatStore({
     messages: liveSessionMessages.get(sessionId) ?? [],
-    isTyping: sessionSockets.get(sessionId)?.busy ?? false,
+    pendingConfirmations: [],
+    isTyping:
+      !blockedSessions.has(sessionId) &&
+      (sessionSockets.get(sessionId)?.busy ?? false),
     assistantActivity: undefined,
     isOpeningSession: true,
     hasHydratedActiveSession: true,
@@ -1296,7 +1387,9 @@ export async function switchChatSession(sessionId: string) {
     if (olderCursorRef === null) olderCursorRef = historyPage.nextBefore
     updateChatStore((prev) => ({
       messages: mergeHistoryMessages(historyPage.messages, prev.messages),
-      isTyping: sessionSockets.get(sessionId)?.busy ?? prev.isTyping,
+      isTyping:
+        !blockedSessions.has(sessionId) &&
+        (sessionSockets.get(sessionId)?.busy ?? prev.isTyping),
       isOpeningSession: false,
       hasOlderMessages:
         hiddenCachedMessagesRef.length > 0 || historyPage.hasMore,

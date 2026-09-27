@@ -414,9 +414,145 @@ describe("Pico socket lifecycle", () => {
     await controller.switchChatSession("sixth")
     expect(FakeSocket.sockets).toHaveLength(6)
     await controller.switchChatSession(firstId)
-    expect(chat.getChatState().connectionState).toBe("error")
+    expect(chat.getChatState().connectionState).toBe("connecting")
+    expect(controller.isChatSessionQuarantined(firstId)).toBe(true)
+    // Five live sockets still own their slots. A read-only reconnect must wait.
     expect(FakeSocket.sockets).toHaveLength(6)
     expect(controller.sendChatMessage({ content: "do not replay" })).toBe(false)
+  })
+
+  it("reconnects an uncertain foreground turn read-only without replay or snapshot unlock", async () => {
+    loadSessionMessages.mockResolvedValue(emptyPage)
+    await controller.connectChat()
+    const first = FakeSocket.sockets[0]!
+    first.open()
+    const id = chat.getChatState().activeSessionId
+    expect(
+      controller.sendChatMessage({
+        content: "original",
+        messageId: "original-id",
+      }),
+    ).toBe(true)
+    first.remoteClose()
+    expect(controller.isChatSessionQuarantined(id)).toBe(true)
+    expect(controller.resetQuarantinedChatSession(id)).toBe(false)
+    await vi.advanceTimersByTimeAsync(1000)
+    const second = FakeSocket.sockets[1]!
+    second.open()
+    await Promise.resolve()
+    expect(second.sent).toEqual([])
+    expect(controller.sendChatMessage({ content: "new" })).toBe(false)
+    expect(controller.respondToConfirmation("old", true)).toBe(false)
+    second.receive("typing.stop", {}, id)
+    second.receive(
+      "message.create",
+      { message_id: "reply", content: "done", final: true },
+      id,
+    )
+    expect(controller.isChatSessionQuarantined(id)).toBe(true)
+    expect(controller.resetQuarantinedChatSession(id)).toBe(true)
+    expect(controller.sendChatMessage({ content: "new" })).toBe(true)
+    expect(second.sent.map((frame) => JSON.parse(frame).type)).toEqual([
+      "message.send",
+    ])
+  })
+
+  it("keeps quarantine over A/B/A and disconnect, and recovers on explicit reset", async () => {
+    loadSessionMessages.mockResolvedValue(emptyPage)
+    await controller.connectChat()
+    const first = FakeSocket.sockets[0]!
+    first.open()
+    const id = chat.getChatState().activeSessionId
+    first.receive(
+      "confirmation.request",
+      { prompt: "Approve?", expires_at: Date.now() + 120000 },
+      id,
+      "req",
+    )
+    first.remoteClose()
+    await controller.switchChatSession("B")
+    FakeSocket.sockets[1]!.open()
+    await controller.switchChatSession(id)
+    const replacement = FakeSocket.sockets[2]!
+    replacement.open()
+    expect(controller.respondToConfirmation("req", true)).toBe(false)
+    expect(chat.getChatState().pendingConfirmations).toEqual([])
+    controller.disconnectChat()
+    await controller.connectChat()
+    FakeSocket.sockets[3]!.open()
+    expect(controller.isChatSessionQuarantined(id)).toBe(true)
+    expect(controller.sendChatMessage({ content: "blocked" })).toBe(false)
+    expect(controller.resetQuarantinedChatSession(id)).toBe(true)
+    expect(controller.isChatSessionQuarantined(id)).toBe(false)
+  })
+
+  it("retries an uncertain socket after a timeout and retains the read-only fence", async () => {
+    loadSessionMessages.mockResolvedValue(emptyPage)
+    await controller.connectChat()
+    const first = FakeSocket.sockets[0]!
+    first.open()
+    const id = chat.getChatState().activeSessionId
+    expect(controller.sendChatMessage({ content: "possibly running" })).toBe(
+      true,
+    )
+    first.remoteClose()
+    await vi.advanceTimersByTimeAsync(1000)
+    const stalled = FakeSocket.sockets[1]!
+    stalled.remoteClose()
+    await vi.advanceTimersByTimeAsync(2000)
+    const replacement = FakeSocket.sockets[2]!
+    replacement.open()
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000)
+    expect(replacement.readyState).toBe(FakeSocket.OPEN)
+    expect(controller.isChatSessionQuarantined(id)).toBe(true)
+    expect(controller.sendChatMessage({ content: "not safe yet" })).toBe(false)
+    expect(replacement.sent).toEqual([])
+  })
+
+  it("preserves an uncertain session's fence across controller reload", async () => {
+    loadSessionMessages.mockResolvedValue(emptyPage)
+    await controller.connectChat()
+    const first = FakeSocket.sockets[0]!
+    first.open()
+    const id = chat.getChatState().activeSessionId
+    expect(controller.sendChatMessage({ content: "possibly delivered" })).toBe(
+      true,
+    )
+    first.remoteClose()
+    expect(controller.isChatSessionQuarantined(id)).toBe(true)
+    vi.resetModules()
+    const reloaded = await import("@/features/chat/controller")
+    expect(reloaded.isChatSessionQuarantined(id)).toBe(true)
+    // Cleanup of the reloaded module is separate from the original controller.
+    reloaded.disconnectChat()
+  })
+
+  it("fails closed on reload when quarantine persistence is unavailable", async () => {
+    loadSessionMessages.mockResolvedValue(emptyPage)
+    await controller.connectChat()
+    const first = FakeSocket.sockets[0]!
+    first.open()
+    const id = chat.getChatState().activeSessionId
+    expect(controller.sendChatMessage({ content: "possibly delivered" })).toBe(
+      true,
+    )
+    const saved = globalThis.localStorage
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) =>
+        key === "pico:quarantined-sessions" ? null : saved.getItem(key),
+      setItem: () => {
+        throw new Error("storage full")
+      },
+      removeItem: () => {
+        throw new Error("storage full")
+      },
+    })
+    first.remoteClose()
+    expect(controller.isChatSessionQuarantined(id)).toBe(true)
+    vi.resetModules()
+    const reloaded = await import("@/features/chat/controller")
+    expect(reloaded.isChatSessionQuarantined(id)).toBe(true)
+    reloaded.disconnectChat()
   })
 
   it("reuses a socket opened while backgrounded and keeps pending send status", async () => {

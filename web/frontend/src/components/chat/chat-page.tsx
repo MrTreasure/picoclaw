@@ -27,7 +27,11 @@ import { TypingIndicator } from "@/components/chat/typing-indicator"
 import { useImageViewer } from "@/components/chat/use-image-viewer"
 import { UserMessage } from "@/components/chat/user-message"
 import { Button } from "@/components/ui/button"
-import { clearCompletedTodos } from "@/features/chat/controller"
+import {
+  clearCompletedTodos,
+  isChatSessionQuarantined,
+  resetQuarantinedChatSession,
+} from "@/features/chat/controller"
 import { CHAT_FILE_ACCEPT, uploadChatFiles } from "@/features/chat/file-upload"
 import {
   CHAT_IMAGE_ACCEPT,
@@ -178,7 +182,9 @@ function SessionChatPage({ sessionId }: { sessionId: string }) {
     connectionState,
     gatewayState: gwState,
   })
-  const canInput = inputDisabledReason === null
+  const [, setQuarantineRevision] = useState(0)
+  const quarantined = isChatSessionQuarantined(activeSessionId)
+  const canInput = inputDisabledReason === null && !quarantined
   const canCompose = true
 
   const { open: openImage, viewer: imageViewer } = useImageViewer(messages)
@@ -735,13 +741,32 @@ function SessionChatPage({ sessionId }: { sessionId: string }) {
                   <ConfirmationCard
                     key={confirmation.requestId}
                     confirmation={confirmation}
-                    connected={connectionState === "connected"}
+                    connected={connectionState === "connected" && !quarantined}
                   />
                 ))}
             </div>
           </div>
         </div>
 
+        {quarantined && (
+          <div
+            role="alert"
+            className="border-border bg-background/95 absolute top-16 left-1/2 z-30 max-w-sm -translate-x-1/2 rounded border p-3 text-sm shadow-lg"
+          >
+            <p>{t("chat.uncertainTurnReadOnly")}</p>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={connectionState !== "connected"}
+              onClick={() => {
+                if (resetQuarantinedChatSession(activeSessionId))
+                  setQuarantineRevision((revision) => revision + 1)
+              }}
+            >
+              {t("chat.uncertainTurnEnable")}
+            </Button>
+          </div>
+        )}
         {isLoadingOlderMessages && (
           <div className="bg-background/95 text-foreground/85 border-border pointer-events-none absolute top-[calc(5rem+env(safe-area-inset-top))] left-1/2 z-30 -translate-x-1/2 rounded-full border px-3 py-1 text-xs shadow-sm backdrop-blur-xl">
             {t("common.loading")}
@@ -790,7 +815,7 @@ function SessionChatPage({ sessionId }: { sessionId: string }) {
 
       <TodoProgress
         list={todoList?.sessionId === sessionId ? todoList : undefined}
-        connected={connectionState === "connected"}
+        connected={connectionState === "connected" && !quarantined}
         onClear={() => {
           const current = todoList
           return (
@@ -828,7 +853,9 @@ function SessionChatPage({ sessionId }: { sessionId: string }) {
             updateInput("")
           }
         }}
-        inputDisabledReason={inputDisabledReason}
+        inputDisabledReason={
+          quarantined ? "websocketError" : inputDisabledReason
+        }
         canSend={canSubmit}
         isDragActive={isDragActive}
         contextUsage={contextUsage}
