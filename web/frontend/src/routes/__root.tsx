@@ -8,6 +8,7 @@ import {
   initializeChatStore,
   setChatDetailVisible,
 } from "@/features/chat/controller"
+import { clearChatModelPreference } from "@/features/chat/model-preference-cache"
 import { isLauncherAuthPathname } from "@/lib/launcher-login-path"
 
 const RootLayout = () => {
@@ -41,8 +42,10 @@ const RootLayout = () => {
     void getLauncherAuthStatus()
       .then((s) => {
         if (!s.initialized) {
+          clearChatModelPreference()
           globalThis.location.assign("/launcher-setup")
         } else if (!s.authenticated) {
+          clearChatModelPreference()
           globalThis.location.assign("/launcher-login")
         }
       })
@@ -52,6 +55,7 @@ const RootLayout = () => {
         // do NOT redirect: a subsequent successful login would loop straight back here.
         // launcherFetch handles 401 on real API calls regardless.
         if (err instanceof Error && /^status 40[13]$/.test(err.message)) {
+          clearChatModelPreference()
           globalThis.location.assign("/launcher-login")
         } else {
           setAuthError(

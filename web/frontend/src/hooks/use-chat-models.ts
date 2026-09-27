@@ -8,6 +8,12 @@ import {
   getModels,
   setChatPreferences,
 } from "@/api/models"
+import {
+  clearChatModelPreference,
+  readChatModelPreference,
+  rememberChatModelPreference,
+  verifyChatModelCacheScope,
+} from "@/features/chat/model-preference-cache"
 import { showSaveSuccessOrRestartToast } from "@/lib/restart-required"
 import { refreshGatewayState } from "@/store/gateway"
 
@@ -29,10 +35,14 @@ function isLocalModel(model: ModelInfo): boolean {
 export function useChatModels({ isConnected }: UseChatModelsOptions) {
   const { t } = useTranslation()
   const [modelList, setModelList] = useState<ModelInfo[]>([])
-  const [defaultModelName, setDefaultModelName] = useState("")
+  const [defaultModelName, setDefaultModelName] = useState(
+    () => readChatModelPreference()?.name ?? "",
+  )
   const [settingDefault, setSettingDefault] = useState(false)
   const [settingThinkingLevel, setSettingThinkingLevel] = useState(false)
-  const [thinkingLevel, setThinkingLevel] = useState<ModelThinkingLevel>("off")
+  const [thinkingLevel, setThinkingLevel] = useState<ModelThinkingLevel>(
+    () => readChatModelPreference()?.thinking ?? "off",
+  )
   const setDefaultRequestIdRef = useRef(0)
   const loadModelsRequestIdRef = useRef(0)
   const setDefaultQueueRef = useRef<Promise<void>>(Promise.resolve())
@@ -46,11 +56,20 @@ export function useChatModels({ isConnected }: UseChatModelsOptions) {
       const requestId = ++loadModelsRequestIdRef.current
       await setDefaultQueueRef.current.catch(() => {})
       if (requestId !== loadModelsRequestIdRef.current) return
+      await verifyChatModelCacheScope()
+      if (requestId !== loadModelsRequestIdRef.current) return
       const data = await getModels()
       if (requestId !== loadModelsRequestIdRef.current) return
+      const resolvedModelName = (
+        data.chat_model_name || data.default_model
+      ).trim()
+      const resolvedThinkingLevel = data.chat_thinking_level ?? "off"
       setModelList(data.models)
-      syncDefaultModelName(data.chat_model_name || data.default_model)
-      setThinkingLevel(data.chat_thinking_level ?? "off")
+      syncDefaultModelName(resolvedModelName)
+      setThinkingLevel(resolvedThinkingLevel)
+      if (resolvedModelName)
+        rememberChatModelPreference(resolvedModelName, resolvedThinkingLevel)
+      else clearChatModelPreference()
     } catch {
       // silently fail
     }
@@ -77,12 +96,24 @@ export function useChatModels({ isConnected }: UseChatModelsOptions) {
           if (requestId !== setDefaultRequestIdRef.current) return
           await setChatPreferences({ model_name: modelName })
           if (requestId !== setDefaultRequestIdRef.current) return
+          await verifyChatModelCacheScope()
+          if (requestId !== setDefaultRequestIdRef.current) return
           const data = await getModels()
           if (requestId !== setDefaultRequestIdRef.current) return
 
+          const resolvedModelName = (
+            data.chat_model_name || data.default_model
+          ).trim()
+          const resolvedThinkingLevel = data.chat_thinking_level ?? "off"
           setModelList(data.models)
-          syncDefaultModelName(data.chat_model_name || data.default_model)
-          setThinkingLevel(data.chat_thinking_level ?? "off")
+          syncDefaultModelName(resolvedModelName)
+          setThinkingLevel(resolvedThinkingLevel)
+          if (resolvedModelName)
+            rememberChatModelPreference(
+              resolvedModelName,
+              resolvedThinkingLevel,
+            )
+          else clearChatModelPreference()
           const gateway = await refreshGatewayState({ force: true })
           if (requestId !== setDefaultRequestIdRef.current) return
           showSaveSuccessOrRestartToast(

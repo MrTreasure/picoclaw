@@ -1,3 +1,4 @@
+import { clearChatModelPreference } from "@/features/chat/model-preference-cache"
 import { isLauncherAuthPathname } from "@/lib/launcher-login-path"
 
 function isLauncherAuthPath(): boolean {
@@ -35,6 +36,7 @@ export async function launcherFetch(
       typeof globalThis.location !== "undefined" &&
       !isLauncherAuthPath()
     ) {
+      clearChatModelPreference()
       globalThis.location.assign("/launcher-login")
     }
   }

@@ -119,7 +119,7 @@ const DEFAULT_CHAT_STATE: ChatStoreState = {
   isTyping: false,
   activeSessionId: getInitialActiveSessionId(),
   hasHydratedActiveSession: false,
-  isOpeningSession: false,
+  isOpeningSession: true,
   hasOlderMessages: false,
   isLoadingOlderMessages: false,
 }

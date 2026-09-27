@@ -1,4 +1,5 @@
 import { stopCodexSocket } from "@/api/codex"
+import { clearChatModelPreference } from "@/features/chat/model-preference-cache"
 import { clearCodexHistoryCache } from "@/features/codex/history-cache"
 import { invalidateSessionListCache } from "@/hooks/session-list-cache"
 
@@ -50,6 +51,7 @@ export async function postLauncherDashboardLogout(): Promise<boolean> {
   // Local relation is only a display hint. Logout revokes it immediately and
   // closes the tab-wide authenticated Codex socket; server revokes the cookie.
   stopCodexSocket()
+  clearChatModelPreference()
   await Promise.all([invalidateSessionListCache(), clearCodexHistoryCache()])
   const res = await fetch("/api/auth/logout", {
     method: "POST",

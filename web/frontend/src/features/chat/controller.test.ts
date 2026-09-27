@@ -87,6 +87,8 @@ beforeEach(async () => {
     location: globalThis.location,
     setTimeout,
     clearTimeout,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
   })
   vi.stubGlobal("document", {
     visibilityState: "visible",

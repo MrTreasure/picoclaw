@@ -838,7 +838,10 @@ export async function hydrateActiveSession() {
     storedSessionId !== state.activeSessionId
   ) {
     if (!state.hasHydratedActiveSession) {
-      updateChatStore({ hasHydratedActiveSession: true })
+      updateChatStore({
+        hasHydratedActiveSession: true,
+        isOpeningSession: false,
+      })
     }
     return
   }
@@ -865,6 +868,7 @@ export async function hydrateActiveSession() {
         messages: mergeHistoryMessages(recentCachedMessages, prev.messages),
         hasOlderMessages: hiddenCachedMessagesRef.length > 0 || cached.hasMore,
         isTyping: false,
+        isOpeningSession: cached.messages.length === 0,
         hasHydratedActiveSession: true,
       }))
     }
@@ -894,6 +898,7 @@ export async function hydrateActiveSession() {
         hasOlderMessages:
           hiddenCachedMessagesRef.length > 0 || historyPage.hasMore,
         isTyping: false,
+        isOpeningSession: false,
         hasHydratedActiveSession: true,
       })
     } catch (error) {
@@ -926,6 +931,7 @@ export async function hydrateActiveSession() {
               hasOlderMessages: latestPage.hasMore,
               isLoadingOlderMessages: false,
               isTyping: false,
+              isOpeningSession: false,
               hasHydratedActiveSession: true,
             })
             if (store.get(gatewayAtom).status === "running") {
@@ -941,6 +947,7 @@ export async function hydrateActiveSession() {
 
       updateChatStore({
         isTyping: false,
+        isOpeningSession: false,
         hasHydratedActiveSession: true,
       })
     }
@@ -1384,7 +1391,7 @@ export function initializeChatStore() {
   })
 
   if (!readStoredSessionId()) {
-    updateChatStore({ hasHydratedActiveSession: true })
+    updateChatStore({ hasHydratedActiveSession: true, isOpeningSession: false })
     syncConnectionWithGateway(true)
     return
   }
