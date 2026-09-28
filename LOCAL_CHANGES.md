@@ -43,7 +43,7 @@ The comparison baseline currently used by this repository is
   allowlist because existing device authentication otherwise rejects these APIs.
   Codex access includes execution/approval capabilities provided by its RPC
   server; this grant applies to all valid dashboard-issued device credentials.
-- **Commits/deployment/upstream:** This feature branch, local only; launcher deployment authorized on 2026-09-28. Gateway phone prototype remains undeployed.
+- **Commits/deployment/upstream:** This feature branch, local only; launcher deployed on 2026-09-28 at bdea8add. Device login, session/static-page/workspace APIs and Codex WebSocket initialization passed. Gateway phone prototype remains undeployed.
   Companion clean-room client lives in the independent `musec137-native` repo.
 - **Validation:** Existing middleware tests and Go build; native APK build/lint.
   Device interaction remains manual. No new automated tests added.
