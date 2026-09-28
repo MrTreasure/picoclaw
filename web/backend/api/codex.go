@@ -207,7 +207,7 @@ func codexClientMessageAllowed(data []byte) bool {
 		return len(request.ID) > 0
 	}
 	switch request.Method {
-	case "initialize", "initialized", "model/list", "thread/list", "thread/read", "thread/loaded/list", "thread/resume", "thread/unsubscribe", "turn/interrupt":
+	case "initialize", "initialized", "model/list", "thread/list", "thread/read", "thread/loaded/list", "thread/turns/list", "thread/resume", "thread/unsubscribe", "turn/interrupt":
 		return true
 	case "turn/steer":
 		return len(request.ID) > 0 && strings.TrimSpace(request.Params.ThreadID) != "" && strings.TrimSpace(request.Params.ExpectedTurnID) != ""

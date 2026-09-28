@@ -179,7 +179,18 @@ func LauncherDashboardAuth(cfg LauncherDashboardAuthConfig, next http.Handler) h
 
 func deviceBearerPathAllowed(method, p string) bool {
 	// Native clients use device credentials for the same bounded features as PWA.
-	// Keep configuration, arbitrary files and process control outside this grant.
+	// Native settings use explicit management routes; arbitrary files/process control remain excluded.
+	if (p == "/api/config" && (method == http.MethodGet || method == http.MethodPut || method == http.MethodPatch)) ||
+		(p == "/api/system/launcher-config" && (method == http.MethodGet || method == http.MethodPut)) ||
+		((p == "/api/workspace-documents/soul" || p == "/api/workspace-documents/memory") && (method == http.MethodGet || method == http.MethodPut)) ||
+		(p == "/api/oauth/providers" && method == http.MethodGet) ||
+		((p == "/api/oauth/login" || p == "/api/oauth/logout") && method == http.MethodPost) {
+		return true
+	}
+	if strings.HasPrefix(p, "/api/oauth/flows/") {
+		parts := strings.Split(strings.TrimPrefix(p, "/api/oauth/flows/"), "/")
+		return parts[0] != "" && ((len(parts) == 1 && method == http.MethodGet) || (len(parts) == 2 && parts[1] == "poll" && method == http.MethodPost))
+	}
 	if method == http.MethodGet && (p == "/api/codex/workspaces" ||
 		p == "/api/codex/app-server/ws" || p == "/api/image-thumbnail" ||
 		strings.HasPrefix(p, "/api/codex/images/")) {

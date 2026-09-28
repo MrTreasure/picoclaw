@@ -387,3 +387,9 @@ Secrets remain outside Git in `/vol1/picoclaw/home/.security.yml`.
 - 新增受现有设备鉴权保护的 GET /api/android/releases/native/latest 和 download；发布文件来自 android-releases/native。
 - 新原生应用与旧 MuseC137 包名/签名渠道隔离，旧版 latest.json 与 APK 保留不变。
 - 复用既有版本清单验证、大小及下载 SHA-256 校验；不扩大设备权限。
+
+## 0.1.6 原生管理与历史分页接口
+
+- 按用户“全做”范围，设备 Bearer 增加明确的配置 GET/PUT/PATCH、SOUL/MEMORY GET/PUT、访问设置 GET/PUT，以及凭据列表/登录/退出和指定授权流程查询/轮询；不开放进程控制、任意文件或配置重置。
+- Codex WebSocket 白名单增加只读 thread/turns/list；原生使用完整条目、倒序十回合分页，resume 排除全量历史。本机生成协议与只读分页响应已核对。
+- 更新原有白名单测试中配置读取的预期，匹配新增原生配置编辑功能；不新增测试或 UI 自动化。

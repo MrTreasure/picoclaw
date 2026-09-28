@@ -81,7 +81,7 @@ func TestDeviceBearerPathAllowed_NativeManagementIsNarrow(t *testing.T) {
 		{http.MethodGet, "/api/tools", true},
 		{http.MethodPut, "/api/tools/web_search/state", true},
 		{http.MethodPost, "/api/models/default", true},
-		{http.MethodGet, "/api/config", false},
+		{http.MethodGet, "/api/config", true},
 		{http.MethodPost, "/api/gateway/restart", false},
 		{http.MethodPost, "/api/skills/install", false},
 		{http.MethodPut, "/api/tools/web-search-config", false},
