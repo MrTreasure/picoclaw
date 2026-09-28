@@ -394,3 +394,21 @@ Secrets remain outside Git in `/vol1/picoclaw/home/.security.yml`.
 - Codex WebSocket 白名单增加只读 thread/turns/list；原生使用完整条目、倒序十回合分页，resume 排除全量历史。本机生成协议与只读分页响应已核对。
 - 更新原有白名单测试中配置读取的预期，匹配新增原生配置编辑功能；不新增测试或 UI 自动化。
 - 配置保存链路额外修复：忽略序列化的 [NOT_HERE] 凭据占位符，防止普通配置回写把占位符误设为真实凭据；不修改运行中的任何凭据。
+
+## 2026-09-28 Proxy web fetch and Tavily search policy
+
+- Configuration-only production change: `tools.web.proxy=http://127.0.0.1:7897`,
+  `provider=tavily`, `prefer_native=false`, `tavily.enabled=true`. Existing security
+  YAML supplies the key; no credential copied to source/config/documentation.
+- Runtime workspace AGENT.md now directs public URL reads to proxy-backed
+  `web_fetch`, and failed/blocked/empty fetches to native `web_search` (Tavily).
+  Search snippets must not be presented as fetched page text. CLI search is a
+  last resort, replacing the former mandatory Claude script priority.
+- This is agent-level fallback, not a new automatic fallback inside web_fetch.
+  Configured web proxy also applies to the native Tavily search HTTP client.
+- Validation: proxied HTTPS fetch 200; Tavily authenticated search 200 with a
+  result; authenticated gateway reload accepted. No binary replacement needed.
+- Deployed runtime files are outside Git. Backup/rollback:
+  `/vol1/picoclaw/home/backups/web-proxy-tavily-20260928-183407/`
+  contains config.json and AGENT.md; restore both to their original paths and
+  reload the gateway. Upstream status: local deployment policy, no source fork.
