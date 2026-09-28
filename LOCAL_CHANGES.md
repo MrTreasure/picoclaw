@@ -19,6 +19,32 @@ The comparison baseline currently used by this repository is
 
 ## Active local features
 
+### Workspace persona and scoped tool failures
+
+- **Behavior:** The runtime prompt identifies PicoClaw as infrastructure and
+  defers conversational identity to workspace bootstrap files. Explicit language
+  and address preferences persist for the conversation unless scoped otherwise.
+  The production Muse workspace uses SOUL.md as its persona source, with AGENT.md
+  defining execution and USER.md storing preferences. Its core principle is
+  “不为失败找借口，只为成功找方法”, with evidence-based recovery and verified completion.
+  Tool errors describe the failed operation, not new system instructions or a
+  blanket prohibition. Repeated identical failures stop that retry path while
+  diagnosis and authorized alternatives continue; actual access controls remain.
+- **Configuration surface:** Production workspace AGENT.md, SOUL.md, USER.md and
+  legacy IDENTITY.md. These files hot-reload through prompt-cache invalidation.
+  Configuration fixes take effect without rebuilding. A small source change is
+  also needed because the old kernel hard-coded “You are picoclaw” independently
+  of configuration; it now explicitly delegates identity to workspace files.
+- **Commit/deployment:** The commit containing this entry is the gateway release
+  source for 2026-09-28. Production prompt files were applied and backed up at
+  `workspace/backup/prompt-consistency-20260928-110653`. Deploy the gateway from
+  this clean commit to activate the kernel wording; workspace rules hot-reload.
+  Release metadata and the previous binary are retained under
+  `/vol1/picoclaw/bin/backups/` during installation.
+- **Upstream status:** Local change, not submitted upstream.
+- **Rollback:** Restore the four files from the timestamped prompt backup;
+  revert the kernel wording change for subsequent binary builds.
+
 ### Canonical source and reproducible deployment
 
 - **Behavior:** The complete Go gateway, Launcher backend, WebUI/PWA frontend,

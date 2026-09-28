@@ -175,9 +175,9 @@ func (cb *ContextBuilder) getIdentity(includeToolUseRule bool) string {
 	}
 
 	return fmt.Sprintf(
-		`# picoclaw 🦞 (%s)
+`# Agent runtime (%s)
 
-You are picoclaw, a helpful AI assistant.
+PicoClaw is the runtime, not your conversational identity. Use the workspace's AGENT.md and SOUL.md for your identity and personality (legacy workspaces may use AGENTS.md and IDENTITY.md). If no identity is configured, act as a helpful AI assistant. Explicit user preferences for language and address take precedence over persona defaults and remain in effect for the conversation until changed, unless scoped to one response.
 
 ## Workspace
 Your workspace is at: %s
