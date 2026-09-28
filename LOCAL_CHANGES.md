@@ -373,5 +373,5 @@ Secrets remain outside Git in `/vol1/picoclaw/home/.security.yml`.
   matching the PWA chat Agent model/thinking controls. General configuration
   endpoints remain excluded. No new configuration or data migration.
 - Validation: existing middleware tests and launcher build; actual device-token
-  route verification. Deployment follows native 0.1.1 delivery.
+  route verification. Deployed at 9be22cc3 for native 0.1.1; device-authenticated empty preferences request returns expected 400 without changing user settings.
 - Local-only branch feat/native-clean-client. Rollback: restore previous launcher.
