@@ -154,11 +154,11 @@ func TestHandleListSessions_JSONLStorage(t *testing.T) {
 	if items[0].MessageCount != 2 {
 		t.Fatalf("items[0].MessageCount = %d, want 2", items[0].MessageCount)
 	}
-	if items[0].Title != "Because the API still reads only legacy JSON session files." {
+	if items[0].Title != truncateRunes("Explain why the history API is empty after migration.", 40) {
 		t.Fatalf(
 			"items[0].Title = %q, want %q",
 			items[0].Title,
-			"Because the API still reads only legacy JSON session files.",
+			truncateRunes("Explain why the history API is empty after migration.", 40),
 		)
 	}
 	if items[0].Preview != "Because the API still reads only legacy JSON session files." {
@@ -2088,23 +2088,24 @@ func TestBuildSessionListItem_LatestSubstantiveVisibleMessage(t *testing.T) {
 		name     string
 		messages []providers.Message
 		want     string
+		title    string
 		count    int
 	}{
-		{"latest assistant reply", []providers.Message{{Role: "user", Content: "first question"}, {Role: "assistant", Content: "first answer"}, {Role: "user", Content: "later question"}, {Role: "assistant", Content: "latest answer"}}, "latest answer", 4},
-		{"latest user turn", []providers.Message{{Role: "user", Content: "first"}, {Role: "assistant", Content: "answer"}, {Role: "user", Content: "new request"}}, "new request", 3},
-		{"tool result and call skipped", []providers.Message{{Role: "user", Content: "first"}, {Role: "assistant", Content: "real response"}, {Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "call", Function: &providers.FunctionCall{Name: "exec", Arguments: `{}`}}}}, {Role: "user", ToolCallID: "call", Content: "secret tool output"}, {Role: "tool", ToolCallID: "call", Content: "secret result"}}, "real response", 4},
-		{"message tool synthetic skipped", []providers.Message{{Role: "user", Content: "real request"}, {Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "msg", Function: &providers.FunctionCall{Name: "message", Arguments: `{"content":"synthetic delivery"}`}}}}}, "real request", 3},
-		{"later media falls back to prose", []providers.Message{{Role: "user", Content: "describe this"}, {Role: "user", Media: []string{"data:image/png;base64,secret"}}}, "describe this", 2},
-		{"media only placeholder", []providers.Message{{Role: "user", Media: []string{"data:image/png;base64,secret"}}}, "[image]", 1},
-		{"raw media payload not title", []providers.Message{{Role: "user", Content: "safe request"}, {Role: "assistant", Content: "data:image/png;base64,secret"}}, "safe request", 2},
-		{"no visible text", []providers.Message{{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "call", Function: &providers.FunctionCall{Name: "exec", Arguments: `{}`}}}}, {Role: "tool", ToolCallID: "call", Content: "secret"}}, "(empty)", 1},
-		{"transient thought excluded", []providers.Message{{Role: "user", Content: "visible"}, {Role: "assistant", ReasoningContent: "internal thought"}}, "visible", 1},
+		{"latest assistant reply", []providers.Message{{Role: "user", Content: "first question"}, {Role: "assistant", Content: "first answer"}, {Role: "user", Content: "later question"}, {Role: "assistant", Content: "latest answer"}}, "latest answer", "first question", 4},
+		{"latest user turn", []providers.Message{{Role: "user", Content: "first"}, {Role: "assistant", Content: "answer"}, {Role: "user", Content: "new request"}}, "new request", "first", 3},
+		{"tool result and call skipped", []providers.Message{{Role: "user", Content: "first"}, {Role: "assistant", Content: "real response"}, {Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "call", Function: &providers.FunctionCall{Name: "exec", Arguments: `{}`}}}}, {Role: "user", ToolCallID: "call", Content: "secret tool output"}, {Role: "tool", ToolCallID: "call", Content: "secret result"}}, "real response", "first", 4},
+		{"message tool synthetic skipped", []providers.Message{{Role: "user", Content: "real request"}, {Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "msg", Function: &providers.FunctionCall{Name: "message", Arguments: `{"content":"synthetic delivery"}`}}}}}, "real request", "real request", 3},
+		{"later media falls back to prose", []providers.Message{{Role: "user", Content: "describe this"}, {Role: "user", Media: []string{"data:image/png;base64,secret"}}}, "describe this", "describe this", 2},
+		{"media only placeholder", []providers.Message{{Role: "user", Media: []string{"data:image/png;base64,secret"}}}, "[image]", "New conversation", 1},
+		{"raw media payload not title", []providers.Message{{Role: "user", Content: "safe request"}, {Role: "assistant", Content: "data:image/png;base64,secret"}}, "safe request", "safe request", 2},
+		{"no visible text", []providers.Message{{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "call", Function: &providers.FunctionCall{Name: "exec", Arguments: `{}`}}}}, {Role: "tool", ToolCallID: "call", Content: "secret"}}, "(empty)", "New conversation", 1},
+		{"transient thought excluded", []providers.Message{{Role: "user", Content: "visible"}, {Role: "assistant", ReasoningContent: "internal thought"}}, "visible", "visible", 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			item := buildSessionListItem("id", "pico", sessionFile{Messages: tc.messages}, 100)
-			if item.Title != tc.want || item.Preview != tc.want || item.MessageCount != tc.count {
-				t.Fatalf("item = %#v, want title/preview %q and count %d", item, tc.want, tc.count)
+			if item.Title != tc.title || item.Preview != tc.want || item.MessageCount != tc.count {
+				t.Fatalf("item = %#v, want title %q preview %q and count %d", item, tc.title, tc.want, tc.count)
 			}
 		})
 	}

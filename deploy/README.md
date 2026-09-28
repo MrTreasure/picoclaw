@@ -1,5 +1,19 @@
 # MuseC137 PWA deployment
 
+## Build storage on this NAS
+
+Keep Go caches, temporary build files and release worktrees on the `/vol1`
+data disk. Do not override `GOCACHE`, `GOMODCACHE`, `GOTMPDIR` or `TMPDIR` to
+system-disk paths such as `/tmp`. For this checkout, use:
+
+```bash
+export GOCACHE=/vol1/1000/deploy/data/MrTreasure/musec137-pwa/.cache/go-build
+export GOMODCACHE=/vol1/go/pkgs/mod
+export GOTMPDIR=/vol1/1000/deploy/data/MrTreasure/musec137-pwa/.cache/tmp
+export TMPDIR="$GOTMPDIR"
+mkdir -p "$GOCACHE" "$GOTMPDIR"
+```
+
 `pwa.mrtreasure.cc` serves its frontend directly from the `static-server` Nginx
 container, **not** the Go launcher's embedded frontend. The launcher remains a
 separate backend service for auth, APIs, media, and WebSocket traffic; the Pico

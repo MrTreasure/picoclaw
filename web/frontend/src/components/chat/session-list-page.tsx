@@ -4,6 +4,7 @@ import {
   IconCode,
   IconMessageCircle,
   IconMessagePlus,
+  IconPencil,
   IconRobot,
   IconSearch,
   IconTrash,
@@ -79,6 +80,10 @@ export function SessionListPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [renameId, setRenameId] = useState<string | null>(null)
+  const [renameTitle, setRenameTitle] = useState("")
+  const [renaming, setRenaming] = useState(false)
+  const [renameError, setRenameError] = useState(false)
   const [pressedId, setPressedId] = useState<string | null>(null)
   const [showNewSession, setShowNewSession] = useState(false)
   const [codexThreads, setCodexThreads] = useState<CodexThread[]>(() => {
@@ -108,6 +113,7 @@ export function SessionListPage() {
     observerRef,
     loadSessions,
     handleDeleteSessions,
+    handleRenameSession,
   } = useSessionHistory({
     activeSessionId,
     onDeletedActiveSession: () => void newChat(true, true),
@@ -435,6 +441,26 @@ export function SessionListPage() {
     }
   }
 
+  const submitRename = async () => {
+    if (!renameId || renaming) return
+    const title = renameTitle.trim()
+    if (!title || title.length > 60) {
+      setRenameError(true)
+      return
+    }
+    setRenameError(false)
+    setRenaming(true)
+    try {
+      await handleRenameSession(renameId, title)
+      setRenameId(null)
+    } catch (error) {
+      console.error("Failed to rename conversation:", error)
+      setRenameError(true)
+    } finally {
+      setRenaming(false)
+    }
+  }
+
   const createSession = async () => {
     await newChat()
     markChatOpenedFromSessions()
@@ -694,10 +720,11 @@ export function SessionListPage() {
                         </span>
                       </span>
                       <span className="text-muted-foreground mt-1 block truncate text-sm">
-                        {session.preview ||
-                          t("chat.messagesCount", {
-                            count: session.message_count,
-                          })}
+                        {session.preview && session.preview !== session.title
+                          ? session.preview
+                          : t("chat.messagesCount", {
+                              count: session.message_count,
+                            })}
                       </span>
                       {isWeixin && (
                         <span className="mt-1 block text-xs font-medium text-emerald-400">
@@ -716,6 +743,24 @@ export function SessionListPage() {
                       )}
                     </span>
                   </button>
+                  {!selectionMode && (
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-11 shrink-0 items-center justify-center rounded-xl focus-visible:ring-2 focus-visible:outline-none"
+                      aria-label={t("chat.renameSessionLabel", {
+                        title: session.title || t("chat.history"),
+                      })}
+                      onPointerDown={() => cancelLongPress()}
+                      onClick={() => {
+                        cancelLongPress()
+                        setRenameId(session.id)
+                        setRenameTitle(session.title)
+                        setRenameError(false)
+                      }}
+                    >
+                      <IconPencil className="size-5" aria-hidden="true" />
+                    </button>
+                  )}
                 </div>
               )
             })}
@@ -731,6 +776,74 @@ export function SessionListPage() {
           )}
         </div>
       </main>
+
+      <Dialog
+        open={renameId !== null}
+        onOpenChange={(open) => {
+          if (!open && !renaming) {
+            setRenameId(null)
+            setRenameError(false)
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("chat.renameSession")}</DialogTitle>
+            <DialogDescription>
+              {t("chat.renameSessionDescription")}
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault()
+              void submitRename()
+            }}
+            className="space-y-4"
+          >
+            <Input
+              autoFocus
+              aria-label={t("chat.renameSession")}
+              aria-invalid={renameError}
+              aria-describedby={
+                renameError ? "rename-session-error" : undefined
+              }
+              maxLength={60}
+              value={renameTitle}
+              disabled={renaming}
+              onChange={(event) => {
+                setRenameTitle(event.target.value)
+                setRenameError(false)
+              }}
+            />
+            {renameError && (
+              <p
+                id="rename-session-error"
+                role="alert"
+                className="text-destructive text-sm"
+              >
+                {renameTitle.trim().length === 0
+                  ? t("chat.renameSessionRequired")
+                  : t("chat.renameSessionFailed")}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={renaming}
+                onClick={() => setRenameId(null)}
+              >
+                {t("chat.renameSessionCancel")}
+              </Button>
+              <Button type="submit" disabled={renaming}>
+                {renaming
+                  ? t("chat.renameSessionSaving")
+                  : t("chat.renameSessionSave")}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog
         open={confirmBulkDelete}

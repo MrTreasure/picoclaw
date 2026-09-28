@@ -11,6 +11,7 @@ import (
 // Handler serves HTTP API requests.
 type Handler struct {
 	configPath                 string
+	generateTitle              sessionTitleGenerator
 	serverPort                 int
 	serverPublic               bool
 	serverPublicExplicit       bool

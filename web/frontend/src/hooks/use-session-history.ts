@@ -3,9 +3,15 @@ import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
 import { getLauncherAuthStatus } from "@/api/launcher-auth"
-import { type SessionSummary, deleteSession, getSessions } from "@/api/sessions"
-import { deleteCachedSession } from "@/features/chat/local-cache"
+import {
+  SessionBusyError,
+  type SessionSummary,
+  deleteSession,
+  getSessions,
+  renameSession,
+} from "@/api/sessions"
 import { evictDeletedChatSession } from "@/features/chat/controller"
+import { deleteCachedSession } from "@/features/chat/local-cache"
 
 import {
   invalidateSessionListCache,
@@ -292,6 +298,42 @@ export function useSessionHistory({
     return () => observer.disconnect()
   }, [hasMore, isLoadingMore, loadError, loadSessions])
 
+  const handleRenameSession = useCallback(
+    async (id: string, title: string) => {
+      const trimmed = title.trim()
+      if (!trimmed || trimmed.length > 60) throw new Error("Invalid title")
+      const scope = scopeRef.current
+      const authGeneration = sessionListCacheGeneration()
+      await renameSession(id, trimmed)
+      // A late list response or disk read must not restore the old title.
+      // Only the confirmed server result may modify the visible list or cache.
+      if (
+        !scope ||
+        scope !== scopeRef.current ||
+        scope !== lastAuthenticatedListScope() ||
+        authGeneration !== sessionListCacheGeneration()
+      )
+        return
+      listMutationVersion += 1
+      requestVersion.current += 1
+      loadingRef.current = false
+      setIsLoadingMore(false)
+      setSessions((previous) => {
+        const next = previous.map((session) =>
+          session.id === id ? { ...session, title: trimmed } : session,
+        )
+        if (next.some((session) => session.id === id))
+          void writeSessionListCache(scope, {
+            sessions: next,
+            offset: next.length,
+            hasMore,
+          })
+        return next
+      })
+    },
+    [hasMore],
+  )
+
   const handleDeleteSession = useCallback(
     async (id: string) => {
       try {
@@ -324,7 +366,13 @@ export function useSessionHistory({
         toast.success(t("chat.sessionDeleted"))
       } catch (err) {
         console.error("Failed to delete session:", err)
-        toast.error(t("chat.sessionDeleteFailed"))
+        toast.error(
+          t(
+            err instanceof SessionBusyError
+              ? "chat.sessionDeleteBusy"
+              : "chat.sessionDeleteFailed",
+          ),
+        )
         void loadSessions(true)
       }
     },
@@ -379,7 +427,13 @@ export function useSessionHistory({
           toast.success(`已删除 ${deletedIds.size} 段会话`)
         if (deletedIds.size !== ids.length) {
           const failures = results.flatMap((result) =>
-            result.status === "rejected" ? [String(result.reason)] : [],
+            result.status === "rejected"
+              ? [
+                  result.reason instanceof SessionBusyError
+                    ? t("chat.sessionDeleteBusy")
+                    : String(result.reason),
+                ]
+              : [],
           )
           toast.error(
             `${ids.length - deletedIds.size} 段会话删除失败：${failures[0] ?? "未知错误"}`,
@@ -406,5 +460,6 @@ export function useSessionHistory({
     loadSessions,
     handleDeleteSession,
     handleDeleteSessions,
+    handleRenameSession,
   }
 }

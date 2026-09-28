@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-const summaryCacheVersion = "pwa-session-summaries-v1"
+const summaryCacheVersion = "pwa-session-summaries-v2"
 const summaryCacheTTL = 30
 
 type summaryCacheEnvelope struct {
@@ -53,6 +53,8 @@ func sessionSummaryFingerprint(dir string, maxArgs int) (string, error) {
 		}
 		fmt.Fprintf(hash, "%d:%s:%d:%d\n", len(name), name, info.Size(), info.ModTime().UnixNano())
 	}
+	// Title sidecars are overlaid on the requested page; changing one must not
+	// invalidate and re-decode the entire transcript summary cache.
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 

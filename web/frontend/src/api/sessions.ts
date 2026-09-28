@@ -71,6 +71,19 @@ export async function getSessions(
   return res.json()
 }
 
+/** The server owns title validation as well; keep this client limit aligned. */
+export async function renameSession(id: string, title: string): Promise<void> {
+  const res = await launcherFetch(
+    `/api/sessions/${encodeURIComponent(id)}/title`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    },
+  )
+  if (!res.ok) throw new Error(`Failed to rename session ${id}: ${res.status}`)
+}
+
 export async function getSessionHistory(
   id: string,
   options: SessionHistoryPageOptions = {},
@@ -113,10 +126,18 @@ export async function getSessionToolCall(
   return res.json()
 }
 
+export class SessionBusyError extends Error {
+  constructor() {
+    super("Session has an active task or pending messages")
+    this.name = "SessionBusyError"
+  }
+}
+
 export async function deleteSession(id: string): Promise<void> {
   const res = await launcherFetch(`/api/sessions/${encodeURIComponent(id)}`, {
     method: "DELETE",
   })
+  if (res.status === 409) throw new SessionBusyError()
   if (!res.ok) {
     const detail = (await res.text()).trim().slice(0, 200)
     throw new Error(

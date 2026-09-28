@@ -29,6 +29,7 @@ func (h *Handler) registerSessionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/sessions", h.handleListSessions)
 	mux.HandleFunc("DELETE /api/sessions/task-runs", h.handleDeleteTaskRunSessions)
 	mux.HandleFunc("GET /api/sessions/{id}", h.handleGetSession)
+	mux.HandleFunc("PATCH /api/sessions/{id}/title", h.handlePatchSessionTitle)
 	mux.HandleFunc("GET /api/sessions/{id}/tool-calls/{callID}", h.handleGetSessionToolCall)
 	mux.HandleFunc("DELETE /api/sessions/{id}", h.handleDeleteSession)
 }
@@ -123,6 +124,7 @@ type sessionListItem struct {
 
 type sessionChatMessage struct {
 	Role        string                  `json:"role"`
+	ToolCallID  string                  `json:"tool_call_id,omitempty"`
 	Content     string                  `json:"content"`
 	Kind        string                  `json:"kind,omitempty"`
 	ModelName   string                  `json:"model_name,omitempty"`
@@ -397,7 +399,7 @@ func extractPicoSessionIDFromScope(scope session.SessionScope) (string, bool) {
 		}
 		if idx := strings.Index(candidate, "pico:"); idx >= 0 {
 			sessionID := strings.TrimSpace(candidate[idx+len("pico:"):])
-			if sessionID != "" {
+			if validSessionDisplayID(sessionID) {
 				return sessionID, true
 			}
 		}
@@ -427,14 +429,8 @@ func sessionRefFromMeta(meta memory.SessionMeta) (picoJSONLSessionRef, bool) {
 	}
 	sessionID, ok := extractPicoSessionIDFromScope(scope)
 	if !ok {
-		if legacySessionID, ok := extractLegacyPicoSessionID(meta.Key); ok {
-			return picoJSONLSessionRef{ID: legacySessionID, Key: meta.Key}, true
-		}
-		for _, alias := range meta.Aliases {
-			if legacySessionID, ok := extractLegacyPicoSessionID(alias); ok {
-				return picoJSONLSessionRef{ID: legacySessionID, Key: meta.Key}, true
-			}
-		}
+		// An explicit non-Pico or malformed scope must never be recovered via
+		// an unrelated key alias.
 		return picoJSONLSessionRef{}, false
 	}
 	return picoJSONLSessionRef{ID: sessionID, Key: meta.Key}, true
@@ -617,7 +613,7 @@ func buildSessionListItem(sessionID, channel string, sess sessionFile, toolFeedb
 	if preview == "" {
 		preview = "(empty)"
 	}
-	title := preview
+	title := firstSessionTitle(transcript, channel)
 
 	return sessionListItem{
 		ID:           sessionID,
@@ -626,8 +622,8 @@ func buildSessionListItem(sessionID, channel string, sess sessionFile, toolFeedb
 		Preview:      preview,
 		MessageCount: len(transcript),
 		SubAgent:     isSubAgentConversation(sessionID, channel, sess.Messages),
-		Created:      sess.Created.Format(time.RFC3339),
-		Updated:      sess.Updated.Format(time.RFC3339),
+		Created:      sess.Created.Format(time.RFC3339Nano),
+		Updated:      sess.Updated.Format(time.RFC3339Nano),
 	}
 }
 
@@ -758,6 +754,7 @@ func sessionTranscriptMessages(
 		case "user":
 			chatMsg := sessionChatMessage{
 				Role:        "user",
+				ToolCallID:  msg.ToolCallID,
 				Content:     msg.Content,
 				synthetic:   msg.ToolCallID != "",
 				ModelName:   msg.ModelName,
@@ -1122,6 +1119,22 @@ func (h *Handler) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		items = items[offset:end]
 	}
 
+	// Apply sidecars only to the requested page. Automatic generation requires
+	// operator opt-in and a creation-time cutoff; never backfill via pagination.
+	for i := range items {
+		if title := h.manualSessionTitle(dir, items[i].ID); title != "" {
+			items[i].Title = title
+		} else if offset == 0 &&
+			os.Getenv("PWA_TITLE_GENERATION_ENABLED") == "1" {
+			if since, err := time.Parse(time.RFC3339Nano, os.Getenv("PWA_TITLE_GENERATION_SINCE")); err == nil &&
+				!since.IsZero() && items[i].Channel == "pico" {
+				if created, err := time.Parse(time.RFC3339Nano, items[i].Created); err == nil && !created.Before(since) {
+					h.scheduleSessionTitle(dir, items[i], toolFeedbackMaxArgsLength)
+				}
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
 }
@@ -1167,8 +1180,14 @@ func (h *Handler) scanSessionSummaries(dir string, toolFeedbackMaxArgsLength int
 		}
 	}
 
-	// Sort by updated descending (most recent first)
+	// Compare timestamps as time values: RFC3339Nano uses variable fractional
+	// precision, so lexical ordering can misorder records within a second.
 	sort.Slice(items, func(i, j int) bool {
+		left, leftErr := time.Parse(time.RFC3339Nano, items[i].Updated)
+		right, rightErr := time.Parse(time.RFC3339Nano, items[j].Updated)
+		if leftErr == nil && rightErr == nil {
+			return left.After(right)
+		}
 		return items[i].Updated > items[j].Updated
 	})
 

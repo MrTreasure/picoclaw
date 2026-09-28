@@ -19,6 +19,35 @@ The comparison baseline currently used by this repository is
 
 ## Active local features
 
+### PWA conversation titles and renaming
+
+- **Behavior:** Conversation titles default to the first substantive user text,
+  independently of the latest-message preview. The list supports manual renaming
+  (1–60 characters) through `PATCH /api/sessions/{id}/title`. Titles are stored
+  in separate identity-bound records, leaving gateway transcripts unchanged.
+  Atomic writes and shared locks prevent generated titles from overwriting a
+  manual rename; list caches retain confirmed renames. Timestamp sorting uses
+  parsed times to preserve subsecond ordering.
+  Deletion conflicts (HTTP 409) display an actionable busy-session message;
+  active-turn and pending-message deletion protections remain enforced.
+- **Configuration:** Optional model titles require both
+  `PWA_TITLE_GENERATION_ENABLED=1` and an RFC3339 creation cutoff in
+  `PWA_TITLE_GENERATION_SINCE`. Only new Pico conversations on the first page are
+  eligible, with one attempt per identity, bounded concurrency and timeout.
+  The feature uses the chat's configured model and only the first eligible text
+  message; existing conversations are not backfilled. Deployment preserves
+  existing operator settings rather than enabling generation implicitly.
+- **Commit/deployment:** The commit containing this entry is the 2026-09-28 PWA
+  release source. Deploy the launcher binary and static frontend together;
+  service-worker cache version is `musec137-shell-v22`. Gateway persona release
+  `b718be2e` remains included in repository history and deployed separately.
+- **Validation:** Backend API tests, frontend type checking, tests, lint and
+  production build; deployment checks service status and anonymous routes.
+- **Upstream status:** Local MuseC137 feature, not submitted upstream.
+- **Rollback:** Restore the saved launcher binary plus frontend index.html and
+  sw.js from the release backup. Retain fingerprinted assets and title records;
+  older binaries ignore the records. Disable the generation flags if enabled.
+
 ### Workspace persona and scoped tool failures
 
 - **Behavior:** The runtime prompt identifies PicoClaw as infrastructure and
