@@ -7,18 +7,12 @@ import {
   IconLoader2,
   IconTool,
 } from "@tabler/icons-react"
-import { memo, useEffect, useState } from "react"
+import { Suspense, lazy, memo, useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
-import ReactMarkdown from "react-markdown"
-import rehypeHighlight from "rehype-highlight"
-import rehypeRaw from "rehype-raw"
-import rehypeSanitize from "rehype-sanitize"
-import remarkGfm from "remark-gfm"
 
 import { type SessionToolCallDetail, getSessionToolCall } from "@/api/sessions"
 import { AudioMessage } from "@/components/chat/audio-message"
 import { MessageActions } from "@/components/chat/message-actions"
-import { MarkdownCodeBlock } from "@/components/chat/message-code-block"
 import {
   Sheet,
   SheetContent,
@@ -34,6 +28,14 @@ import {
   type ChatAttachment,
   type ChatToolCall,
 } from "@/store/chat"
+
+const RichText = lazy(() =>
+  import("./rich-text").catch(() => ({
+    default: ({ content }: { content: string }) => (
+      <div className="whitespace-pre-wrap">{content}</div>
+    ),
+  })),
+)
 
 interface AssistantMessageProps {
   content: string
@@ -375,15 +377,13 @@ export const AssistantMessage = memo(function AssistantMessage({
               {isStreaming ? (
                 <div className="whitespace-pre-wrap">{content}</div>
               ) : (
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  rehypePlugins={[rehypeRaw, rehypeSanitize, rehypeHighlight]}
-                  components={{
-                    pre: MarkdownCodeBlock,
-                  }}
+                <Suspense
+                  fallback={
+                    <div className="whitespace-pre-wrap">{content}</div>
+                  }
                 >
-                  {content}
-                </ReactMarkdown>
+                  <RichText content={content} />
+                </Suspense>
               )}
             </div>
           )}

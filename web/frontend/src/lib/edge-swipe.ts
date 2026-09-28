@@ -1,10 +1,12 @@
-export type EdgeSwipeAction = "sessions" | "exit" | null
+export type EdgeSwipeAction = "sessions" | "settings" | "exit" | null
 
 export const EDGE_SWIPE_START_PX = 28
 export const EDGE_SWIPE_TRIGGER_PX = 88
 const CHAT_FROM_SESSIONS_KEY = "picoclaw:chat-from-sessions"
 
 export function edgeSwipeAction(pathname: string): EdgeSwipeAction {
+  if (pathname === "/static-pages" || pathname.startsWith("/documents/"))
+    return "settings"
   if (pathname === "/") return "sessions"
   if (pathname === "/codex") return "sessions"
   if (pathname.startsWith("/sessions/")) return "sessions"

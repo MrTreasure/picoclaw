@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TasksRouteImport } from './routes/tasks'
+import { Route as StaticPagesRouteImport } from './routes/static-pages'
 import { Route as SessionsRouteImport } from './routes/sessions'
 import { Route as ModelsRouteImport } from './routes/models'
 import { Route as MeRouteImport } from './routes/me'
@@ -33,6 +34,11 @@ import { Route as AgentHubRouteImport } from './routes/agent/hub'
 const TasksRoute = TasksRouteImport.update({
   id: '/tasks',
   path: '/tasks',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StaticPagesRoute = StaticPagesRouteImport.update({
+  id: '/static-pages',
+  path: '/static-pages',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SessionsRoute = SessionsRouteImport.update({
@@ -144,6 +150,7 @@ export interface FileRoutesByFullPath {
   '/me': typeof MeRoute
   '/models': typeof ModelsRoute
   '/sessions': typeof SessionsRouteWithChildren
+  '/static-pages': typeof StaticPagesRoute
   '/tasks': typeof TasksRoute
   '/agent/hub': typeof AgentHubRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -166,6 +173,7 @@ export interface FileRoutesByTo {
   '/me': typeof MeRoute
   '/models': typeof ModelsRoute
   '/sessions': typeof SessionsRouteWithChildren
+  '/static-pages': typeof StaticPagesRoute
   '/tasks': typeof TasksRoute
   '/agent/hub': typeof AgentHubRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -189,6 +197,7 @@ export interface FileRoutesById {
   '/me': typeof MeRoute
   '/models': typeof ModelsRoute
   '/sessions': typeof SessionsRouteWithChildren
+  '/static-pages': typeof StaticPagesRoute
   '/tasks': typeof TasksRoute
   '/agent/hub': typeof AgentHubRoute
   '/agent/skills': typeof AgentSkillsRoute
@@ -213,6 +222,7 @@ export interface FileRouteTypes {
     | '/me'
     | '/models'
     | '/sessions'
+    | '/static-pages'
     | '/tasks'
     | '/agent/hub'
     | '/agent/skills'
@@ -235,6 +245,7 @@ export interface FileRouteTypes {
     | '/me'
     | '/models'
     | '/sessions'
+    | '/static-pages'
     | '/tasks'
     | '/agent/hub'
     | '/agent/skills'
@@ -257,6 +268,7 @@ export interface FileRouteTypes {
     | '/me'
     | '/models'
     | '/sessions'
+    | '/static-pages'
     | '/tasks'
     | '/agent/hub'
     | '/agent/skills'
@@ -280,6 +292,7 @@ export interface RootRouteChildren {
   MeRoute: typeof MeRoute
   ModelsRoute: typeof ModelsRoute
   SessionsRoute: typeof SessionsRouteWithChildren
+  StaticPagesRoute: typeof StaticPagesRoute
   TasksRoute: typeof TasksRoute
   DocumentsNameRoute: typeof DocumentsNameRoute
 }
@@ -291,6 +304,13 @@ declare module '@tanstack/react-router' {
       path: '/tasks'
       fullPath: '/tasks'
       preLoaderRoute: typeof TasksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/static-pages': {
+      id: '/static-pages'
+      path: '/static-pages'
+      fullPath: '/static-pages'
+      preLoaderRoute: typeof StaticPagesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sessions': {
@@ -491,6 +511,7 @@ const rootRouteChildren: RootRouteChildren = {
   MeRoute: MeRoute,
   ModelsRoute: ModelsRoute,
   SessionsRoute: SessionsRouteWithChildren,
+  StaticPagesRoute: StaticPagesRoute,
   TasksRoute: TasksRoute,
   DocumentsNameRoute: DocumentsNameRoute,
 }

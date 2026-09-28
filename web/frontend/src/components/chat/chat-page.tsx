@@ -1,3 +1,4 @@
+import { observeReadingConversation } from "@/features/chat/unread"
 import { IconArrowDown } from "@tabler/icons-react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import { useAtom, useAtomValue } from "jotai"
@@ -40,7 +41,9 @@ import {
   hasFileTransfer,
 } from "@/features/chat/image-input"
 import {
+  readDraftAttachments,
   readSessionDraft,
+  writeDraftAttachments,
   writeSessionDraft,
 } from "@/features/chat/session-draft"
 import { shouldShowTypingIndicator } from "@/features/chat/typing-indicator-state"
@@ -118,6 +121,7 @@ export function ChatPage() {
 }
 
 function SessionChatPage({ sessionId }: { sessionId: string }) {
+  useEffect(() => observeReadingConversation("muse:" + sessionId), [sessionId])
   const { t } = useTranslation()
   const pendingConfirmations = useAtomValue(chatAtom).pendingConfirmations
   const todoList = useAtomValue(chatAtom).todoList
@@ -140,7 +144,12 @@ function SessionChatPage({ sessionId }: { sessionId: string }) {
   const [initialPositioned, setInitialPositioned] = useState(false)
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [input, setInput] = useState(() => readSessionDraft(sessionId))
-  const [attachments, setAttachments] = useState<ChatAttachment[]>([])
+  const [attachments, setAttachments] = useState<ChatAttachment[]>(() =>
+    readDraftAttachments<ChatAttachment>(sessionId),
+  )
+  useEffect(() => {
+    writeDraftAttachments(sessionId, attachments)
+  }, [sessionId, attachments])
   const [isDragActive, setIsDragActive] = useState(false)
   const [expandedDetailMessageIds, setExpandedDetailMessageIds] = useState<
     Set<string>

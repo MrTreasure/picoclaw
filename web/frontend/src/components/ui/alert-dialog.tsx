@@ -1,3 +1,4 @@
+import { useOverlayBack } from "@/hooks/use-overlay-back"
 import * as React from "react"
 import { AlertDialog as AlertDialogPrimitive } from "radix-ui"
 
@@ -7,7 +8,11 @@ import { Button } from "@/components/ui/button"
 function AlertDialog({
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Root>) {
-  return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />
+  const [internalOpen, setInternalOpen] = React.useState(props.defaultOpen ?? false)
+  const open = props.open ?? internalOpen
+  const changeOpen = (value: boolean) => { setInternalOpen(value); props.onOpenChange?.(value) }
+  useOverlayBack(open, () => changeOpen(false))
+  return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} open={open} onOpenChange={changeOpen} />
 }
 
 function AlertDialogTrigger({

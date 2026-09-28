@@ -54,6 +54,7 @@ export function MobileEdgeSwipe() {
 
     const onPointerDown = (event: PointerEvent) => {
       if (
+        document.querySelector('[role="dialog"], [role="alertdialog"]') ||
         event.pointerType !== "touch" ||
         event.isPrimary === false ||
         event.clientX > EDGE_SWIPE_START_PX ||
@@ -99,6 +100,8 @@ export function MobileEdgeSwipe() {
         returnToSessions(() => {
           void navigate({ to: "/sessions", replace: true })
         })
+      } else if (action === "settings") {
+        void navigate({ to: "/me", replace: true })
       } else {
         requestAppExit()
       }

@@ -133,15 +133,34 @@ export class SessionBusyError extends Error {
   }
 }
 
+async function sessionDeletionConfirmed(id: string): Promise<boolean> {
+  try {
+    const check = await launcherFetch(
+      `/api/sessions/${encodeURIComponent(id)}?limit=1`,
+      { signal: AbortSignal.timeout(5000) },
+    )
+    return check.status === 404
+  } catch {
+    return false
+  }
+}
 export async function deleteSession(id: string): Promise<void> {
-  const res = await launcherFetch(`/api/sessions/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-  })
+  let res: Response
+  try {
+    res = await launcherFetch(`/api/sessions/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    })
+  } catch {
+    if (await sessionDeletionConfirmed(id)) return
+    throw new Error("连接中断，暂时无法确认删除结果。可刷新列表核对后重试。")
+  }
+  if (res.status === 404) return
   if (res.status === 409) throw new SessionBusyError()
   if (!res.ok) {
     if (res.status === 502 || res.status === 503 || res.status === 504) {
+      if (await sessionDeletionConfirmed(id)) return
       throw new Error(
-        `删除服务暂时不可用或响应超时（${res.status}），请刷新列表确认结果后重试。`,
+        `删除服务暂时不可用或响应超时（${res.status}），暂时无法确认结果，请刷新列表后重试。`,
       )
     }
     const raw = (await res.text()).trim()
@@ -149,7 +168,7 @@ export async function deleteSession(id: string): Promise<void> {
       ? "服务返回了错误页面"
       : raw.slice(0, 200)
     throw new Error(
-      `Failed to delete session ${id}: ${res.status}${detail ? ` — ${detail}` : ""}`,
+      `删除会话失败（HTTP ${res.status}）${detail ? "：" + detail : ""}`,
     )
   }
 }

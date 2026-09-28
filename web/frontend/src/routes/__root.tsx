@@ -9,6 +9,10 @@ import {
   setChatDetailVisible,
 } from "@/features/chat/controller"
 import { clearChatModelPreference } from "@/features/chat/model-preference-cache"
+import {
+  rememberAuthenticatedListScope,
+  validCacheScope,
+} from "@/hooks/session-list-cache"
 import { isLauncherAuthPathname } from "@/lib/launcher-login-path"
 
 const RootLayout = () => {
@@ -41,6 +45,8 @@ const RootLayout = () => {
     if (isAuthPage) return
     void getLauncherAuthStatus()
       .then((s) => {
+        if (s.authenticated && validCacheScope(s.cache_scope))
+          rememberAuthenticatedListScope(s.cache_scope)
         if (!s.initialized) {
           clearChatModelPreference()
           globalThis.location.assign("/launcher-setup")
@@ -57,7 +63,7 @@ const RootLayout = () => {
         if (err instanceof Error && /^status 40[13]$/.test(err.message)) {
           clearChatModelPreference()
           globalThis.location.assign("/launcher-login")
-        } else {
+        } else if (navigator.onLine) {
           setAuthError(
             err instanceof Error
               ? err.message

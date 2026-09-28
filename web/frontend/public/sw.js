@@ -1,4 +1,4 @@
-const CACHE_VERSION = "musec137-shell-v24"
+const CACHE_VERSION = "musec137-shell-v25"
 const APP_SHELL = [
   "/",
   "/sessions",
@@ -12,9 +12,20 @@ const APP_SHELL = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_VERSION).then((cache) => cache.addAll(APP_SHELL)),
+    caches.open(CACHE_VERSION).then(async (cache) => {
+      await cache.addAll(APP_SHELL)
+      const shell = await cache.match("/")
+      const html = (await shell?.text()) || ""
+      const assets = [
+        ...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g),
+      ].map((match) => match[1])
+      await cache.addAll([...new Set(assets)])
+    }),
   )
-  self.skipWaiting()
+})
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "ACTIVATE_UPDATE") self.skipWaiting()
 })
 
 self.addEventListener("activate", (event) => {
@@ -24,7 +35,10 @@ self.addEventListener("activate", (event) => {
       .then((keys) =>
         Promise.all(
           keys
-            .filter((key) => key !== CACHE_VERSION)
+            .filter(
+              (key) =>
+                key.startsWith("musec137-shell-") && key !== CACHE_VERSION,
+            )
             .map((key) => caches.delete(key)),
         ),
       ),
@@ -45,14 +59,21 @@ self.addEventListener("push", (event) => {
         type: "window",
         includeUncontrolled: true,
       })
-      if (windows.some((client) => client.visibilityState === "visible")) return
       const sessionId = payload.session_id || ""
+      windows.forEach((client) =>
+        client.postMessage({
+          type: "CONVERSATION_UPDATED",
+          sessionId,
+          eventId: payload.message_id || payload.id || Date.now(),
+        }),
+      )
+      if (windows.some((client) => client.visibilityState === "visible")) return
       await self.registration.showNotification(payload.title || "MuseC137", {
         body: payload.body || "收到一条新消息",
         icon: "/web-app-manifest-192x192.png",
         badge: "/favicon-96x96.png",
         tag: sessionId ? `musec137-${sessionId}` : "musec137-message",
-        renotify: true,
+        renotify: false,
         data: { url: payload.url || "/", sessionId },
       })
       if (self.navigator.setAppBadge) await self.navigator.setAppBadge()
@@ -72,6 +93,7 @@ self.addEventListener("notificationclick", (event) => {
         event.notification.data?.url || "/",
         self.location.origin,
       )
+      if (target.origin !== self.location.origin) return
       if (sessionId) {
         target.searchParams.set("session_id", sessionId)
       }
@@ -82,9 +104,16 @@ self.addEventListener("notificationclick", (event) => {
       const existing = windows.find(
         (client) => new URL(client.url).origin === target.origin,
       )
-      if (existing) {
-        const navigated = (await existing.navigate(target.href)) || existing
-        return navigated.focus()
+      if (
+        existing &&
+        !new URL(existing.url).pathname.startsWith("/launcher-")
+      ) {
+        existing.postMessage({
+          type: "OPEN_CONVERSATION",
+          url: target.pathname + target.search,
+          sessionId,
+        })
+        return existing.focus()
       }
       return self.clients.openWindow(target.href)
     })(),
@@ -102,7 +131,13 @@ self.addEventListener("fetch", (event) => {
   )
     return
   if (request.mode === "navigate") {
-    event.respondWith(fetch(request).catch(() => caches.match("/offline.html")))
+    event.respondWith(
+      fetch(request).catch(async () => {
+        if (url.pathname.startsWith("/launcher-"))
+          return caches.match("/offline.html")
+        return (await caches.match("/")) || caches.match("/offline.html")
+      }),
+    )
     return
   }
   event.respondWith(

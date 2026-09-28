@@ -1,6 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router"
+import { Suspense, lazy } from "react"
 
-import { CodexPage } from "@/components/codex/codex-page"
+const CodexPage = lazy(() =>
+  import("@/components/codex/codex-page").then((module) => ({
+    default: module.CodexPage,
+  })),
+)
 
 export const Route = createFileRoute("/codex")({
   validateSearch: (search: Record<string, unknown>): { thread?: string } => ({
@@ -11,5 +16,15 @@ export const Route = createFileRoute("/codex")({
 
 function CodexRoute() {
   const { thread } = Route.useSearch()
-  return <CodexPage threadId={thread} />
+  return (
+    <Suspense
+      fallback={
+        <div role="status" className="p-6 text-center">
+          正在打开对话…
+        </div>
+      }
+    >
+      <CodexPage threadId={thread} />
+    </Suspense>
+  )
 }

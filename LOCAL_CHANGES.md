@@ -19,6 +19,63 @@ The comparison baseline currently used by this repository is
 
 ## Active local features
 
+### PWA performance, interaction and management pass (2026-09-28 release)
+
+- **Behavior:** Virtualized session rows; scoped local pin/archive preferences;
+  source filters; remembered search/filter/scroll position with throttled storage;
+  incremental Codex pagination with explicit load-all title/summary search.
+  Existing message virtualization, streaming batching and hidden-tab polling
+  suspension are retained. Code-split Codex/config/logs/tools/skills and Markdown.
+- **Interaction:** Shared image preview supports pinch, double-click, 1–5x
+  zoom controls, panning, keyboard navigation and retry; Markdown images use it
+  too. Modal history handles system back before route navigation; static pages
+  return to settings. VisualViewport drives the coarse-pointer shell height;
+  reduced-motion preferences disable animations.
+- **Reliability:** Ambiguous deletions perform a read-only existence check before
+  reporting success; never repeat destructive requests automatically. Offline
+  navigation loads the cached app shell; scoped list/Codex history fallbacks
+  remain read-only. Updates wait for a user action and reject reload while known
+  tasks/approvals are pending. Scope-aware text drafts and uploaded attachment
+  references persist; no raw image bytes are added to draft storage.
+- **Management:** Local static-page display names, sorting, copy links and
+  sequential bulk deletion; scoped pin/archive and unread state; per-category
+  cache statistics and cleanup. Notification clicks route within an open app,
+  deduplicate by conversation, and clear notifications when a conversation is read.
+  Codex completion notices require the browser's shared connection to remain alive.
+- **Configuration:** No existing switch provides these behaviors; implemented in
+  the frontend without enabling the known-broken automatic router chunk splitter.
+  Local preferences/titles remain browser-local; static page paths do not change.
+- **Validation:** Existing frontend tests and backend API suite; TS/lint/build.
+  The gateway restart failure fixture now uses invalid executable bytes because
+  the data volume turns requested mode 0644 into actual mode 0700. No production
+  gateway behavior changed for that fixture correction.
+- **Commits/deployment/upstream:** Included in this release commit; frontend/launcher deployment
+  authorized on 2026-09-28. Local-only. Go build/test caches and temporary files stay under /vol1.
+- **Rollback:** Revert this pass and rebuild frontend/launcher. Browser-only
+  metadata may be left unused; no database migration. Bump Service Worker cache
+  version on rollback rather than reusing old asset hashes.
+
+
+### Static page manager and conversation actions (2026-09-28 release)
+
+- **Behavior:** Settings links to a searchable page manager for Muse HTML pages;
+  open a page or delete its HTML file while retaining shared assets. Conversation
+  long press, context menu and an accessible action button open rename/delete/
+  multi-select actions. Codex results appear after each page arrives; stale
+  requests stop on navigation, auth changes or deletion, with ID deduplication.
+- **Configuration:** No existing configuration exposes file management or these
+  gestures. The local launcher uses a fixed allowlisted root
+  `/vol1/1000/nginx/public/resume/muse`, exposed at
+  `https://render.mrtreasure.cc/muse/`. Other render sites are excluded.
+  Endpoints inherit launcher authentication. Paths cannot escape the root;
+  hidden files and symlinks are excluded; deletion requires the listed revision.
+- **Commits/deployment:** Included in this release commit. The authorized rollout
+  updates launcher and frontend together. No live pages deleted during development.
+- **Upstream status:** Local only.
+- **Rollback:** Remove the route, launcher endpoints, settings link and list
+  interaction changes; no database migration or runtime configuration changes.
+
+
 ### Large-session deletion and indexed search cleanup
 
 - **Behavior:** Message FTS rowids now match message IDs, allowing indexed

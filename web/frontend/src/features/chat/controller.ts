@@ -20,6 +20,7 @@ import {
   writeStoredSessionId,
 } from "@/features/chat/state"
 import { createStreamUpdateBatcher } from "@/features/chat/stream-update-batcher"
+import { markConversationUnread } from "@/features/chat/unread"
 import { invalidateSocket } from "@/features/chat/websocket"
 import i18n from "@/i18n"
 import {
@@ -746,6 +747,18 @@ export async function connectChat() {
       try {
         const message = JSON.parse(event.data) as PicoMessage
         if (!trackSessionEvent(entry, message)) return
+        if (
+          (message.type === "message.update" ||
+            message.type === "message.create") &&
+          message.payload?.final === true &&
+          message.payload?.kind !== "thought" &&
+          message.payload?.kind !== "tool_calls"
+        ) {
+          markConversationUnread(
+            "muse:" + sessionId,
+            String(message.payload.message_id || message.id || Date.now()),
+          )
+        }
         // A terminal pair observed on the replacement socket is not proof
         // that the lost turn finished: it might belong to another turn.
         if (!isForeground(entry)) return
@@ -1505,4 +1518,12 @@ export function teardownChatStore() {
   initialized = false
   sentRequestIDs.clear()
   disconnectChat()
+}
+
+export function hasPendingChatWork(): boolean {
+  return (
+    [...sessionSockets.values()].some(
+      (entry) => entry.busy || entry.confirmations.length > 0,
+    ) || blockedSessions.size > 0
+  )
 }

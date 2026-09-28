@@ -41,10 +41,20 @@ import type { AssistantDetailVisibility } from "@/features/chat/detail-visibilit
 import type { GalleryImage } from "@/features/chat/image-gallery"
 import { isSafeImageSource } from "@/features/chat/image-gallery"
 import {
+  readDraftAttachments,
+  readSessionDraft,
+  writeDraftAttachments,
+  writeSessionDraft,
+} from "@/features/chat/session-draft"
+import { observeReadingConversation } from "@/features/chat/unread"
+import {
   readCodexHistoryCache,
   writeCodexHistoryCache,
 } from "@/features/codex/history-cache"
-import { validCacheScope } from "@/hooks/session-list-cache"
+import {
+  lastAuthenticatedListScope,
+  validCacheScope,
+} from "@/hooks/session-list-cache"
 
 interface CodexPageProps {
   threadId?: string
@@ -123,10 +133,15 @@ function grantedPermissions(requested: unknown): Record<string, unknown> {
 }
 
 export function CodexPage({ threadId }: CodexPageProps) {
-  return <CodexConversationPage threadId={threadId} />
+  return <CodexConversationPage key={threadId || "new"} threadId={threadId} />
 }
 
 function CodexConversationPage({ threadId }: { threadId?: string }) {
+  useEffect(
+    () =>
+      threadId ? observeReadingConversation("codex:" + threadId) : undefined,
+    [threadId],
+  )
   useEffect(() => {
     setCodexDetailVisible(true)
     return () => setCodexDetailVisible(false)
@@ -154,10 +169,17 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
     workspace: string
   } | null>(null)
   const [workspace, setWorkspace] = useState("")
-  const [draft, setDraft] = useState("")
+  const draftKey = "codex:" + (threadId || "new")
+  const [draft, setDraft] = useState(() => readSessionDraft(draftKey))
+  useEffect(() => {
+    writeSessionDraft(draftKey, draft)
+  }, [draftKey, draft])
   const [draftImages, setDraftImages] = useState<
     Array<CodexImage & { name: string }>
-  >([])
+  >(() => readDraftAttachments<CodexImage & { name: string }>(draftKey))
+  useEffect(() => {
+    writeDraftAttachments(draftKey, draftImages)
+  }, [draftKey, draftImages])
   const [uploading, setUploading] = useState(false)
   const [sending, setSending] = useState(false)
   const [models, setModels] = useState<CodexModel[]>([])
@@ -223,7 +245,26 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
         setLoadedThreadId(threadId)
         setTitle(cached.name || cached.preview || "Codex")
       })
-      .catch(() => {})
+      .catch(async (error: unknown) => {
+        if (error instanceof Error && /40[13]/.test(error.message)) return
+        const scope = lastAuthenticatedListScope()
+        if (cancelled || !scope || liveHydratedThreadRef.current === threadId)
+          return
+        const cached = await readCodexHistoryCache(scope, threadId).catch(
+          () => null,
+        )
+        if (
+          cancelled ||
+          !cached ||
+          scope !== lastAuthenticatedListScope() ||
+          liveHydratedThreadRef.current === threadId
+        )
+          return
+        setItems(flattenThread(cached))
+        setHistoryFromCache(true)
+        setLoadedThreadId(threadId)
+        setTitle(cached.name || cached.preview || "Codex")
+      })
     return () => {
       cancelled = true
     }
@@ -622,6 +663,8 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
         ],
       })
       // Keep the draft until turn/start succeeds; a failed send is recoverable.
+      writeSessionDraft(draftKey, "")
+      writeDraftAttachments(draftKey, [])
       setDraft("")
       setDraftImages([])
       setPendingThread(null)

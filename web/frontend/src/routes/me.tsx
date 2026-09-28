@@ -15,9 +15,9 @@ import { Link, createFileRoute } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 
-import { getLauncherAuthStatus } from "@/api/launcher-auth"
 import { clearTaskRunSessions } from "@/api/sessions"
 import { PushNotificationControl } from "@/components/chat/push-notification-control"
+import { StorageManager } from "@/components/storage-manager"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -29,15 +29,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
-import {
-  type LocalChatCacheStats,
-  getLocalChatCacheStats,
-} from "@/features/chat/local-storage-stats"
-import {
-  type HistoryCacheStats,
-  codexHistoryCacheStats,
-} from "@/features/codex/history-cache"
-import { validCacheScope } from "@/hooks/session-list-cache"
 import { usePicoChat } from "@/hooks/use-pico-chat"
 
 const groups = [
@@ -75,6 +66,7 @@ const groups = [
   {
     title: "系统",
     items: [
+      { label: "静态页", to: "/static-pages", icon: IconFileText },
       { label: "系统设置", to: "/config", icon: IconSettings },
       { label: "凭据", to: "/credentials", icon: IconKey },
       { label: "运行日志", to: "/logs", icon: IconListDetails },
@@ -92,11 +84,6 @@ function formatBytes(bytes: number): string {
 function MePage() {
   const { newChat } = usePicoChat()
   const [clearDialogOpen, setClearDialogOpen] = useState(false)
-  const [cacheStats, setCacheStats] = useState<LocalChatCacheStats | null>(null)
-  const [codexCacheStats, setCodexCacheStats] =
-    useState<HistoryCacheStats | null>(null)
-  const [codexCacheError, setCodexCacheError] = useState(false)
-  const [cacheError, setCacheError] = useState(false)
   const [originEstimate, setOriginEstimate] = useState<{
     usage: number
     quota?: number
@@ -104,27 +91,6 @@ function MePage() {
 
   useEffect(() => {
     let active = true
-    void getLocalChatCacheStats()
-      .then((stats) => {
-        if (active) setCacheStats(stats)
-      })
-      .catch(() => {
-        if (active) setCacheError(true)
-      })
-    void getLauncherAuthStatus()
-      .then((status) => {
-        if (!active) return
-        if (!status.authenticated || !validCacheScope(status.cache_scope)) {
-          setCodexCacheError(true)
-          return
-        }
-        return codexHistoryCacheStats(status.cache_scope).then((stats) => {
-          if (active) setCodexCacheStats(stats)
-        })
-      })
-      .catch(() => {
-        if (active) setCodexCacheError(true)
-      })
     if (typeof navigator !== "undefined" && navigator.storage?.estimate) {
       void navigator.storage
         .estimate()
@@ -200,51 +166,20 @@ function MePage() {
           </section>
         ))}
 
+        <StorageManager />
         <section>
           <h2 className="text-muted-foreground mb-2 px-2 text-sm font-medium">
             数据与存储
           </h2>
           <div className="bg-card border-border/70 rounded-2xl border p-2">
-            <div className="border-border/60 border-b px-3 py-3 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <span>Pico / 微信会话本地缓存</span>
-                <span className="font-medium tabular-nums">
-                  {cacheError
-                    ? "读取失败"
-                    : cacheStats
-                      ? `${formatBytes(cacheStats.bytes)} · ${cacheStats.count} 条`
-                      : "读取中…"}
-                </span>
-              </div>
-              <p className="text-muted-foreground mt-1 text-xs">
-                已缓存记录的 JSON UTF-8 大小，非磁盘实际占用；只读统计。
+            {originEstimate && (
+              <p className="text-muted-foreground px-3 py-3 text-xs">
+                浏览器同源存储估算：{formatBytes(originEstimate.usage)}
+                {originEstimate.quota
+                  ? ` / 配额 ${formatBytes(originEstimate.quota)}`
+                  : ""}
               </p>
-              {originEstimate && (
-                <p className="text-muted-foreground mt-2 text-xs">
-                  浏览器同源存储估算：{formatBytes(originEstimate.usage)}
-                  {typeof originEstimate.quota === "number"
-                    ? ` / 配额 ${formatBytes(originEstimate.quota)}`
-                    : ""}
-                  （包含此站点其他数据，非聊天缓存大小）
-                </p>
-              )}
-            </div>
-            <div className="border-border/60 border-b px-3 py-3 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <span>Codex 对话本地缓存</span>
-                <span className="font-medium tabular-nums">
-                  {codexCacheError
-                    ? "读取失败"
-                    : codexCacheStats
-                      ? `${formatBytes(codexCacheStats.bytes)} · ${codexCacheStats.count} 条`
-                      : "读取中…"}
-                </span>
-              </div>
-              <p className="text-muted-foreground mt-1 text-xs">
-                本设备已打开过的 Codex 对话文本缓存；不包含图片，非 NAS
-                历史文件或磁盘实际占用。
-              </p>
-            </div>
+            )}
             <Button
               type="button"
               variant="ghost"

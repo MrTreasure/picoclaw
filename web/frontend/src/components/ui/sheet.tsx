@@ -1,5 +1,7 @@
 "use client"
 
+import { useOverlayBack } from "@/hooks/use-overlay-back"
+
 import * as React from "react"
 import { Dialog as SheetPrimitive } from "radix-ui"
 
@@ -8,7 +10,11 @@ import { Button } from "@/components/ui/button"
 import { IconX } from "@tabler/icons-react"
 
 function Sheet({ ...props }: React.ComponentProps<typeof SheetPrimitive.Root>) {
-  return <SheetPrimitive.Root data-slot="sheet" {...props} />
+  const [internalOpen, setInternalOpen] = React.useState(props.defaultOpen ?? false)
+  const open = props.open ?? internalOpen
+  const changeOpen = (value: boolean) => { setInternalOpen(value); props.onOpenChange?.(value) }
+  useOverlayBack(open, () => changeOpen(false))
+  return <SheetPrimitive.Root data-slot="sheet" {...props} open={open} onOpenChange={changeOpen} />
 }
 
 function SheetTrigger({

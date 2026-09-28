@@ -165,3 +165,25 @@ export async function deleteCachedSession(id: string): Promise<void> {
     console.warn("Failed to delete local chat cache:", error)
   }
 }
+
+export async function clearLocalChatCache(): Promise<void> {
+  await Promise.allSettled([...pendingWrites.values()])
+  const database = await openDatabase()
+  if (!database) return
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(SESSION_STORE, "readwrite")
+    transaction.objectStore(SESSION_STORE).clear()
+    transaction.oncomplete = () => {
+      database.close()
+      resolve()
+    }
+    transaction.onerror = () => {
+      database.close()
+      reject(transaction.error)
+    }
+    transaction.onabort = () => {
+      database.close()
+      reject(transaction.error)
+    }
+  })
+}

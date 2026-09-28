@@ -11,6 +11,7 @@ import (
 // Handler serves HTTP API requests.
 type Handler struct {
 	configPath                 string
+	staticPagesRoot            string
 	generateTitle              sessionTitleGenerator
 	serverPort                 int
 	serverPublic               bool
@@ -89,6 +90,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 	// Session history
 	h.registerSessionRoutes(mux)
+	h.registerStaticPageRoutes(mux)
 	h.registerCronRoutes(mux)
 	h.registerWorkspaceDocumentRoutes(mux)
 

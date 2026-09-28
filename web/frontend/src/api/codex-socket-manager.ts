@@ -1,3 +1,5 @@
+import { notifyCodexCompleted } from "@/features/chat/unread"
+
 import type { CodexRpcMessage } from "./codex"
 
 type Listener = {
@@ -182,6 +184,10 @@ export class CodexSocketManager {
     return opening
   }
 
+  hasActiveWork(): boolean {
+    return this.activeTurns.size > 0 || this.approvals.size > 0
+  }
+
   private bump(threadId: string): void {
     this.revisions.set(threadId, (this.revisions.get(threadId) ?? 0) + 1)
   }
@@ -206,6 +212,7 @@ export class CodexSocketManager {
         typeof turn?.id === "string" &&
         active === turn.id
       ) {
+        notifyCodexCompleted(threadId, String(turn?.id || ""))
         this.activeTurns.delete(threadId)
         this.bump(threadId)
         this.scheduleIdle()
@@ -439,4 +446,8 @@ export const codexSocketManager = new CodexSocketManager(() => {
 
 export function setCodexDetailVisible(visible: boolean): void {
   codexSocketManager.setForeground(visible)
+}
+
+export function hasPendingCodexWork(): boolean {
+  return codexSocketManager.hasActiveWork()
 }

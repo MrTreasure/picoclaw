@@ -27,7 +27,10 @@ export function isSafeImageSource(url: string): boolean {
 export function buildImageGallery(messages: ChatMessage[]): GalleryImage[] {
   return messages.flatMap((message) =>
     (message.attachments ?? [])
-      .filter((attachment) => attachment.type === "image")
+      .filter(
+        (attachment) =>
+          attachment.type === "image" && isSafeImageSource(attachment.url),
+      )
       .map((attachment, imageIndex) => ({
         messageId: message.id,
         imageIndex,

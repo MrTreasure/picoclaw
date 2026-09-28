@@ -5,6 +5,7 @@ import { Toaster } from "sonner"
 import { AppHeader } from "@/components/app-header"
 import { AppSidebar } from "@/components/app-sidebar"
 import { MobileEdgeSwipe } from "@/components/mobile-edge-swipe"
+import { MobileRuntime } from "@/components/mobile-runtime"
 import { MobileTabBar } from "@/components/mobile-tab-bar"
 import { TourGuide } from "@/components/tour/tour-guide"
 import { SidebarProvider } from "@/components/ui/sidebar"
@@ -20,6 +21,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         path.startsWith("/sessions") ||
         path.startsWith("/tasks") ||
         path.startsWith("/me") ||
+        path === "/static-pages" ||
         path.startsWith("/documents/")
       )
     },
@@ -38,7 +40,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <TooltipProvider>
-      <SidebarProvider className="flex h-dvh min-h-0 flex-col overflow-hidden">
+      <SidebarProvider className="app-viewport flex h-dvh min-h-0 flex-col overflow-hidden">
+        <MobileRuntime />
         <a
           href="#main-content"
           className="bg-background text-foreground focus:ring-ring fixed top-2 left-2 z-[100] -translate-y-20 rounded-md px-4 py-2 shadow-lg focus:translate-y-0 focus:ring-2 focus:outline-none"

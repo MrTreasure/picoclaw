@@ -2357,7 +2357,9 @@ func TestGatewayRestartReturnsErrorStatusWhenReplacementFailsToStart(t *testing.
 	}
 
 	invalidBinaryPath := filepath.Join(t.TempDir(), "fake-picoclaw")
-	if err := os.WriteFile(invalidBinaryPath, []byte("#!/bin/sh\n"), 0o644); err != nil {
+	// Use an invalid executable format: some data-volume ACLs grant execute
+	// permission even when the requested file mode is 0644.
+	if err := os.WriteFile(invalidBinaryPath, []byte("invalid executable fixture\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	t.Setenv("PICOCLAW_BINARY", invalidBinaryPath)

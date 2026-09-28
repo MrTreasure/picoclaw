@@ -6,6 +6,10 @@ const DATABASE = "musec137-session-list"
 const STORE = "summaries"
 export const MAX_SESSION_SUMMARIES = 200
 const MAX_AGE_MS = 5 * 60 * 1000
+const listMaxAge = () =>
+  typeof navigator !== "undefined" && navigator.onLine === false
+    ? 30 * 24 * 60 * 60 * 1000
+    : MAX_AGE_MS
 const CODEX_PREFIX = "codex:"
 // The list is the navigation entry for locally retained Codex histories.
 // Pico summaries keep the short freshness window; Codex is refreshed online.
@@ -111,7 +115,7 @@ export function peekSessionListCache(
   return scope === currentScope &&
     museMemory &&
     museMemory.scope === scope &&
-    Date.now() - museMemory.savedAt <= MAX_AGE_MS
+    Date.now() - museMemory.savedAt <= listMaxAge()
     ? museMemory.snapshot
     : null
 }
@@ -226,7 +230,7 @@ function validSnapshot(value: unknown, scope: string): value is StoredSnapshot {
   const age = Date.now() - s.savedAt!
   if (
     age < 0 ||
-    age > MAX_AGE_MS ||
+    age > listMaxAge() ||
     !Array.isArray(s.sessions) ||
     s.sessions.length > MAX_SESSION_SUMMARIES ||
     !Number.isSafeInteger(s.offset) ||

@@ -1,3 +1,4 @@
+import { useOverlayBack } from "@/hooks/use-overlay-back"
 import * as React from "react"
 import { Dialog as DialogPrimitive } from "radix-ui"
 
@@ -8,7 +9,11 @@ import { IconX } from "@tabler/icons-react"
 function Dialog({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+  const [internalOpen, setInternalOpen] = React.useState(props.defaultOpen ?? false)
+  const open = props.open ?? internalOpen
+  const changeOpen = (value: boolean) => { setInternalOpen(value); props.onOpenChange?.(value) }
+  useOverlayBack(open, () => changeOpen(false))
+  return <DialogPrimitive.Root data-slot="dialog" {...props} open={open} onOpenChange={changeOpen} />
 }
 
 function DialogTrigger({

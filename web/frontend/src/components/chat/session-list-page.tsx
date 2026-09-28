@@ -1,11 +1,14 @@
 import {
   IconApps,
+  IconArchive,
   IconBrandWechat,
   IconCheck,
   IconCode,
+  IconDots,
   IconMessageCircle,
   IconMessagePlus,
   IconPencil,
+  IconPin,
   IconRobot,
   IconSearch,
   IconTerminal2,
@@ -13,8 +16,17 @@ import {
   IconX,
 } from "@tabler/icons-react"
 import { useNavigate } from "@tanstack/react-router"
+import { useVirtualizer } from "@tanstack/react-virtual"
 import dayjs from "dayjs"
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react"
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import { useTranslation } from "react-i18next"
 import { toast } from "sonner"
 
@@ -40,6 +52,19 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
+import {
+  readConversationPreferences,
+  readListPosition,
+  saveConversationPreferences,
+  saveListPosition,
+} from "@/features/chat/list-preferences"
+import { subscribeUnread, unreadConversations } from "@/features/chat/unread"
 import { deleteCodexHistoryCache } from "@/features/codex/history-cache"
 import {
   isLocalCodexTitleKey,
@@ -87,9 +112,29 @@ export function SessionListPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const { activeSessionId, switchSession, newChat } = usePicoChat()
-  const [query, setQuery] = useState("")
+  const [unread, setUnread] = useState(unreadConversations)
+  useEffect(() => subscribeUnread(() => setUnread(unreadConversations())), [])
+  const [savedPosition] = useState(readListPosition)
+  const [query, setQuery] = useState(savedPosition.query)
+  const [filter, setFilter] = useState(savedPosition.filter)
+  const [searchField, setSearchField] = useState(
+    savedPosition.searchField || "summary",
+  )
+  const [scanAll, setScanAll] = useState(false)
+  const [archived, setArchived] = useState(savedPosition.archived)
+  const [preferences, setPreferences] = useState(readConversationPreferences)
+  const scrollRef = useRef<HTMLElement>(null)
+  const rowsRef = useRef<HTMLDivElement>(null)
+  const restored = useRef(false)
+  const [scrollMargin, setScrollMargin] = useState(0)
+  useEffect(() => {
+    const sync = () => setPreferences(readConversationPreferences())
+    window.addEventListener("storage", sync)
+    return () => window.removeEventListener("storage", sync)
+  }, [])
   const deferredQuery = useDeferredValue(query)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [actionKey, setActionKey] = useState<string | null>(null)
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [renameId, setRenameId] = useState<string | null>(null)
@@ -101,6 +146,29 @@ export function SessionListPage() {
   const [renameError, setRenameError] = useState(false)
   const [pressedId, setPressedId] = useState<string | null>(null)
   const [showNewSession, setShowNewSession] = useState(false)
+  const nextCodexPage = useRef<(() => void) | null>(null)
+  const [codexFetching, setCodexFetching] = useState(false)
+  const [codexHasMore, setCodexHasMore] = useState(false)
+  const codexSentinel = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!codexHasMore || !codexSentinel.current) return
+    if (
+      !restored.current &&
+      savedPosition.top > (scrollRef.current?.scrollHeight || 0)
+    ) {
+      nextCodexPage.current?.()
+      return
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && document.visibilityState === "visible")
+          nextCodexPage.current?.()
+      },
+      { root: scrollRef.current, rootMargin: "200px" },
+    )
+    observer.observe(codexSentinel.current)
+    return () => observer.disconnect()
+  }, [codexHasMore, savedPosition.top])
   const [codexThreads, setCodexThreads] = useState<CodexThread[]>(() => {
     const scope = lastAuthenticatedListScope()
     return scope ? (peekCodexSessionListCache(scope) ?? []) : []
@@ -122,6 +190,7 @@ export function SessionListPage() {
   const {
     sessions,
     initialLoading,
+    isLoadingMore,
     hasMore,
     loadError,
     loadErrorMessage,
@@ -134,6 +203,35 @@ export function SessionListPage() {
     onDeletedActiveSession: () => void newChat(true, true),
   })
 
+  useEffect(() => {
+    if (!scanAll) return
+    if (loadError || codexStatus === "error" || !navigator.onLine) {
+      setScanAll(false)
+      return
+    }
+    if (hasMore && !isLoadingMore && !initialLoading) void loadSessions(false)
+    if (codexHasMore) nextCodexPage.current?.()
+    if (
+      !hasMore &&
+      !isLoadingMore &&
+      !codexHasMore &&
+      codexStatus === "ready" &&
+      !codexFetching
+    )
+      setScanAll(false)
+  }, [
+    scanAll,
+    hasMore,
+    isLoadingMore,
+    initialLoading,
+    sessions.length,
+    codexHasMore,
+    codexStatus,
+    codexFetching,
+    loadError,
+    loadSessions,
+  ])
+
   useEffect(
     () =>
       subscribeListCacheRevocation(() => {
@@ -141,6 +239,7 @@ export function SessionListPage() {
         codexScopeRef.current = null
         setCodexThreads([])
         setCodexStatus("error")
+        setCodexFetching(false)
       }),
     [],
   )
@@ -163,6 +262,8 @@ export function SessionListPage() {
     codexScopeRef.current = hinted
     setCodexThreads(immediate ?? [])
     setCodexStatus(immediate ? "cached" : "loading")
+    setCodexHasMore(false)
+    setCodexFetching(true)
     const authGeneration = sessionListCacheGeneration()
     const hintedRead = hinted ? readCodexSessionListCache(hinted) : null
     let liveApplied = false
@@ -194,6 +295,7 @@ export function SessionListPage() {
         void invalidateSessionListCache()
         setCodexThreads([])
         setCodexStatus("error")
+        setCodexFetching(false)
         return
       }
       const scope = status.cache_scope
@@ -205,20 +307,48 @@ export function SessionListPage() {
       const live = rpc.connect().then(async () => {
         const threads: CodexThread[] = []
         const cursors = new Set<string>()
+        const ids = new Set<string>()
+        const isCurrent = () =>
+          !cancelled &&
+          generation === codexLoadGeneration.current &&
+          authGeneration === sessionListCacheGeneration()
         let cursor: string | null = null
         do {
+          if (!isCurrent()) return threads
           const page: { data: CodexThread[]; nextCursor?: string | null } =
             await rpc.request("thread/list", {
               limit: 50,
               sortKey: "recency_at",
               ...(cursor ? { cursor } : {}),
             })
-          threads.push(...(page.data ?? []))
+          if (!isCurrent()) return threads
+          for (const thread of page.data ?? []) {
+            if (!ids.has(thread.id)) {
+              ids.add(thread.id)
+              threads.push(thread)
+            }
+          }
+          liveApplied = true
+          setCodexThreads([...threads])
+          setCodexStatus("ready")
+          setCodexFetching(false)
           cursor = page.nextCursor ?? null
           if (cursor) {
             if (cursors.has(cursor))
               throw new Error("Codex pagination cursor repeated")
             cursors.add(cursor)
+            void writeCodexSessionListCache(scope, threads)
+            await new Promise<void>((resolve) => {
+              nextCodexPage.current = () => {
+                nextCodexPage.current = null
+                if (!cancelled) {
+                  setCodexHasMore(false)
+                  setCodexFetching(true)
+                }
+                resolve()
+              }
+              setCodexHasMore(true)
+            })
           }
         } while (cursor)
         return threads
@@ -263,8 +393,10 @@ export function SessionListPage() {
           setCodexThreads([])
         }
         setCodexStatus("error")
+        setCodexFetching(false)
         return
       }
+      setCodexFetching(false)
       const threads = outcome.result
       liveApplied = true
       setCodexThreads(threads)
@@ -274,10 +406,12 @@ export function SessionListPage() {
       if (!cancelled && generation === codexLoadGeneration.current) {
         console.error("Failed to load Codex conversations:", error)
         setCodexStatus("error")
+        setCodexFetching(false)
       }
     })
     return () => {
       cancelled = true
+      nextCodexPage.current?.()
       codexLoadGeneration.current += 1
       rpc.close()
     }
@@ -320,18 +454,145 @@ export function SessionListPage() {
     )
   }, [sessions, codexThreads, localTitles])
 
+  const entryKey = (entry: SessionListEntry) =>
+    entry.kind === "muse"
+      ? museKey(entry.session.id)
+      : codexKey(entry.thread.id)
   const visibleEntries = useMemo(() => {
-    const normalizedQuery = deferredQuery.trim().toLocaleLowerCase()
-    if (!normalizedQuery) return sortedEntries
-    return sortedEntries.filter((entry) =>
-      (entry.kind === "muse"
-        ? `${entry.session.title} ${entry.session.preview}`
-        : `${entry.thread.name || ""} ${entry.thread.preview || ""} ${entry.thread.cwd || ""}`
+    const q = deferredQuery.trim().toLocaleLowerCase()
+    return sortedEntries
+      .filter((entry) => {
+        const key =
+          entry.kind === "muse"
+            ? museKey(entry.session.id)
+            : codexKey(entry.thread.id)
+        if (!!preferences[key]?.archived !== archived) return false
+        if (
+          filter === "muse" &&
+          (entry.kind !== "muse" || isSubAgentSession(entry.session))
+        )
+          return false
+        if (
+          filter === "sub" &&
+          (entry.kind !== "muse" || !isSubAgentSession(entry.session))
+        )
+          return false
+        if (
+          (filter === "pwa" || filter === "terminal") &&
+          (entry.kind !== "codex" || codexThreadOrigin(entry.thread) !== filter)
+        )
+          return false
+        const text =
+          entry.kind === "muse"
+            ? searchField === "title"
+              ? entry.session.title
+              : `${entry.session.title} ${entry.session.preview}`
+            : searchField === "title"
+              ? entry.thread.name || entry.thread.preview || ""
+              : `${entry.thread.name || ""} ${entry.thread.preview || ""} ${entry.thread.cwd || ""}`
+        return !q || text.toLocaleLowerCase().includes(q)
+      })
+      .sort(
+        (a, b) =>
+          Number(!!preferences[entryKey(b)]?.pinned) -
+          Number(!!preferences[entryKey(a)]?.pinned),
       )
-        .toLocaleLowerCase()
-        .includes(normalizedQuery),
+  }, [deferredQuery, sortedEntries, preferences, filter, archived, searchField])
+  // TanStack Virtual manages measurements outside React Compiler memoization.
+  // oxlint-disable-next-line react/incompatible-library
+  const rowVirtualizer = useVirtualizer({
+    count: visibleEntries.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 108,
+    getItemKey: (index) => entryKey(visibleEntries[index]),
+    overscan: 6,
+    gap: 8,
+    scrollMargin,
+    initialOffset: savedPosition.top,
+  })
+  useLayoutEffect(() => {
+    const main = scrollRef.current,
+      rows = rowsRef.current
+    if (!main || !rows) return
+    setScrollMargin(
+      rows.getBoundingClientRect().top -
+        main.getBoundingClientRect().top +
+        main.scrollTop,
     )
-  }, [deferredQuery, sortedEntries])
+    if (!restored.current && visibleEntries.length) {
+      main.scrollTop = savedPosition.top
+      restored.current =
+        main.scrollHeight - main.clientHeight >= savedPosition.top ||
+        (!hasMore && codexStatus === "ready")
+    }
+  }, [visibleEntries.length, hasMore, codexStatus, savedPosition.top])
+  useEffect(() => {
+    const rows = rowsRef.current,
+      main = scrollRef.current
+    if (!rows || !main) return
+    const measure = () =>
+      setScrollMargin(
+        rows.getBoundingClientRect().top -
+          main.getBoundingClientRect().top +
+          main.scrollTop,
+      )
+    const observer = new ResizeObserver(measure)
+    if (rows.parentElement) observer.observe(rows.parentElement)
+    return () => observer.disconnect()
+  }, [])
+  const rememberPosition = useCallback(() => {
+    if (!restored.current && savedPosition.top > 0) return
+    saveListPosition({
+      query,
+      searchField,
+      filter,
+      archived,
+      top: scrollRef.current?.scrollTop || 0,
+    })
+  }, [query, searchField, filter, archived, savedPosition.top])
+  useEffect(() => {
+    rememberPosition()
+  }, [rememberPosition])
+  const updatePreference = (field: "pinned" | "archived") => {
+    if (!actionKey) return
+    const next = {
+      ...preferences,
+      [actionKey]: {
+        ...preferences[actionKey],
+        [field]: !preferences[actionKey]?.[field],
+      },
+    }
+    try {
+      saveConversationPreferences(next)
+      setPreferences(next)
+      setActionKey(null)
+    } catch {
+      toast.error("保存失败，请检查浏览器存储空间")
+    }
+  }
+
+  const actionEntry = sortedEntries.find(
+    (entry) =>
+      (entry.kind === "muse"
+        ? museKey(entry.session.id)
+        : codexKey(entry.thread.id)) === actionKey,
+  )
+  const actionTitle =
+    actionEntry?.kind === "muse"
+      ? actionEntry.session.title
+      : actionEntry?.thread.name || actionEntry?.thread.preview || "会话"
+  const renameAction = () => {
+    if (!actionEntry) return
+    setRenameKind(actionEntry.kind)
+    setRenameId(
+      actionEntry.kind === "muse"
+        ? actionEntry.session.id
+        : actionEntry.thread.id,
+    )
+    setRenameTitle(actionTitle.slice(0, 60))
+    setRenameError(false)
+    setActionKey(null)
+  }
 
   const selectionMode = selectedIds.size > 0
   const awaitingInitialLists = initialLoading || codexStatus === "loading"
@@ -357,7 +618,7 @@ export function SessionListPage() {
       longPressTriggeredRef.current = true
       suppressClickRef.current = true
       setPressedId(null)
-      if (!selectedIds.has(key)) toggleSelection(key)
+      setActionKey(key)
       navigator.vibrate?.([12, 28, 18])
     }, 460)
   }
@@ -424,7 +685,9 @@ export function SessionListPage() {
           deleted.add(museKey(id))
       }
       if (codexIds.length) {
+        nextCodexPage.current?.()
         codexLoadGeneration.current += 1
+        setCodexFetching(false)
         // Revoke pending reads/writes before a delete can race a refresh.
         const scope = codexScopeRef.current
         if (scope) await invalidateCodexSessionListCache(scope)
@@ -434,7 +697,28 @@ export function SessionListPage() {
           // A failed thread must not block deletion of the other selections.
           for (const id of codexIds) {
             try {
-              await rpc.request("thread/delete", { threadId: id })
+              try {
+                await rpc.request("thread/delete", { threadId: id })
+              } catch (error) {
+                let absent = false
+                if (
+                  /timeout|timed out|closed|disconnect|502|503|504/i.test(
+                    String(error),
+                  )
+                ) {
+                  try {
+                    await rpc.request("thread/read", {
+                      threadId: id,
+                      includeTurns: false,
+                    })
+                  } catch (checkError) {
+                    absent = /thread not found|no rollout found/i.test(
+                      String(checkError),
+                    )
+                  }
+                }
+                if (!absent) throw error
+              }
               const scope = codexScopeRef.current
               if (scope) {
                 void deleteCodexHistoryCache(scope, id)
@@ -568,7 +852,11 @@ export function SessionListPage() {
         </div>
       </header>
 
-      <main className="min-h-0 flex-1 overflow-y-auto pb-[env(safe-area-inset-bottom)]">
+      <main
+        ref={scrollRef}
+        onScroll={rememberPosition}
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)]"
+      >
         <div className="mx-auto w-full max-w-3xl px-3 py-3 sm:px-6">
           <label className="bg-card border-border/70 focus-within:border-ring mb-3 flex min-h-12 items-center gap-3 rounded-2xl border px-4 transition-colors">
             <IconSearch
@@ -578,12 +866,87 @@ export function SessionListPage() {
             <span className="sr-only">搜索会话</span>
             <Input
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => {
+                restored.current = true
+                setQuery(event.target.value)
+                scrollRef.current?.scrollTo({ top: 0 })
+              }}
               placeholder="搜索会话"
               className="h-11 border-0 bg-transparent px-0 text-base shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
           </label>
 
+          <div
+            className="mb-2 flex gap-2 overflow-x-auto pb-1"
+            aria-label="会话来源"
+          >
+            {[
+              ["all", "全部"],
+              ["muse", "Muse"],
+              ["pwa", "PWA Codex"],
+              ["terminal", "终端 Codex"],
+              ["sub", "子 Agent"],
+            ].map(([value, label]) => (
+              <Button
+                key={value}
+                variant={filter === value ? "secondary" : "ghost"}
+                className="min-h-11 shrink-0 rounded-full"
+                aria-pressed={filter === value}
+                onClick={() => {
+                  restored.current = true
+                  setFilter(value)
+                  scrollRef.current?.scrollTo({ top: 0 })
+                }}
+              >
+                {label}
+              </Button>
+            ))}
+            <Button
+              variant={archived ? "secondary" : "ghost"}
+              className="min-h-11 shrink-0 rounded-full"
+              aria-pressed={archived}
+              onClick={() => {
+                restored.current = true
+                setArchived(!archived)
+              }}
+            >
+              已归档
+            </Button>
+          </div>
+          <p className="text-muted-foreground mb-3 text-xs">
+            {visibleEntries.length} 个会话 · 搜索已加载的标题与摘要
+            {hasMore || codexHasMore || codexFetching
+              ? "（还有历史未加载）"
+              : ""}
+          </p>
+
+          {query && (
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <select
+                aria-label="搜索字段"
+                className="bg-card min-h-11 rounded-lg px-2 text-sm"
+                value={searchField}
+                onChange={(event) => setSearchField(event.target.value)}
+              >
+                <option value="summary">标题和摘要</option>
+                <option value="title">仅标题</option>
+              </select>
+              <Button
+                variant="ghost"
+                onClick={() => setScanAll(!scanAll)}
+                disabled={
+                  !hasMore && !codexHasMore && !codexFetching && !scanAll
+                }
+              >
+                {scanAll ? "停止加载" : "加载全部历史再搜索"}
+              </Button>
+              {scanAll && (
+                <span role="status" className="text-muted-foreground text-xs">
+                  正在逐页加载…
+                </span>
+              )}
+            </div>
+          )}
           {loadError && (
             <div className="border-destructive/40 bg-destructive/10 text-destructive mb-3 flex min-h-12 items-center justify-between rounded-xl border px-4 text-sm">
               <span>{loadErrorMessage}</span>
@@ -640,8 +1003,21 @@ export function SessionListPage() {
               </div>
             )}
 
-          <div className="space-y-2">
-            {visibleEntries.map((entry) => {
+          <div
+            ref={rowsRef}
+            className="relative"
+            style={{ height: rowVirtualizer.getTotalSize() }}
+          >
+            {rowVirtualizer.getVirtualItems().map((row) => {
+              const entry = visibleEntries[row.index]
+              const rowStyle = {
+                position: "absolute" as const,
+                top: 0,
+                left: 0,
+                width: "100%",
+                transform: `translateY(${row.start - scrollMargin}px)`,
+              }
+
               if (entry.kind === "codex") {
                 const thread = entry.thread
                 const origin = codexThreadOrigin(thread)
@@ -673,6 +1049,9 @@ export function SessionListPage() {
                 return (
                   <div
                     key={key}
+                    ref={rowVirtualizer.measureElement}
+                    data-index={row.index}
+                    style={rowStyle}
                     className={`group border-border/55 bg-card flex min-h-20 items-center gap-3 rounded-2xl border px-3 py-3 shadow-sm transition-[transform,background-color,box-shadow] duration-150 sm:px-4 ${selectedIds.has(key) ? "border-secondary/60 bg-secondary/10 shadow-md" : pressedId === key ? "bg-muted/80 scale-[0.985] shadow-inner" : "active:scale-[0.99]"}`}
                   >
                     <button
@@ -687,7 +1066,7 @@ export function SessionListPage() {
                         event.preventDefault()
                         cancelLongPress()
                         suppressClickRef.current = true
-                        if (!selectedIds.has(key)) toggleSelection(key)
+                        setActionKey(key)
                       }}
                       onClick={() => {
                         if (
@@ -738,21 +1117,23 @@ export function SessionListPage() {
                       <button
                         type="button"
                         className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-11 shrink-0 items-center justify-center rounded-xl focus-visible:ring-2 focus-visible:outline-none"
-                        aria-label={t("chat.renameSessionLabel", {
-                          title: thread.name || thread.preview || "Codex",
-                        })}
+                        aria-label="会话操作"
                         onPointerDown={() => cancelLongPress()}
-                        onClick={() => {
-                          cancelLongPress()
-                          setRenameKind("codex")
-                          setRenameId(thread.id)
-                          setRenameTitle(
-                            thread.name || thread.preview?.slice(0, 60) || "",
-                          )
-                          setRenameError(false)
-                        }}
+                        onClick={() => setActionKey(key)}
                       >
-                        <IconPencil className="size-5" aria-hidden="true" />
+                        {preferences[key]?.pinned ? (
+                          <IconPin className="size-5" aria-label="已置顶" />
+                        ) : (
+                          <span className="relative">
+                            <IconDots className="size-5" aria-hidden="true" />
+                            {unread[key] && (
+                              <span
+                                aria-label="有未读结果"
+                                className="absolute -top-1 -right-1 size-2 rounded-full bg-blue-500"
+                              />
+                            )}
+                          </span>
+                        )}
                       </button>
                     )}
                   </div>
@@ -766,6 +1147,9 @@ export function SessionListPage() {
               return (
                 <div
                   key={key}
+                  ref={rowVirtualizer.measureElement}
+                  data-index={row.index}
+                  style={rowStyle}
                   className={`group border-border/55 bg-card flex min-h-20 items-center gap-3 rounded-2xl border px-3 py-3 shadow-sm transition-[transform,background-color,box-shadow] duration-150 sm:px-4 ${selectedIds.has(key) ? "border-secondary/60 bg-secondary/10 shadow-md" : pressedId === key ? "bg-muted/80 scale-[0.985] shadow-inner" : "active:scale-[0.99]"}`}
                 >
                   <button
@@ -780,7 +1164,7 @@ export function SessionListPage() {
                       event.preventDefault()
                       cancelLongPress()
                       suppressClickRef.current = true
-                      if (!selectedIds.has(key)) toggleSelection(key)
+                      setActionKey(key)
                     }}
                     onClick={() => {
                       if (
@@ -854,19 +1238,23 @@ export function SessionListPage() {
                     <button
                       type="button"
                       className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-11 shrink-0 items-center justify-center rounded-xl focus-visible:ring-2 focus-visible:outline-none"
-                      aria-label={t("chat.renameSessionLabel", {
-                        title: session.title || t("chat.history"),
-                      })}
+                      aria-label="会话操作"
                       onPointerDown={() => cancelLongPress()}
-                      onClick={() => {
-                        cancelLongPress()
-                        setRenameKind("muse")
-                        setRenameId(session.id)
-                        setRenameTitle(session.title)
-                        setRenameError(false)
-                      }}
+                      onClick={() => setActionKey(key)}
                     >
-                      <IconPencil className="size-5" aria-hidden="true" />
+                      {preferences[key]?.pinned ? (
+                        <IconPin className="size-5" aria-label="已置顶" />
+                      ) : (
+                        <span className="relative">
+                          <IconDots className="size-5" aria-hidden="true" />
+                          {unread[key] && (
+                            <span
+                              aria-label="有未读结果"
+                              className="absolute -top-1 -right-1 size-2 rounded-full bg-blue-500"
+                            />
+                          )}
+                        </span>
+                      )}
                     </button>
                   )}
                 </div>
@@ -874,7 +1262,14 @@ export function SessionListPage() {
             })}
           </div>
 
-          {hasMore && sessions.length > 0 && !query && (
+          {codexHasMore && (
+            <div ref={codexSentinel} className="py-3 text-center">
+              <Button variant="ghost" onClick={() => nextCodexPage.current?.()}>
+                加载更多 Codex 会话
+              </Button>
+            </div>
+          )}
+          {hasMore && sessions.length > 0 && (
             <div
               ref={observerRef}
               className="text-muted-foreground py-5 text-center text-sm"
@@ -952,6 +1347,74 @@ export function SessionListPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <Sheet
+        open={!!actionEntry}
+        onOpenChange={(open) => {
+          if (!open) setActionKey(null)
+        }}
+      >
+        <SheetContent
+          side="bottom"
+          aria-describedby={undefined}
+          className="mx-auto max-w-xl gap-1 rounded-t-3xl px-3 pb-[calc(1rem+env(safe-area-inset-bottom))] motion-reduce:animate-none"
+        >
+          <SheetHeader className="pr-12">
+            <SheetTitle className="truncate">{actionTitle}</SheetTitle>
+          </SheetHeader>
+          <Button
+            variant="ghost"
+            className="h-12 justify-start rounded-xl px-4"
+            onClick={() => updatePreference("pinned")}
+          >
+            <IconPin className="size-5" />
+            {actionKey && preferences[actionKey]?.pinned ? "取消置顶" : "置顶"}
+          </Button>
+          <Button
+            variant="ghost"
+            className="h-12 justify-start rounded-xl px-4"
+            onClick={() => updatePreference("archived")}
+          >
+            <IconArchive className="size-5" />
+            {actionKey && preferences[actionKey]?.archived
+              ? "移出归档"
+              : "归档"}
+          </Button>
+          <Button
+            variant="ghost"
+            className="h-12 justify-start rounded-xl px-4"
+            onClick={renameAction}
+          >
+            <IconPencil className="size-5" />
+            重命名
+          </Button>
+          <Button
+            variant="ghost"
+            className="text-destructive h-12 justify-start rounded-xl px-4"
+            onClick={() => {
+              if (!actionKey) return
+              setSelectedIds(new Set([actionKey]))
+              setActionKey(null)
+              setConfirmBulkDelete(true)
+            }}
+          >
+            <IconTrash className="size-5" />
+            删除
+          </Button>
+          <Button
+            variant="ghost"
+            className="h-12 justify-start rounded-xl px-4"
+            onClick={() => {
+              if (actionKey)
+                setSelectedIds((previous) => new Set([...previous, actionKey]))
+              setActionKey(null)
+            }}
+          >
+            <IconCheck className="size-5" />
+            选择多项
+          </Button>
+        </SheetContent>
+      </Sheet>
 
       <AlertDialog
         open={confirmBulkDelete}

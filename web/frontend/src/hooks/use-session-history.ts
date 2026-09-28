@@ -367,11 +367,11 @@ export function useSessionHistory({
       } catch (err) {
         console.error("Failed to delete session:", err)
         toast.error(
-          t(
-            err instanceof SessionBusyError
-              ? "chat.sessionDeleteBusy"
-              : "chat.sessionDeleteFailed",
-          ),
+          err instanceof SessionBusyError
+            ? t("chat.sessionDeleteBusy")
+            : err instanceof Error
+              ? err.message
+              : t("chat.sessionDeleteFailed"),
         )
         void loadSessions(true)
       }
@@ -431,12 +431,14 @@ export function useSessionHistory({
               ? [
                   result.reason instanceof SessionBusyError
                     ? t("chat.sessionDeleteBusy")
-                    : String(result.reason),
+                    : result.reason instanceof Error
+                      ? result.reason.message
+                      : String(result.reason),
                 ]
               : [],
           )
           toast.error(
-            `${ids.length - deletedIds.size} 段会话删除失败：${failures[0] ?? "未知错误"}`,
+            `${ids.length - deletedIds.size} 段会话未能确认删除：${failures[0] ?? "未知错误"}`,
           )
         }
         return [...deletedIds]
@@ -453,6 +455,7 @@ export function useSessionHistory({
   return {
     sessions,
     initialLoading,
+    isLoadingMore,
     hasMore,
     loadError,
     loadErrorMessage: t("chat.historyLoadFailed"),
