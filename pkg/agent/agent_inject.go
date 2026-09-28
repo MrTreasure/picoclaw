@@ -36,6 +36,9 @@ func (al *AgentLoop) SetChannelManager(cm *channels.Manager) {
 	}
 	al.planConfirmation = bridge
 	al.RegisterTool(tools.NewAskUserConfirmationTool(bridge))
+	if phoneBridge, ok := ch.(tools.PicoPhoneBridge); ok {
+		al.RegisterTool(tools.NewPhoneTool(phoneBridge))
+	}
 	if todoBridge, ok := ch.(tools.PicoTodoBridge); ok {
 		if store, ok := ch.(interface{ SetTodoStorage(string) }); ok {
 			store.SetTodoStorage(filepath.Join(al.cfg.WorkspacePath(), "pico-todos"))

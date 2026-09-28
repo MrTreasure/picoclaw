@@ -178,6 +178,19 @@ func LauncherDashboardAuth(cfg LauncherDashboardAuthConfig, next http.Handler) h
 }
 
 func deviceBearerPathAllowed(method, p string) bool {
+	// Native clients use device credentials for the same bounded features as PWA.
+	// Keep configuration, arbitrary files and process control outside this grant.
+	if method == http.MethodGet && (p == "/api/codex/workspaces" ||
+		p == "/api/codex/app-server/ws" || p == "/api/image-thumbnail" ||
+		strings.HasPrefix(p, "/api/codex/images/")) {
+		return true
+	}
+	if method == http.MethodPost && p == "/api/codex/images" {
+		return true
+	}
+	if p == "/api/static-pages" && (method == http.MethodGet || method == http.MethodDelete) {
+		return true
+	}
 	if p == "/pico/ws" || p == "/pico/upload" || strings.HasPrefix(p, "/pico/media/") {
 		return true
 	}

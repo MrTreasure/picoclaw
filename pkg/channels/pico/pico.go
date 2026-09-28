@@ -31,13 +31,14 @@ import (
 
 // picoConn represents a single WebSocket connection.
 type picoConn struct {
-	id        string
-	conn      *websocket.Conn
-	sessionID string
-	writeMu   sync.Mutex
-	closed    atomic.Bool
-	done      chan struct{}
-	cancel    context.CancelFunc // cancels per-connection goroutines (e.g. pingLoop)
+	phoneEnabled atomic.Bool
+	id           string
+	conn         *websocket.Conn
+	sessionID    string
+	writeMu      sync.Mutex
+	closed       atomic.Bool
+	done         chan struct{}
+	cancel       context.CancelFunc // cancels per-connection goroutines (e.g. pingLoop)
 }
 
 var allowedInlineImageMIMETypes = map[string]struct{}{
@@ -115,6 +116,7 @@ type PicoChannel struct {
 	// broadcastFn lets tests intercept outbound broadcasts. nil → broadcastToSession.
 	broadcastFn    func(chatID string, msg PicoMessage) error
 	webPush        *picoPushService
+	phone          phoneRequests
 	confirmationMu sync.Mutex
 	confirmations  map[string]*pendingConfirmation
 	todos          *picoTodoStore
@@ -1390,6 +1392,11 @@ func (c *PicoChannel) handleMessage(pc *picoConn, msg PicoMessage) {
 	case TypeTodoClear:
 		c.handleTodoClear(pc, msg)
 
+	case "phone.capabilities":
+		enabled, _ := msg.Payload["enabled"].(bool)
+		pc.phoneEnabled.Store(enabled)
+	case "phone.result":
+		c.handlePhoneResult(pc, msg)
 	case TypeConfirmationRespond:
 		c.handleConfirmationResponse(pc, msg)
 

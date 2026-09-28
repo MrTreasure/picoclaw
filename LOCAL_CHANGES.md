@@ -19,6 +19,38 @@ The comparison baseline currently used by this repository is
 
 ## Active local features
 
+### Phone tool bridge prototype (feat/native-clean-client, not deployed)
+
+- **Behavior:** Adds a Pico device request/result bridge and a `phone` tool.
+  Requests are tied to the originating connection/session, expire, and are not
+  replayed on reconnect. The native companion checks Android grants per action.
+- **Configuration:** Existing tool registry and client capability announcement;
+  no production configuration changed. This is a phone tool executor, not an
+  on-device LLM or Agent Harness. Further phone runtime work is deferred by user.
+- **Validation:** Targeted existing Pico confirmation tests, tools/agent tests
+  and launcher build passed during prototype work. The media-only Pico fixture
+  fails at baseline `333b86f0` too (nil test connection); it is not a passing suite.
+- **Commit/deployment/upstream:** Uncommitted on this branch, not deployed or upstream.
+- **Rollback:** Remove the phone tool registration, bridge and protocol handlers
+  together; no production data migration.
+
+### Native client feature access (feat/native-clean-client, deployment authorized 2026-09-28)
+
+- **Behavior:** Authenticated Android device credentials can use the existing
+  Codex WebSocket, workspace listing, image upload/read and thumbnail APIs, plus
+  static-page listing/deletion. Static-page deletion retains revision checks.
+- **Configuration:** No new configuration; extends the exact method/path device
+  allowlist because existing device authentication otherwise rejects these APIs.
+  Codex access includes execution/approval capabilities provided by its RPC
+  server; this grant applies to all valid dashboard-issued device credentials.
+- **Commits/deployment/upstream:** This feature branch, local only; launcher deployment authorized on 2026-09-28. Gateway phone prototype remains undeployed.
+  Companion clean-room client lives in the independent `musec137-native` repo.
+- **Validation:** Existing middleware tests and Go build; native APK build/lint.
+  Device interaction remains manual. No new automated tests added.
+- **Rollback:** Revert this section's allowlist additions and rebuild the launcher.
+  No schema or data migration. Existing Muse device permissions remain unchanged.
+
+
 ### Long Codex histories, image previews and operation feedback (2026-09-28 release)
 
 - **Behavior:** Codex virtualizes older visible items with measured heights,
