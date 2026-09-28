@@ -61,6 +61,13 @@ func RegisterAndroidDeviceRoutes(mux *http.ServeMux, opts AndroidDeviceRouteOpts
 	mux.HandleFunc("POST /api/android/webview-grant", h.issueWebViewGrant)
 	mux.HandleFunc("GET /api/android/releases/latest", h.latestRelease)
 	mux.HandleFunc("GET /api/android/releases/download", h.downloadRelease)
+	// Keep the clean native client's package/signature channel separate from the legacy app.
+	native := *h
+	if h.releaseDir != "" {
+		native.releaseDir = filepath.Join(h.releaseDir, "native")
+	}
+	mux.HandleFunc("GET /api/android/releases/native/latest", native.latestRelease)
+	mux.HandleFunc("GET /api/android/releases/native/download", native.downloadRelease)
 	mux.HandleFunc("POST /api/android/diagnostics/upload", h.uploadDiagnostics)
 }
 
@@ -148,6 +155,9 @@ func (h *androidDeviceHandlers) latestRelease(w http.ResponseWriter, r *http.Req
 		return
 	}
 	release.DownloadURL = "/api/android/releases/download"
+	if r.URL.Path == "/api/android/releases/native/latest" {
+		release.DownloadURL = "/api/android/releases/native/download"
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(release)
 }

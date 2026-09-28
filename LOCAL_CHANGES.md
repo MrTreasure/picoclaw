@@ -381,3 +381,9 @@ Secrets remain outside Git in `/vol1/picoclaw/home/.security.yml`.
 - Android 设备 Bearer 白名单新增 GET /api/cron/jobs 与 DELETE /api/cron/jobs/{id}，删除仅接受单段非空 ID；不扩大通用配置和任务创建权限。
 - 原生任务底栏复用既有任务列表、详情数据和删除接口；其他管理页面继续使用一次性 Web 授权跳转。
 - 验证沿用 middleware 测试、launcher 构建与临时设备令牌只读检查。不执行真实任务删除；网关不替换。
+
+## Native 0.1.5 独立更新渠道
+
+- 新增受现有设备鉴权保护的 GET /api/android/releases/native/latest 和 download；发布文件来自 android-releases/native。
+- 新原生应用与旧 MuseC137 包名/签名渠道隔离，旧版 latest.json 与 APK 保留不变。
+- 复用既有版本清单验证、大小及下载 SHA-256 校验；不扩大设备权限。
