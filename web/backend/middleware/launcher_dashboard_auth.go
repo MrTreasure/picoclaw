@@ -188,6 +188,14 @@ func deviceBearerPathAllowed(method, p string) bool {
 	if method == http.MethodPost && (p == "/api/codex/images" || p == "/api/chat/preferences") {
 		return true
 	}
+	if method == http.MethodGet && p == "/api/cron/jobs" {
+		return true
+	}
+	if method == http.MethodDelete && strings.HasPrefix(p, "/api/cron/jobs/") &&
+		strings.TrimPrefix(p, "/api/cron/jobs/") != "" &&
+		!strings.Contains(strings.TrimPrefix(p, "/api/cron/jobs/"), "/") {
+		return true
+	}
 	if p == "/api/static-pages" && (method == http.MethodGet || method == http.MethodDelete) {
 		return true
 	}

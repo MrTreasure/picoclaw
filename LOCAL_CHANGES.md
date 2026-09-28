@@ -375,3 +375,9 @@ Secrets remain outside Git in `/vol1/picoclaw/home/.security.yml`.
 - Validation: existing middleware tests and launcher build; actual device-token
   route verification. Deployed at 9be22cc3 for native 0.1.1; device-authenticated empty preferences request returns expected 400 without changing user settings.
 - Local-only branch feat/native-clean-client. Rollback: restore previous launcher.
+
+## Native 0.1.4 任务页设备权限
+
+- Android 设备 Bearer 白名单新增 GET /api/cron/jobs 与 DELETE /api/cron/jobs/{id}，删除仅接受单段非空 ID；不扩大通用配置和任务创建权限。
+- 原生任务底栏复用既有任务列表、详情数据和删除接口；其他管理页面继续使用一次性 Web 授权跳转。
+- 验证沿用 middleware 测试、launcher 构建与临时设备令牌只读检查。不执行真实任务删除；网关不替换。
