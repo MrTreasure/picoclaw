@@ -19,6 +19,40 @@ The comparison baseline currently used by this repository is
 
 ## Active local features
 
+### Large-session deletion and indexed search cleanup
+
+- **Behavior:** Message FTS rowids now match message IDs, allowing indexed
+  cleanup instead of scanning the FTS table for each deleted message. Startup
+  rebuilds legacy mismatched rows transactionally from canonical messages.
+  The 4,276-message production copy took 29.75 seconds in the old message-delete
+  step; the complete optimized deletion took 1.83 seconds. The launcher has a
+  five-second deletion timeout, explaining the observed 502 response.
+  Frontend deletion errors suppress HTML proxy pages and explain uncertain
+  outcomes without falsely claiming success.
+- **Configuration/deployment:** No new configuration. Deploy this commit's
+  gateway plus frontend; retain a SQLite online backup before migration.
+- **Validation:** Seahorse tests including legacy rowid migration, update and
+  delete search consistency; production-copy timing and frontend checks.
+- **Upstream status:** Local fix.
+- **Rollback:** Restore prior binary; old triggers remain compatible with
+  aligned rowids. Keep the pre-migration backup for recovery; do not overwrite
+  newer conversation data merely to roll back code.
+
+### Local Codex title overrides
+
+- **Behavior:** Codex rows support local-only rename with identity/thread-scoped
+  browser storage, search integration and cross-tab updates. Failed storage
+  writes remain errors; successful thread deletion removes the override.
+  Cached Codex rows retain origin metadata to prevent source-label flicker.
+- **Configuration:** No server title writes or new configuration; service-worker
+  cache version `musec137-shell-v24`.
+- **Commit/deployment:** This commit is a frontend-only 2026-09-28 release.
+- **Validation:** Local storage isolation/failure tests, frontend suite, type
+  check, lint and build. Review findings: `docs/reviews/pwa-20260928.md`.
+- **Upstream status:** Local feature.
+- **Rollback:** Restore frontend index.html and sw.js; old versions ignore
+  local overrides. Clearing browser site data removes the overrides.
+
 ### Codex origin labels and deletion diagnostics
 
 - **Behavior:** Conversation rows distinguish Muse PWA originators with a blue

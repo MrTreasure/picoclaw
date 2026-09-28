@@ -1,4 +1,4 @@
-const CACHE_VERSION = "musec137-shell-v23"
+const CACHE_VERSION = "musec137-shell-v24"
 const APP_SHELL = [
   "/",
   "/sessions",

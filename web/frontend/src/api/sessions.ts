@@ -139,7 +139,15 @@ export async function deleteSession(id: string): Promise<void> {
   })
   if (res.status === 409) throw new SessionBusyError()
   if (!res.ok) {
-    const detail = (await res.text()).trim().slice(0, 200)
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      throw new Error(
+        `删除服务暂时不可用或响应超时（${res.status}），请刷新列表确认结果后重试。`,
+      )
+    }
+    const raw = (await res.text()).trim()
+    const detail = /<!doctype|<html/i.test(raw)
+      ? "服务返回了错误页面"
+      : raw.slice(0, 200)
     throw new Error(
       `Failed to delete session ${id}: ${res.status}${detail ? ` — ${detail}` : ""}`,
     )

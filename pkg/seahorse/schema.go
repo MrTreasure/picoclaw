@@ -154,14 +154,14 @@ func runSchema(db *sql.DB) error {
 
 		// FTS5 triggers to keep messages_fts in sync with messages table
 		`CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
-			INSERT INTO messages_fts (message_id, content) VALUES (new.message_id, new.content);
+			INSERT INTO messages_fts (rowid, message_id, content) VALUES (new.message_id, new.message_id, new.content);
 		END`,
 		`CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
-			DELETE FROM messages_fts WHERE message_id = old.message_id;
+			DELETE FROM messages_fts WHERE rowid = old.message_id;
 		END`,
 		`CREATE TRIGGER messages_au AFTER UPDATE ON messages BEGIN
-			DELETE FROM messages_fts WHERE message_id = old.message_id;
-			INSERT INTO messages_fts (message_id, content) VALUES (new.message_id, new.content);
+			DELETE FROM messages_fts WHERE rowid = old.message_id;
+			INSERT INTO messages_fts (rowid, message_id, content) VALUES (new.message_id, new.message_id, new.content);
 		END`,
 	}
 
@@ -169,6 +169,10 @@ func runSchema(db *sql.DB) error {
 		if _, err := db.Exec(s); err != nil {
 			return err
 		}
+	}
+
+	if err := ensureMessagesFTSRowIDs(db); err != nil {
+		return err
 	}
 
 	if err := ensureMessagesReasoningContentColumn(db); err != nil {
@@ -309,4 +313,28 @@ func checkFTS5Support(db *sql.DB) error {
 	}
 
 	return nil
+}
+
+// Legacy FTS row IDs were allocated independently of message IDs. Rebuild once
+// when needed so per-message deletion can use the indexed virtual-table rowid.
+func ensureMessagesFTSRowIDs(db *sql.DB) error {
+	var mismatch bool
+	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM messages_fts WHERE rowid != CAST(message_id AS INTEGER))`).Scan(&mismatch); err != nil {
+		return err
+	}
+	if !mismatch {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`DELETE FROM messages_fts`); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`INSERT INTO messages_fts (rowid, message_id, content) SELECT message_id, message_id, content FROM messages`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

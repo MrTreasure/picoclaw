@@ -429,3 +429,45 @@ func TestFTS5SQLConstants(t *testing.T) {
 		t.Errorf("sqlCreateMessagesFTS failed: %v", err)
 	}
 }
+
+func TestLegacyMessagesFTSRowIDMigration(t *testing.T) {
+	db := openTestDB(t)
+	if err := runSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`INSERT INTO conversations(session_key) VALUES ('migration')`,
+		`INSERT INTO messages(conversation_id,role,content,token_count) VALUES (1,'user','searchable first',3)`,
+		`INSERT INTO messages(conversation_id,role,content,token_count) VALUES (1,'user','searchable second',3)`,
+		`UPDATE messages_fts SET rowid=rowid+100`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := runSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM messages WHERE message_id=1`); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'searchable'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("remaining search rows = %d, want 1", n)
+	}
+	if _, err := db.Exec(`UPDATE messages SET content='replacement text' WHERE message_id=2`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'replacement' AND rowid=2`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("updated search rows = %d, want 1", n)
+	}
+	if err := runSchema(db); err != nil {
+		t.Fatal(err)
+	}
+}

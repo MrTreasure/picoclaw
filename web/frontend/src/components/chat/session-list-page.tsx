@@ -42,6 +42,12 @@ import {
 import { Input } from "@/components/ui/input"
 import { deleteCodexHistoryCache } from "@/features/codex/history-cache"
 import {
+  isLocalCodexTitleKey,
+  readLocalCodexTitle,
+  removeLocalCodexTitle,
+  saveLocalCodexTitle,
+} from "@/features/codex/local-titles"
+import {
   codexDeleteError,
   codexThreadOrigin,
 } from "@/features/codex/thread-presentation"
@@ -87,6 +93,9 @@ export function SessionListPage() {
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [renameId, setRenameId] = useState<string | null>(null)
+  const [renameKind, setRenameKind] = useState<"muse" | "codex">("muse")
+  const [localTitleRevision, setLocalTitleRevision] = useState(0)
+  const [localTitles, setLocalTitles] = useState<Record<string, string>>({})
   const [renameTitle, setRenameTitle] = useState("")
   const [renaming, setRenaming] = useState(false)
   const [renameError, setRenameError] = useState(false)
@@ -274,6 +283,23 @@ export function SessionListPage() {
     }
   }, [codexRetry])
 
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (isLocalCodexTitleKey(event.key)) setLocalTitleRevision((n) => n + 1)
+    }
+    window.addEventListener("storage", onStorage)
+    return () => window.removeEventListener("storage", onStorage)
+  }, [])
+
+  useEffect(() => {
+    const titles: Record<string, string> = {}
+    for (const thread of codexThreads) {
+      const title = readLocalCodexTitle(codexScopeRef.current, thread.id)
+      if (title) titles[thread.id] = title
+    }
+    setLocalTitles(titles)
+  }, [codexThreads, localTitleRevision])
+
   // Sort only when source lists change; a search keystroke just filters.
   const sortedEntries = useMemo(() => {
     const museEntries: SessionListEntry[] = sessions.map((session) => ({
@@ -283,13 +309,16 @@ export function SessionListPage() {
     }))
     const codexEntries: SessionListEntry[] = codexThreads.map((thread) => ({
       kind: "codex",
-      thread,
+      thread: {
+        ...thread,
+        name: localTitles[thread.id] ?? thread.name,
+      },
       updated: (thread.updatedAt ?? thread.createdAt ?? 0) * 1000,
     }))
     return [...museEntries, ...codexEntries].sort(
       (a, b) => b.updated - a.updated,
     )
-  }, [sessions, codexThreads])
+  }, [sessions, codexThreads, localTitles])
 
   const visibleEntries = useMemo(() => {
     const normalizedQuery = deferredQuery.trim().toLocaleLowerCase()
@@ -407,7 +436,10 @@ export function SessionListPage() {
             try {
               await rpc.request("thread/delete", { threadId: id })
               const scope = codexScopeRef.current
-              if (scope) void deleteCodexHistoryCache(scope, id)
+              if (scope) {
+                void deleteCodexHistoryCache(scope, id)
+                removeLocalCodexTitle(scope, id)
+              }
               deleted.add(codexKey(id))
             } catch (error) {
               console.error("Failed to delete Codex thread:", error)
@@ -465,7 +497,15 @@ export function SessionListPage() {
     setRenameError(false)
     setRenaming(true)
     try {
-      await handleRenameSession(renameId, title)
+      if (renameKind === "codex") {
+        const scope = codexScopeRef.current
+        if (!scope || scope !== lastAuthenticatedListScope())
+          throw new Error("Session identity unavailable")
+        saveLocalCodexTitle(scope, renameId, title)
+        setLocalTitleRevision((n) => n + 1)
+      } else {
+        await handleRenameSession(renameId, title)
+      }
       setRenameId(null)
     } catch (error) {
       console.error("Failed to rename conversation:", error)
@@ -694,6 +734,27 @@ export function SessionListPage() {
                         </span>
                       </span>
                     </button>
+                    {!selectionMode && (
+                      <button
+                        type="button"
+                        className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-11 shrink-0 items-center justify-center rounded-xl focus-visible:ring-2 focus-visible:outline-none"
+                        aria-label={t("chat.renameSessionLabel", {
+                          title: thread.name || thread.preview || "Codex",
+                        })}
+                        onPointerDown={() => cancelLongPress()}
+                        onClick={() => {
+                          cancelLongPress()
+                          setRenameKind("codex")
+                          setRenameId(thread.id)
+                          setRenameTitle(
+                            thread.name || thread.preview?.slice(0, 60) || "",
+                          )
+                          setRenameError(false)
+                        }}
+                      >
+                        <IconPencil className="size-5" aria-hidden="true" />
+                      </button>
+                    )}
                   </div>
                 )
               }
@@ -799,6 +860,7 @@ export function SessionListPage() {
                       onPointerDown={() => cancelLongPress()}
                       onClick={() => {
                         cancelLongPress()
+                        setRenameKind("muse")
                         setRenameId(session.id)
                         setRenameTitle(session.title)
                         setRenameError(false)

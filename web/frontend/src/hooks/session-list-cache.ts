@@ -25,7 +25,15 @@ interface StoredSnapshot extends SessionListSnapshot {
 // Persist only display fields, never raw RPC responses, turns or credentials.
 type CachedCodexThread = Pick<
   CodexThread,
-  "id" | "historyMode" | "name" | "preview" | "cwd" | "createdAt" | "updatedAt"
+  | "id"
+  | "historyMode"
+  | "name"
+  | "preview"
+  | "cwd"
+  | "createdAt"
+  | "updatedAt"
+  | "source"
+  | "originator"
 >
 interface StoredCodexSnapshot {
   id: string
@@ -173,6 +181,12 @@ function cleanCodexThreads(threads: CodexThread[]): CachedCodexThread[] {
     if (!validCodexThread(t) || ids.has(t.id)) continue
     ids.add(t.id)
     const clean: CachedCodexThread = { id: t.id, historyMode: t.historyMode }
+    if (t.source === "cli" || t.source === "vscode") clean.source = t.source
+    if (
+      t.originator === "codex-tui" ||
+      t.originator?.startsWith("musec137_pwa")
+    )
+      clean.originator = t.originator.slice(0, 100)
     if (t.name !== undefined) clean.name = t.name
     if (t.preview !== undefined) clean.preview = t.preview
     if (t.cwd !== undefined) clean.cwd = t.cwd
