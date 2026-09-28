@@ -380,7 +380,14 @@ export function useSessionHistory({
   )
 
   const handleDeleteSessions = useCallback(
-    async (ids: string[]) => {
+    async (
+      ids: string[],
+      onProgress?: (
+        id: string,
+        status: "running" | "deleted" | "failed",
+        error?: string,
+      ) => void,
+    ) => {
       if (ids.length === 0) return []
       try {
         listMutationVersion += 1
@@ -392,13 +399,24 @@ export function useSessionHistory({
         // The backend scans the same session directory per deletion; avoid
         // racing those scans and overwhelming a mobile connection.
         for (const id of ids) {
+          onProgress?.(id, "running")
           try {
             await deleteSession(id)
             evictDeletedChatSession(id)
             results.push({ status: "fulfilled", value: id })
+            onProgress?.(id, "deleted")
           } catch (reason) {
             console.error("Failed to delete session:", reason)
             results.push({ status: "rejected", reason })
+            onProgress?.(
+              id,
+              "failed",
+              reason instanceof SessionBusyError
+                ? t("chat.sessionDeleteBusy")
+                : reason instanceof Error
+                  ? reason.message
+                  : String(reason),
+            )
           }
         }
         const deletedIds = new Set(

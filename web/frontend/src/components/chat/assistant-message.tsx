@@ -12,6 +12,7 @@ import { useTranslation } from "react-i18next"
 
 import { type SessionToolCallDetail, getSessionToolCall } from "@/api/sessions"
 import { AudioMessage } from "@/components/chat/audio-message"
+import { ChatThumbnail } from "@/components/chat/chat-thumbnail"
 import { MessageActions } from "@/components/chat/message-actions"
 import {
   Sheet,
@@ -454,7 +455,7 @@ export const AssistantMessage = memo(function AssistantMessage({
               onClick={() => onImageOpen?.(index)}
               className="group/img border-border/50 bg-muted/30 hover:border-border/80 relative overflow-hidden rounded-xl border shadow-sm transition-colors"
             >
-              <img
+              <ChatThumbnail
                 src={attachment.url}
                 alt={attachment.filename || "Attached image"}
                 className="max-h-80 max-w-[280px] object-contain transition-transform duration-300 group-hover/img:scale-[1.02]"

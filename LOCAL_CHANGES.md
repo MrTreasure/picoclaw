@@ -19,6 +19,36 @@ The comparison baseline currently used by this repository is
 
 ## Active local features
 
+### Long Codex histories, image previews and operation feedback (2026-09-28 release)
+
+- **Behavior:** Codex virtualizes older visible items with measured heights,
+  keeping the newest ten items and approvals in normal document flow. Image
+  thumbnails use a fixed reserved display box; full-screen previews retain the
+  original URL. Shared batch-delete status shows completed/total, current item,
+  individual errors and retries restricted to unfinished items. Failed draft
+  persistence warns without exposing content; the tab copy takes precedence if
+  a persistent write failed.
+- **Configuration:** New authenticated GET `/api/image-thumbnail?src=...`
+  accepts only existing Codex image and Pico media path forms. No remote fetch
+  URLs or filesystem paths accepted. Standard-library JPEG/PNG/GIF decode;
+  WebP/unsupported/oversized images fall back to original display. Decode is
+  bounded at 12 MiB compressed and 16 million pixels, with two concurrent jobs,
+  thumbnails up to 480 px and an 8 MiB/64-entry memory cache.
+- **Why code:** Existing configuration cannot add virtualized message rendering,
+  generated thumbnails or per-item progress callbacks.
+- **Commits/deployment/upstream:** Included in this release commit; deployment authorized on 2026-09-28,
+  local only. Release verification is recorded in the ignored
+  `.cache/releases/<commit>/deployment.json`. Shell cache version is v26. This
+  is the recommended first four items; full-text search, server-side Codex push,
+  cache lifetime management, multi-window updates, full Markdown galleries,
+  preferences export/import and static-page trash remain separate work.
+- **Validation:** Type check/lint/frontend existing tests/build and backend
+  API suite. No new automated tests or browser automation. Real touch/scroll
+  acceptance remains manual. Go cache/tmp stay on /vol1.
+- **Rollback:** Revert these changes and rebuild frontend and launcher together.
+  No stored-data migration or original-image modification.
+
+
 ### PWA performance, interaction and management pass (2026-09-28 release)
 
 - **Behavior:** Virtualized session rows; scoped local pin/archive preferences;

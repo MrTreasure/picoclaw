@@ -84,6 +84,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// Pico Channel (WebSocket chat)
 	h.registerPicoRoutes(mux)
 	h.registerCodexRoutes(mux)
+	mux.HandleFunc("GET /api/image-thumbnail", h.handleImageThumbnail)
 
 	// Gateway process lifecycle
 	h.registerGatewayRoutes(mux)

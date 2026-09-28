@@ -7,6 +7,7 @@ import {
   IconTool,
 } from "@tabler/icons-react"
 import { useNavigate } from "@tanstack/react-router"
+import { useVirtualizer } from "@tanstack/react-virtual"
 import {
   memo,
   useEffect,
@@ -567,6 +568,49 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
   }, [navigate, threadId])
 
   const threadReady = !!threadId && loadedThreadId === threadId
+  const visibleItems = useMemo(
+    () => items.filter((item) => displayItem(item, detailVisibility)),
+    [items, detailVisibility],
+  )
+  // Keep the streaming end in normal flow; only stable history is windowed.
+  const historyCount = Math.max(0, visibleItems.length - 10)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [historyMargin, setHistoryMargin] = useState(0)
+  const userScrollIntent = useRef(false)
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list) return
+    const measure = () =>
+      setHistoryMargin(parseFloat(getComputedStyle(list).paddingTop) || 0)
+    measure()
+    window.addEventListener("resize", measure)
+    return () => window.removeEventListener("resize", measure)
+  }, [threadReady])
+  // oxlint-disable-next-line react/incompatible-library
+  const historyVirtualizer = useVirtualizer({
+    count: threadReady ? historyCount : 0,
+    getScrollElement: () => listRef.current,
+    getItemKey: (index) => visibleItems[index].id,
+    estimateSize: (index) =>
+      visibleItems[index].type === "userMessage" ? 120 : 220,
+    overscan: 6,
+    gap: 12,
+    scrollMargin: historyMargin,
+    useAnimationFrameWithResizeObserver: true,
+  })
+  useLayoutEffect(() => {
+    const content = contentRef.current
+    if (!content) return
+    const observer = new ResizeObserver(() => {
+      const list = listRef.current
+      if (list && followRef.current && threadReady) {
+        list.scrollTop = list.scrollHeight
+        lastScrollTopRef.current = list.scrollTop
+      }
+    })
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [threadReady])
 
   useLayoutEffect(() => {
     if (scrollThreadRef.current !== threadId) {
@@ -601,9 +645,13 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
     // Content growth can increase distance from bottom without a user scroll.
     // Only scrolling upward (including scrollbar drags) suspends auto-follow.
     if (nearBottom) followRef.current = true
-    else if (list.scrollTop < lastScrollTopRef.current - 1)
+    else if (
+      userScrollIntent.current &&
+      list.scrollTop < lastScrollTopRef.current - 1
+    )
       followRef.current = false
     lastScrollTopRef.current = list.scrollTop
+    userScrollIntent.current = false
     setShowJump(!followRef.current)
   }
 
@@ -906,23 +954,69 @@ function CodexConversationPage({ threadId }: { threadId?: string }) {
             <main
               ref={listRef}
               onScroll={onListScroll}
+              onWheel={() => {
+                userScrollIntent.current = true
+              }}
+              onTouchStart={() => {
+                userScrollIntent.current = true
+              }}
+              onPointerDown={() => {
+                userScrollIntent.current = true
+              }}
+              onKeyDown={(event) => {
+                if (["ArrowUp", "PageUp", "Home"].includes(event.key))
+                  userScrollIntent.current = true
+              }}
               className="min-h-0 flex-1 scroll-pt-[calc(4.75rem+env(safe-area-inset-top))] overflow-y-auto px-3 pt-[calc(4.75rem+env(safe-area-inset-top))] pb-4 md:px-8 lg:px-24 xl:px-48"
             >
-              <div className="mx-auto max-w-[900px] space-y-3 md:space-y-4">
+              <div
+                ref={contentRef}
+                className="mx-auto max-w-[900px] space-y-3 md:space-y-4"
+              >
                 {threadReady && (
                   <>
-                    {items
-                      .filter((item) => displayItem(item, detailVisibility))
-                      .map((item) => (
-                        <CodexItemView
-                          key={item.id}
-                          item={item}
-                          running={running}
-                          onImageOpen={(imageIndex) =>
-                            setImageSelection({ itemId: item.id, imageIndex })
-                          }
-                        />
-                      ))}
+                    {historyCount > 0 && (
+                      <div
+                        className="relative"
+                        style={{ height: historyVirtualizer.getTotalSize() }}
+                      >
+                        {historyVirtualizer.getVirtualItems().map((row) => {
+                          const item = visibleItems[row.index]
+                          return (
+                            <div
+                              key={item.id}
+                              ref={historyVirtualizer.measureElement}
+                              data-index={row.index}
+                              className="absolute top-0 left-0 w-full"
+                              style={{
+                                transform: `translateY(${row.start - historyMargin}px)`,
+                              }}
+                            >
+                              <CodexItemView
+                                item={item}
+                                running={false}
+                                onImageOpen={(imageIndex) =>
+                                  setImageSelection({
+                                    itemId: item.id,
+                                    imageIndex,
+                                  })
+                                }
+                              />
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                    {visibleItems.slice(historyCount).map((item) => (
+                      <CodexItemView
+                        key={item.id}
+                        item={item}
+                        running={running}
+                        onImageOpen={(imageIndex) =>
+                          setImageSelection({ itemId: item.id, imageIndex })
+                        }
+                      />
+                    ))}
                     {running && <TypingIndicator activity="thinking" />}
                     {approval && (
                       <div className="bg-card rounded-2xl border border-amber-500/50 p-4">

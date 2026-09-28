@@ -1,5 +1,6 @@
 import { useState } from "react"
 
+import { ChatThumbnail } from "@/components/chat/chat-thumbnail"
 import { ImageViewer } from "@/components/chat/image-viewer"
 import { isSafeImageSource } from "@/features/chat/image-gallery"
 
@@ -17,7 +18,7 @@ export function MessageImage({
   if (!src || !isSafeImageSource(src)) return <span>{alt || "图片不可用"}</span>
   return (
     <>
-      <img
+      <ChatThumbnail
         src={src}
         alt={alt || "聊天图片"}
         title={title}

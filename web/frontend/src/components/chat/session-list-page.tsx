@@ -34,6 +34,10 @@ import { CodexRpcClient, type CodexThread } from "@/api/codex"
 import { getLauncherAuthStatus } from "@/api/launcher-auth"
 import type { SessionSummary } from "@/api/sessions"
 import {
+  BatchDeleteStatus,
+  type DeleteProgressItem,
+} from "@/components/batch-delete-status"
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -136,6 +140,7 @@ export function SessionListPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [actionKey, setActionKey] = useState<string | null>(null)
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
+  const [deleteProgress, setDeleteProgress] = useState<DeleteProgressItem[]>([])
   const [deleting, setDeleting] = useState(false)
   const [renameId, setRenameId] = useState<string | null>(null)
   const [renameKind, setRenameKind] = useState<"muse" | "codex">("muse")
@@ -666,9 +671,34 @@ export function SessionListPage() {
     await navigation
   }
 
-  const deleteSelected = async () => {
+  const deleteSelected = async (retryKeys?: string[]) => {
     if (deleting) return
-    const keys = [...selectedIds]
+    const keys = retryKeys || [...selectedIds]
+    setDeleteProgress(
+      keys.map((id) => {
+        const entry = sortedEntries.find((entry) => entryKey(entry) === id)
+        return {
+          id,
+          label: entry
+            ? entry.kind === "muse"
+              ? entry.session.title
+              : entry.thread.name || entry.thread.preview || "Codex"
+            : id,
+          status: "pending",
+        }
+      }),
+    )
+    const progress = (
+      id: string,
+      status: DeleteProgressItem["status"],
+      error?: string,
+    ) =>
+      setDeleteProgress((items) =>
+        items.map((item) =>
+          item.id === id ? { ...item, status, error } : item,
+        ),
+      )
+
     const museIds = keys
       .filter((key) => key.startsWith("muse:"))
       .map((key) => key.slice("muse:".length))
@@ -681,7 +711,10 @@ export function SessionListPage() {
     const codexFailures: string[] = []
     try {
       if (museIds.length) {
-        for (const id of await handleDeleteSessions(museIds))
+        for (const id of await handleDeleteSessions(
+          museIds,
+          (id, status, error) => progress(museKey(id), status, error),
+        ))
           deleted.add(museKey(id))
       }
       if (codexIds.length) {
@@ -696,6 +729,7 @@ export function SessionListPage() {
           await rpc.connect()
           // A failed thread must not block deletion of the other selections.
           for (const id of codexIds) {
+            progress(codexKey(id), "running")
             try {
               try {
                 await rpc.request("thread/delete", { threadId: id })
@@ -725,9 +759,11 @@ export function SessionListPage() {
                 removeLocalCodexTitle(scope, id)
               }
               deleted.add(codexKey(id))
+              progress(codexKey(id), "deleted")
             } catch (error) {
               console.error("Failed to delete Codex thread:", error)
               codexFailures.push(codexDeleteError(error))
+              progress(codexKey(id), "failed", codexDeleteError(error))
             }
           }
         } catch (error) {
@@ -740,6 +776,17 @@ export function SessionListPage() {
     } catch (error) {
       console.error("Failed to delete selected sessions:", error)
     } finally {
+      setDeleteProgress((items) =>
+        items.map((item) =>
+          item.status === "pending" || item.status === "running"
+            ? {
+                ...item,
+                status: "failed",
+                error: codexFailures[0] || "请求未完成，请检查连接后重试。",
+              }
+            : item,
+        ),
+      )
       setCodexThreads((threads) =>
         threads.filter((thread) => !deleted.has(codexKey(thread.id))),
       )
@@ -947,6 +994,18 @@ export function SessionListPage() {
               )}
             </div>
           )}
+          <BatchDeleteStatus
+            items={deleteProgress}
+            busy={deleting}
+            onRetry={() =>
+              void deleteSelected(
+                deleteProgress
+                  .filter((item) => item.status === "failed")
+                  .map((item) => item.id),
+              )
+            }
+            onDismiss={() => setDeleteProgress([])}
+          />
           {loadError && (
             <div className="border-destructive/40 bg-destructive/10 text-destructive mb-3 flex min-h-12 items-center justify-between rounded-xl border px-4 text-sm">
               <span>{loadErrorMessage}</span>

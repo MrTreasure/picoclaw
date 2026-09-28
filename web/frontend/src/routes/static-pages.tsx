@@ -25,6 +25,10 @@ import {
   listStaticPages,
 } from "@/api/static-pages"
 import {
+  BatchDeleteStatus,
+  type DeleteProgressItem,
+} from "@/components/batch-delete-status"
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -84,6 +88,7 @@ function StaticPagesPage() {
   const [query, setQuery] = useState("")
   const search = useDeferredValue(query).trim().toLocaleLowerCase()
   const [target, setTarget] = useState<StaticPage | null>(null)
+  const [deleteProgress, setDeleteProgress] = useState<DeleteProgressItem[]>([])
   const [deleting, setDeleting] = useState(false)
   const request = useRef<AbortController | null>(null)
   const load = useCallback(async () => {
@@ -106,20 +111,48 @@ function StaticPagesPage() {
     void load()
     return () => request.current?.abort()
   }, [load])
-  const remove = async () => {
-    if (!target || deleting) return
-    const targets = batch ? pages.filter((p) => selected.has(p.path)) : [target]
+  const remove = async (retry?: StaticPage[]) => {
+    if ((!target && !retry) || deleting) return
+    const targets =
+      retry ||
+      (batch
+        ? pages.filter((p) => selected.has(p.path))
+        : target
+          ? [target]
+          : [])
+    setDeleteProgress(
+      targets.map((page) => ({
+        id: page.path,
+        label: names[page.path] || page.path,
+        status: "pending",
+      })),
+    )
+    const progress = (
+      id: string,
+      status: DeleteProgressItem["status"],
+      error?: string,
+    ) =>
+      setDeleteProgress((items) =>
+        items.map((item) =>
+          item.id === id ? { ...item, status, error } : item,
+        ),
+      )
+    setTarget(null)
+
     setDeleting(true)
     request.current?.abort()
     setLoading(false)
     const deleted = new Set<string>()
     let failure = ""
     for (const page of targets) {
+      progress(page.path, "running")
       try {
         await deleteStaticPage(page)
         deleted.add(page.path)
+        progress(page.path, "deleted")
       } catch (e) {
         failure = e instanceof Error ? e.message : "删除失败"
+        progress(page.path, "failed", failure)
       }
     }
     setPages((current) => current.filter((p) => !deleted.has(p.path)))
@@ -242,6 +275,19 @@ function StaticPagesPage() {
               </div>
             )}
           </div>
+          <BatchDeleteStatus
+            items={deleteProgress}
+            busy={deleting}
+            onRetry={() => {
+              const failed = new Set(
+                deleteProgress
+                  .filter((item) => item.status === "failed")
+                  .map((item) => item.id),
+              )
+              void remove(pages.filter((page) => failed.has(page.path)))
+            }}
+            onDismiss={() => setDeleteProgress([])}
+          />
           {error && (
             <div
               role="alert"

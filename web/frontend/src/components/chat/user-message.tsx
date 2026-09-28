@@ -2,6 +2,7 @@ import { IconDownload, IconFile } from "@tabler/icons-react"
 import { memo } from "react"
 import { useTranslation } from "react-i18next"
 
+import { ChatThumbnail } from "@/components/chat/chat-thumbnail"
 import { MessageActions } from "@/components/chat/message-actions"
 import { isSafeImageSource } from "@/features/chat/image-gallery"
 import { formatMessageTime } from "@/hooks/use-pico-chat"
@@ -55,7 +56,7 @@ export const UserMessage = memo(function UserMessage({
               onClick={() => onImageOpen?.(index)}
               className="max-w-full"
             >
-              <img
+              <ChatThumbnail
                 src={attachment.url}
                 alt={attachment.filename || t("chat.uploadedImage")}
                 className="max-h-72 max-w-full object-cover"
