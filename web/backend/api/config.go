@@ -638,13 +638,13 @@ func normalizeStringArrayItems(items []string, options stringArrayParserOptions)
 func getSecretString(m map[string]any, key string) (string, bool) {
 	if raw, exists := m[key]; exists {
 		s, isString := raw.(string)
-		if isString {
+		if isString && s != "[NOT_HERE]" {
 			return s, true
 		}
 	}
 	if raw, exists := m["_"+key]; exists {
 		s, isString := raw.(string)
-		if isString {
+		if isString && s != "[NOT_HERE]" {
 			return s, true
 		}
 	}
@@ -756,6 +756,9 @@ func applySecureStringsToStruct(rv reflect.Value, rawMap map[string]any) {
 			}
 			// Direct SecureString field
 			if s, ok := rawVal.(string); ok {
+				if s == "[NOT_HERE]" {
+					continue
+				}
 				if f.Type == reflect.TypeOf(config.SecureString{}) {
 					sf.Set(reflect.ValueOf(*config.NewSecureString(s)))
 				} else if f.Type == reflect.TypeOf(&config.SecureString{}) {

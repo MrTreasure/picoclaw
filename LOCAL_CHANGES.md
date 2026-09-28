@@ -393,3 +393,4 @@ Secrets remain outside Git in `/vol1/picoclaw/home/.security.yml`.
 - 按用户“全做”范围，设备 Bearer 增加明确的配置 GET/PUT/PATCH、SOUL/MEMORY GET/PUT、访问设置 GET/PUT，以及凭据列表/登录/退出和指定授权流程查询/轮询；不开放进程控制、任意文件或配置重置。
 - Codex WebSocket 白名单增加只读 thread/turns/list；原生使用完整条目、倒序十回合分页，resume 排除全量历史。本机生成协议与只读分页响应已核对。
 - 更新原有白名单测试中配置读取的预期，匹配新增原生配置编辑功能；不新增测试或 UI 自动化。
+- 配置保存链路额外修复：忽略序列化的 [NOT_HERE] 凭据占位符，防止普通配置回写把占位符误设为真实凭据；不修改运行中的任何凭据。
