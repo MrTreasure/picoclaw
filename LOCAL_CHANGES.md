@@ -412,3 +412,10 @@ Secrets remain outside Git in `/vol1/picoclaw/home/.security.yml`.
   `/vol1/picoclaw/home/backups/web-proxy-tavily-20260928-183407/`
   contains config.json and AGENT.md; restore both to their original paths and
   reload the gateway. Upstream status: local deployment policy, no source fork.
+
+## 2026-09-29 Zhihu search priority
+
+- Runtime AGENT.md prioritizes Zhihu community/global search, Tavily fallback, and retains proxy web_fetch for known URLs.
+- `scripts/muse-zhihu-search.py` uses the documented public search HTTP API because local credential metadata identifies Linux CLI as unsupported; reads `zhihu.access_secret` from the password book at runtime. No credentials copied, no personal-content reads or generated answers. Errors remain distinct from empty results.
+- Deployed script is invoked by absolute path from the runtime prompt. Public community search verified with one result; no gateway binary change. Upstream status: local deployment integration.
+- Rollback: restore `/vol1/picoclaw/home/backups/zhihu-priority-20260928-232735/AGENT.md`; remove the script only after restoring the prompt.
