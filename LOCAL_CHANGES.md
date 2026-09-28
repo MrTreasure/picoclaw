@@ -19,6 +19,25 @@ The comparison baseline currently used by this repository is
 
 ## Active local features
 
+### Codex origin labels and deletion diagnostics
+
+- **Behavior:** Conversation rows distinguish Muse PWA originators with a blue
+  app icon and terminal CLI sources with an amber terminal icon, alongside text
+  labels. Unknown clients remain explicitly unidentified rather than treating
+  every `vscode` source as PWA. Deletion errors explain writer-lock contention,
+  active turns, missing logs and fork references; other server errors are shown
+  with a bounded length. Failed rows remain selected and are never hidden as if
+  deletion succeeded.
+- **Configuration:** Existing thread `source` and `originator` metadata; no new
+  service configuration. Service-worker cache version `musec137-shell-v23`.
+- **Commit/deployment:** This commit is the frontend-only release source for
+  2026-09-28. No gateway or Codex app-server restart is required.
+- **Validation:** Origin/error regression tests, frontend tests, type check,
+  lint and production build. The two user-authorized terminal processes were
+  terminated gracefully and their writer locks verified released.
+- **Upstream status:** Local MuseC137 behavior.
+- **Rollback:** Restore saved index.html and sw.js; keep fingerprinted assets.
+
 ### PWA conversation titles and renaming
 
 - **Behavior:** Conversation titles default to the first substantive user text,

@@ -1,4 +1,5 @@
 import {
+  IconApps,
   IconBrandWechat,
   IconCheck,
   IconCode,
@@ -7,6 +8,7 @@ import {
   IconPencil,
   IconRobot,
   IconSearch,
+  IconTerminal2,
   IconTrash,
   IconX,
 } from "@tabler/icons-react"
@@ -39,6 +41,10 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { deleteCodexHistoryCache } from "@/features/codex/history-cache"
+import {
+  codexDeleteError,
+  codexThreadOrigin,
+} from "@/features/codex/thread-presentation"
 import {
   invalidateCodexSessionListCache,
   invalidateSessionListCache,
@@ -382,6 +388,7 @@ export function SessionListPage() {
     setConfirmBulkDelete(false)
     setDeleting(true)
     const deleted = new Set<string>()
+    const codexFailures: string[] = []
     try {
       if (museIds.length) {
         for (const id of await handleDeleteSessions(museIds))
@@ -404,10 +411,12 @@ export function SessionListPage() {
               deleted.add(codexKey(id))
             } catch (error) {
               console.error("Failed to delete Codex thread:", error)
+              codexFailures.push(codexDeleteError(error))
             }
           }
         } catch (error) {
           console.error("Failed to connect for Codex deletion:", error)
+          codexFailures.push(codexDeleteError(error))
         } finally {
           rpc.close()
         }
@@ -425,7 +434,12 @@ export function SessionListPage() {
       })
       const failedCodex = codexIds.filter((id) => !deleted.has(codexKey(id)))
       if (failedCodex.length)
-        toast.error(`${failedCodex.length} 段 Codex 会话删除失败，请重试`)
+        toast.error(`${failedCodex.length} 段 Codex 会话删除失败`, {
+          description:
+            [...new Set(codexFailures)].join("；") ||
+            "删除请求未完成，请检查连接后重试。",
+          duration: 10000,
+        })
       const deletedCodex = codexIds.filter((id) => deleted.has(codexKey(id)))
       if (deletedCodex.length) {
         const scope = codexScopeRef.current
@@ -590,6 +604,31 @@ export function SessionListPage() {
             {visibleEntries.map((entry) => {
               if (entry.kind === "codex") {
                 const thread = entry.thread
+                const origin = codexThreadOrigin(thread)
+                const OriginIcon =
+                  origin === "pwa"
+                    ? IconApps
+                    : origin === "terminal"
+                      ? IconTerminal2
+                      : IconCode
+                const originColor =
+                  origin === "pwa"
+                    ? "text-blue-600 dark:text-blue-400"
+                    : origin === "terminal"
+                      ? "text-amber-700 dark:text-amber-400"
+                      : "text-muted-foreground"
+                const originBackground =
+                  origin === "pwa"
+                    ? "bg-blue-500/15"
+                    : origin === "terminal"
+                      ? "bg-amber-500/15"
+                      : "bg-muted"
+                const originLabel =
+                  origin === "pwa"
+                    ? "PWA · Codex"
+                    : origin === "terminal"
+                      ? "终端 · Codex"
+                      : "其他来源 · Codex"
                 const key = codexKey(thread.id)
                 return (
                   <div
@@ -627,11 +666,13 @@ export function SessionListPage() {
                           })
                       }}
                     >
-                      <span className="bg-secondary/10 text-secondary flex size-14 shrink-0 items-center justify-center rounded-2xl">
+                      <span
+                        className={`flex size-14 shrink-0 items-center justify-center rounded-2xl ${originColor} ${originBackground}`}
+                      >
                         {selectedIds.has(key) ? (
                           <IconCheck className="size-7" aria-label="已选择" />
                         ) : (
-                          <IconCode className="size-7" aria-hidden="true" />
+                          <OriginIcon className="size-7" aria-hidden="true" />
                         )}
                       </span>
                       <span className="min-w-0 flex-1">
@@ -645,6 +686,11 @@ export function SessionListPage() {
                         </span>
                         <span className="text-muted-foreground mt-1 block truncate text-sm">
                           {thread.cwd || "Codex 对话"}
+                        </span>
+                        <span
+                          className={`mt-1 block text-xs font-medium ${originColor}`}
+                        >
+                          {originLabel}
                         </span>
                       </span>
                     </button>

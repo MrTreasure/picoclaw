@@ -9,6 +9,7 @@ export interface CodexWorkspace {
 export interface CodexThread {
   id: string
   source?: string
+  originator?: string | null
   name?: string | null
   preview?: string
   cwd?: string
@@ -107,17 +108,19 @@ export class CodexRpcClient {
 
   async connect(): Promise<void> {
     if (this.closed) throw new Error("Codex client has been closed")
-    if (!this.release) this.release = codexSocketManager.subscribe({
-      event: (message) => this.onEvent?.(message),
-      close: () => this.onClose?.(),
-      reconnect: () => this.onReconnect?.(),
-    })
+    if (!this.release)
+      this.release = codexSocketManager.subscribe({
+        event: (message) => this.onEvent?.(message),
+        close: () => this.onClose?.(),
+        reconnect: () => this.onReconnect?.(),
+      })
     await codexSocketManager.connect()
     if (this.closed) throw new Error("Codex client has been closed")
   }
 
   request<T>(method: string, params: Record<string, unknown>): Promise<T> {
-    if (this.closed) return Promise.reject(new Error("Codex client has been closed"))
+    if (this.closed)
+      return Promise.reject(new Error("Codex client has been closed"))
     return codexSocketManager.request<T>(method, params)
   }
 
