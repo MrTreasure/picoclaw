@@ -185,7 +185,7 @@ func deviceBearerPathAllowed(method, p string) bool {
 		strings.HasPrefix(p, "/api/codex/images/")) {
 		return true
 	}
-	if method == http.MethodPost && p == "/api/codex/images" {
+	if method == http.MethodPost && (p == "/api/codex/images" || p == "/api/chat/preferences") {
 		return true
 	}
 	if p == "/api/static-pages" && (method == http.MethodGet || method == http.MethodDelete) {

@@ -366,3 +366,12 @@ in Git. Current notable local settings include:
   rotate after 80, retain 20.
 
 Secrets remain outside Git in `/vol1/picoclaw/home/.security.yml`.
+
+### Native chat controls parity (2026-09-28)
+
+- Device credentials may POST the existing /api/chat/preferences endpoint,
+  matching the PWA chat Agent model/thinking controls. General configuration
+  endpoints remain excluded. No new configuration or data migration.
+- Validation: existing middleware tests and launcher build; actual device-token
+  route verification. Deployment follows native 0.1.1 delivery.
+- Local-only branch feat/native-clean-client. Rollback: restore previous launcher.
