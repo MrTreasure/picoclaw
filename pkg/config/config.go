@@ -1549,6 +1549,7 @@ func LoadConfig(path string) (*Config, error) {
 	if err = env.Parse(cfg); err != nil {
 		return nil, err
 	}
+	cfg.Agents.Defaults.ContextWindow = min(cfg.Agents.Defaults.ContextWindow, MaxContextWindow)
 	applySkillsRegistryEnvCompat(cfg)
 
 	if err = InitChannelList(cfg.Channels); err != nil {
@@ -1700,7 +1701,11 @@ func toNameIndex(list []*ModelConfig) []string {
 	return nameList
 }
 
+// MaxContextWindow caps the model-visible context budget for this deployment.
+const MaxContextWindow = 512_000
+
 func SaveConfig(path string, cfg *Config) error {
+	cfg.Agents.Defaults.ContextWindow = min(cfg.Agents.Defaults.ContextWindow, MaxContextWindow)
 	if cfg.Version < CurrentVersion {
 		cfg.Version = CurrentVersion
 	}

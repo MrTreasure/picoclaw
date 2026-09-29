@@ -110,10 +110,7 @@ func computeContextUsageWith(agent *AgentInstance, cm ContextManager, sessionKey
 	// The engine compares this against history-message tokens ONLY (not
 	// UsedTokens).  HistoryTokens is exposed alongside UsedTokens so the
 	// UI can show both values and avoid user confusion.
-	summarizeAt := contextWindow * agent.SummarizeTokenPercent / 100
-	if summarizeAt <= 0 {
-		summarizeAt = compressAt
-	}
+	summarizeAt := summarizeContextBudget(agent)
 
 	usedPercent := 0
 	if compressAt > 0 {
@@ -146,4 +143,18 @@ func assembleMeterContext(cm *seahorseContextManager, sessionKey string, budget 
 		return nil, err
 	}
 	return cm.Assemble(ctx, &AssembleRequest{SessionKey: sessionKey, Budget: budget})
+}
+
+// summarizeContextBudget keeps the displayed threshold and the compactor budget
+// in sync as the configured window or output reserve changes.
+func summarizeContextBudget(agent *AgentInstance) int {
+	budget := agent.ContextWindow - agent.MaxTokens
+	if budget <= 0 {
+		budget = max(1, agent.ContextWindow/2)
+	}
+	percent := agent.SummarizeTokenPercent
+	if percent <= 0 {
+		percent = 75
+	}
+	return min(budget, agent.ContextWindow*min(percent, 100)/100)
 }
