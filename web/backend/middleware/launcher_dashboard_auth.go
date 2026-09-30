@@ -180,6 +180,9 @@ func LauncherDashboardAuth(cfg LauncherDashboardAuthConfig, next http.Handler) h
 func deviceBearerPathAllowed(method, p string) bool {
 	// Native clients use device credentials for the same bounded features as PWA.
 	// Native settings use explicit management routes; arbitrary files/process control remain excluded.
+	if method == http.MethodGet && (p == "/api/daily-reports" || strings.HasPrefix(p, "/api/daily-reports/")) {
+		return true
+	}
 	if (p == "/api/config" && (method == http.MethodGet || method == http.MethodPut || method == http.MethodPatch)) ||
 		(p == "/api/system/launcher-config" && (method == http.MethodGet || method == http.MethodPut)) ||
 		((p == "/api/workspace-documents/soul" || p == "/api/workspace-documents/memory") && (method == http.MethodGet || method == http.MethodPut)) ||

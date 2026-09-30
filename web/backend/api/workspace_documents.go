@@ -15,6 +15,8 @@ import (
 const maxWorkspaceDocumentBytes = 512 << 10
 
 func (h *Handler) registerWorkspaceDocumentRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/daily-reports", h.handleListDailyReports)
+	mux.HandleFunc("GET /api/daily-reports/{date}", h.handleGetDailyReport)
 	mux.HandleFunc("GET /api/workspace-documents/{name}", h.handleGetWorkspaceDocument)
 	mux.HandleFunc("PUT /api/workspace-documents/{name}", h.handlePutWorkspaceDocument)
 }
