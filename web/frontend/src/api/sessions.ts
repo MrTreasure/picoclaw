@@ -2,7 +2,6 @@ import { launcherFetch } from "@/api/http"
 
 export interface SessionSummary {
   id: string
-  channel: "pico" | "weixin"
   title: string
   preview: string
   message_count: number
@@ -12,7 +11,6 @@ export interface SessionSummary {
 
 export interface SessionDetail {
   id: string
-  channel?: "pico" | "weixin"
   messages: {
     role: "user" | "assistant"
     content: string
@@ -41,27 +39,16 @@ export interface SessionDetail {
   summary: string
   created: string
   updated: string
-  message_offset?: number
-  message_total?: number
-  has_more?: boolean
-  next_before?: number
-}
-
-export interface SessionHistoryPageOptions {
-  before?: number
-  limit?: number
 }
 
 export async function getSessions(
   offset: number = 0,
   limit: number = 20,
-  channel?: "pico" | "weixin",
 ): Promise<SessionSummary[]> {
   const params = new URLSearchParams({
     offset: offset.toString(),
     limit: limit.toString(),
   })
-  if (channel) params.set("channel", channel)
 
   const res = await launcherFetch(`/api/sessions?${params.toString()}`)
   if (!res.ok) {
@@ -70,21 +57,8 @@ export async function getSessions(
   return res.json()
 }
 
-export async function getSessionHistory(
-  id: string,
-  options: SessionHistoryPageOptions = {},
-): Promise<SessionDetail> {
-  const params = new URLSearchParams()
-  if (options.limit !== undefined) {
-    params.set("limit", String(options.limit))
-  }
-  if (options.before !== undefined) {
-    params.set("before", String(options.before))
-  }
-  const query = params.size > 0 ? `?${params.toString()}` : ""
-  const res = await launcherFetch(
-    `/api/sessions/${encodeURIComponent(id)}${query}`,
-  )
+export async function getSessionHistory(id: string): Promise<SessionDetail> {
+  const res = await launcherFetch(`/api/sessions/${encodeURIComponent(id)}`)
   if (!res.ok) {
     throw new Error(`Failed to fetch session ${id}: ${res.status}`)
   }
@@ -98,14 +72,4 @@ export async function deleteSession(id: string): Promise<void> {
   if (!res.ok) {
     throw new Error(`Failed to delete session ${id}: ${res.status}`)
   }
-}
-
-export async function clearTaskRunSessions(): Promise<number> {
-  const res = await launcherFetch("/api/sessions/task-runs", {
-    method: "DELETE",
-  })
-  if (!res.ok)
-    throw new Error(`Failed to clear task run sessions: ${res.status}`)
-  const body = (await res.json()) as { deleted_files?: number }
-  return body.deleted_files ?? 0
 }

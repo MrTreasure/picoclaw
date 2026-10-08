@@ -1,38 +1,5 @@
 import type { ChatToolCall } from "@/store/chat"
 
-const DYNAMIC_CONTEXT_START = "## Current Time"
-const DYNAMIC_CONTEXT_SEPARATOR = /\r?\n\r?\n---\r?\n\r?\n/
-
-export function sanitizeToolFeedbackExplanation(value: string): string {
-  const trimmed = value.trim()
-  const contextStart = trimmed.indexOf(DYNAMIC_CONTEXT_START)
-  if (contextStart < 0) {
-    return trimmed
-  }
-
-  const beforeContext = trimmed.slice(0, contextStart).trim()
-  if (
-    beforeContext !== "" &&
-    !/^Continuing (?:the )?current task\.:?$/i.test(beforeContext)
-  ) {
-    return trimmed
-  }
-
-  const contextAndMessage = trimmed.slice(contextStart)
-  const separator = DYNAMIC_CONTEXT_SEPARATOR.exec(contextAndMessage)
-  if (!separator || separator.index === undefined) {
-    return trimmed
-  }
-
-  const userMessage = contextAndMessage
-    .slice(separator.index + separator[0].length)
-    .trim()
-  if (!userMessage) {
-    return ""
-  }
-  return beforeContext ? `${beforeContext} ${userMessage}` : userMessage
-}
-
 function parseLegacyToolFeedbackContent(
   content: string,
 ): ChatToolCall[] | undefined {
@@ -114,9 +81,7 @@ export function parseToolCallsValue(raw: unknown): ChatToolCall[] | undefined {
     if (rawExtraContent) {
       const toolFeedbackExplanation =
         typeof rawExtraContent.tool_feedback_explanation === "string"
-          ? sanitizeToolFeedbackExplanation(
-              rawExtraContent.tool_feedback_explanation,
-            )
+          ? rawExtraContent.tool_feedback_explanation
           : undefined
 
       if (toolFeedbackExplanation) {

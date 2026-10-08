@@ -745,7 +745,17 @@ func (s *splitMarkerStreamer) Finalize(ctx context.Context, content string) erro
 func (s *splitMarkerStreamer) FinalizeWithContext(ctx context.Context, content string, usage *bus.ContextUsage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.finalizeLocked(ctx, content, usage); err != nil {
+	if err := s.finalizeLocked(ctx, content, usage, false); err != nil {
+		return err
+	}
+	s.runFinalizeHook(ctx, content)
+	return nil
+}
+
+func (s *splitMarkerStreamer) FinalizeSegment(ctx context.Context, content string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.finalizeLocked(ctx, content, nil, true); err != nil {
 		return err
 	}
 	s.runFinalizeHook(ctx, content)
@@ -805,7 +815,7 @@ func (s *splitMarkerStreamer) ClearFinalizedStreamMarker() {
 func (s *splitMarkerStreamer) updateLocked(ctx context.Context, content string) error {
 	parts := strings.Split(content, MessageSplitMarker)
 	completedLimit := len(parts) - 1
-	if err := s.finalizeCompletedPartsLocked(ctx, parts, completedLimit, nil); err != nil {
+	if err := s.finalizeCompletedPartsLocked(ctx, parts, completedLimit, nil, true); err != nil {
 		return err
 	}
 	active := strings.TrimSpace(parts[len(parts)-1])
@@ -818,9 +828,14 @@ func (s *splitMarkerStreamer) updateLocked(ctx context.Context, content string) 
 	return s.current.Update(ctx, active)
 }
 
-func (s *splitMarkerStreamer) finalizeLocked(ctx context.Context, content string, usage *bus.ContextUsage) error {
+func (s *splitMarkerStreamer) finalizeLocked(
+	ctx context.Context,
+	content string,
+	usage *bus.ContextUsage,
+	intermediate bool,
+) error {
 	parts := strings.Split(content, MessageSplitMarker)
-	return s.finalizeCompletedPartsLocked(ctx, parts, len(parts), usage)
+	return s.finalizeCompletedPartsLocked(ctx, parts, len(parts), usage, intermediate)
 }
 
 func (s *splitMarkerStreamer) finalizeCompletedPartsLocked(
@@ -828,15 +843,33 @@ func (s *splitMarkerStreamer) finalizeCompletedPartsLocked(
 	parts []string,
 	limit int,
 	usage *bus.ContextUsage,
+	intermediate bool,
 ) error {
+	lastContentIndex := -1
+	if !intermediate {
+		for index := limit - 1; index >= s.completedParts; index-- {
+			if strings.TrimSpace(parts[index]) != "" {
+				lastContentIndex = index
+				break
+			}
+		}
+	}
 	for s.completedParts < limit {
 		content := strings.TrimSpace(parts[s.completedParts])
-		isLast := s.completedParts == limit-1
+		isLast := s.completedParts == lastContentIndex
 		if content != "" {
 			if err := s.ensureCurrentLocked(ctx); err != nil {
 				return err
 			}
-			if isLast && usage != nil {
+			if intermediate || !isLast {
+				if segmentStreamer, ok := s.current.(bus.SegmentStreamer); ok {
+					if err := segmentStreamer.FinalizeSegment(ctx, content); err != nil {
+						return err
+					}
+				} else if err := s.current.Finalize(ctx, content); err != nil {
+					return err
+				}
+			} else if usage != nil {
 				if contextStreamer, ok := s.current.(bus.ContextUsageStreamer); ok {
 					if err := contextStreamer.FinalizeWithContext(ctx, content, usage); err != nil {
 						return err
@@ -929,6 +962,18 @@ func (s *finalizeHookStreamer) Finalize(ctx context.Context, content string) err
 func (s *finalizeHookStreamer) FinalizeWithContext(ctx context.Context, content string, usage *bus.ContextUsage) error {
 	if streamer, ok := s.Streamer.(bus.ContextUsageStreamer); ok {
 		if err := streamer.FinalizeWithContext(ctx, content, usage); err != nil {
+			return err
+		}
+	} else if err := s.Streamer.Finalize(ctx, content); err != nil {
+		return err
+	}
+	s.runFinalizeHook(ctx, content)
+	return nil
+}
+
+func (s *finalizeHookStreamer) FinalizeSegment(ctx context.Context, content string) error {
+	if streamer, ok := s.Streamer.(bus.SegmentStreamer); ok {
+		if err := streamer.FinalizeSegment(ctx, content); err != nil {
 			return err
 		}
 	} else if err := s.Streamer.Finalize(ctx, content); err != nil {

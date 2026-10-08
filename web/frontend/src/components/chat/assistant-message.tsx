@@ -1,12 +1,13 @@
 import {
   IconBrain,
+  IconCheck,
   IconChevronDown,
+  IconCopy,
   IconDownload,
   IconFileText,
-  IconLoader2,
   IconTool,
 } from "@tabler/icons-react"
-import { memo, useState } from "react"
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import ReactMarkdown from "react-markdown"
 import rehypeHighlight from "rehype-highlight"
@@ -14,13 +15,13 @@ import rehypeRaw from "rehype-raw"
 import rehypeSanitize from "rehype-sanitize"
 import remarkGfm from "remark-gfm"
 
-import { AudioMessage } from "@/components/chat/audio-message"
-import { MessageActions } from "@/components/chat/message-actions"
 import {
-  MarkdownCodeBlock,
   MessageCodeBlock,
+  MarkdownCodeBlock,
 } from "@/components/chat/message-code-block"
+import { Button } from "@/components/ui/button"
 import { formatMessageTime } from "@/hooks/use-pico-chat"
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard"
 import { cn } from "@/lib/utils"
 import {
   type AssistantMessageKind,
@@ -35,33 +36,28 @@ interface AssistantMessageProps {
   modelName?: string
   toolCalls?: ChatToolCall[]
   timestamp?: string | number
-  isStreaming?: boolean
 }
 
-export const AssistantMessage = memo(function AssistantMessage({
+export function AssistantMessage({
   content,
   attachments = [],
   kind = "normal",
   modelName,
   toolCalls = [],
   timestamp = "",
-  isStreaming = false,
 }: AssistantMessageProps) {
   const { t } = useTranslation()
+  const { copy, isCopied } = useCopyToClipboard()
   const isThought = kind === "thought"
   const isToolCalls = kind === "tool_calls"
-  const isToolFeedback = kind === "tool_feedback"
   const isCollapsedBlock = isThought || isToolCalls
   const hasText = content.trim().length > 0
   const hasToolCalls = toolCalls.length > 0
   const imageAttachments = attachments.filter(
     (attachment) => attachment.type === "image",
   )
-  const audioAttachments = attachments.filter(
-    (attachment) => attachment.type === "audio",
-  )
   const fileAttachments = attachments.filter(
-    (attachment) => attachment.type !== "image" && attachment.type !== "audio",
+    (attachment) => attachment.type !== "image",
   )
   const [isExpanded, setIsExpanded] = useState(true)
   const formattedTimestamp =
@@ -69,44 +65,17 @@ export const AssistantMessage = memo(function AssistantMessage({
   const collapsedLabel = isThought
     ? t("chat.reasoningLabel")
     : t("chat.toolCallsLabel")
+  const copyMessageLabel = isCopied
+    ? t("chat.copiedLabel")
+    : t("chat.copyMessage")
   const trimmedModelName = modelName?.trim() ?? ""
-  const actionContent =
-    content.trim() ||
-    toolCalls
-      .map((toolCall) => {
-        const name = toolCall.function?.name?.trim() ?? ""
-        const args = toolCall.function?.arguments?.trim() ?? ""
-        const explanation =
-          toolCall.extraContent?.toolFeedbackExplanation?.trim() ?? ""
-        return [name, args, explanation].filter(Boolean).join("\n")
-      })
-      .filter(Boolean)
-      .join("\n\n")
-
-  if (isToolFeedback) {
-    return (
-      <MessageActions content={actionContent} className="w-full">
-        <div
-          className="text-muted-foreground flex items-start gap-2 px-1 py-1 text-[13px] leading-relaxed"
-          role="status"
-          aria-live="polite"
-        >
-          <IconLoader2 className="mt-0.5 size-3.5 shrink-0 animate-spin opacity-60" />
-          <span className="whitespace-pre-wrap opacity-75">{content}</span>
-        </div>
-      </MessageActions>
-    )
-  }
 
   return (
-    <MessageActions
-      content={actionContent}
-      className="group flex w-full flex-col gap-1.5"
-    >
+    <div className="group flex w-full flex-col gap-1.5">
       {!isCollapsedBlock && (
-        <div className="text-muted-foreground/60 flex items-center justify-between gap-2 px-1 text-xs opacity-70">
+          <div className="text-muted-foreground/60 flex items-center justify-between gap-2 px-1 text-xs opacity-70">
           <div className="flex items-center gap-2">
-            <span>MuseC137</span>
+            <span>PicoClaw</span>
             {trimmedModelName && (
               <>
                 <span className="opacity-50">•</span>
@@ -126,10 +95,10 @@ export const AssistantMessage = memo(function AssistantMessage({
       {(hasText || isCollapsedBlock || hasToolCalls) && (
         <div
           className={cn(
-            "relative max-w-[94%] overflow-hidden rounded-2xl rounded-tl-[5px] border sm:max-w-[86%]",
+            "relative overflow-hidden rounded-xl border",
             isCollapsedBlock
               ? "border-border/30 bg-muted/20 text-muted-foreground dark:border-border/20 dark:bg-muted/10"
-              : "bg-card text-card-foreground border-border/80",
+              : "bg-card text-card-foreground border-border/60",
           )}
         >
           {isCollapsedBlock && (
@@ -145,9 +114,7 @@ export const AssistantMessage = memo(function AssistantMessage({
                 )}
                 <span>{collapsedLabel}</span>
                 {trimmedModelName && (
-                  <span className="text-muted-foreground/45">
-                    {trimmedModelName}
-                  </span>
+                  <span className="text-muted-foreground/45">{trimmedModelName}</span>
                 )}
               </div>
               <div className="flex items-center gap-2">
@@ -227,9 +194,7 @@ export const AssistantMessage = memo(function AssistantMessage({
                             <MessageCodeBlock
                               code={toolArguments}
                               language="json"
-                              label={
-                                toolName || t("chat.toolCallArgumentsLabel")
-                              }
+                              label={toolName || t("chat.toolCallArgumentsLabel")}
                               className="my-0 shadow-none"
                               bodyClassName="px-3 py-2 text-[12px] leading-relaxed"
                             />
@@ -251,20 +216,35 @@ export const AssistantMessage = memo(function AssistantMessage({
                   : "prose-p:my-2 prose-p:whitespace-pre-wrap p-4 text-[15px] leading-relaxed",
               )}
             >
-              {isStreaming ? (
-                <div className="whitespace-pre-wrap">{content}</div>
-              ) : (
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  rehypePlugins={[rehypeRaw, rehypeSanitize, rehypeHighlight]}
-                  components={{
-                    pre: MarkdownCodeBlock,
-                  }}
-                >
-                  {content}
-                </ReactMarkdown>
-              )}
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeRaw, rehypeSanitize, rehypeHighlight]}
+                components={{
+                  pre: MarkdownCodeBlock,
+                }}
+              >
+                {content}
+              </ReactMarkdown>
             </div>
+          )}
+
+          {!isCollapsedBlock && hasText && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(
+                "bg-background/50 hover:bg-background/80 absolute top-2 right-2 h-7 w-7 opacity-0 transition-opacity group-hover:opacity-100",
+              )}
+              onClick={() => void copy(content)}
+              aria-label={copyMessageLabel}
+              title={copyMessageLabel}
+            >
+              {isCopied ? (
+                <IconCheck className="h-4 w-4 text-green-500" />
+              ) : (
+                <IconCopy className="text-muted-foreground h-4 w-4" />
+              )}
+            </Button>
           )}
         </div>
       )}
@@ -286,17 +266,6 @@ export const AssistantMessage = memo(function AssistantMessage({
               />
               <div className="absolute inset-0 bg-black/0 transition-colors group-hover/img:bg-black/10 dark:group-hover/img:bg-black/20" />
             </a>
-          ))}
-        </div>
-      )}
-
-      {audioAttachments.length > 0 && (
-        <div className="mt-1 flex flex-col gap-2">
-          {audioAttachments.map((attachment, index) => (
-            <AudioMessage
-              key={`${attachment.url}-${index}`}
-              attachment={attachment}
-            />
           ))}
         </div>
       )}
@@ -329,6 +298,6 @@ export const AssistantMessage = memo(function AssistantMessage({
           ))}
         </div>
       )}
-    </MessageActions>
+    </div>
   )
-})
+}

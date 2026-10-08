@@ -8,7 +8,6 @@ export type AssistantDetailMessageKind =
   | "normal"
   | "thought"
   | "tool_calls"
-  | "tool_feedback"
   | undefined
 
 interface StorageLike {

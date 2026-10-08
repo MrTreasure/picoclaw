@@ -40,9 +40,6 @@ function parseAssistantMessageKind(
   if (kind === "tool_calls" || toolCalls) {
     return "tool_calls"
   }
-  if (kind === "tool_feedback") {
-    return "tool_feedback"
-  }
   return "normal"
 }
 
@@ -102,11 +99,7 @@ export function parseAssistantMessageUpdateState(
     }
   }
 
-  if (
-    existing?.kind === "thought" ||
-    existing?.kind === "tool_calls" ||
-    existing?.kind === "tool_feedback"
-  ) {
+  if (existing?.kind === "thought" || existing?.kind === "tool_calls") {
     return {
       content,
       kind: "normal",

@@ -1,39 +1,25 @@
 import { getDefaultStore } from "jotai"
 import { toast } from "sonner"
 
-import { getSessions } from "@/api/sessions"
 import { launcherFetch } from "@/api/http"
 import {
-  CHAT_HISTORY_PAGE_SIZE,
   loadSessionMessages,
   mergeHistoryMessages,
 } from "@/features/chat/history"
+import { type PicoMessage, handlePicoMessage } from "@/features/chat/protocol"
 import {
-  loadCachedSession,
-  mergeCachedMessages,
-  saveCachedSession,
-} from "@/features/chat/local-cache"
-import {
-  type PicoMessage,
-  cancelQueuedPicoMessages,
-  queuePicoMessage,
-} from "@/features/chat/protocol"
-import {
+  clearStoredSessionId,
   generateSessionId,
   readStoredSessionId,
-  writeStoredSessionId,
 } from "@/features/chat/state"
 import { invalidateSocket, isCurrentSocket } from "@/features/chat/websocket"
 import i18n from "@/i18n"
 import {
   type ChatAttachment,
-  type ChatMessage,
-  chatAtom,
   getChatState,
   updateChatStore,
 } from "@/store/chat"
 import { type GatewayState, gatewayAtom } from "@/store/gateway"
-import { refreshGatewayState } from "@/store/gateway"
 
 const store = getDefaultStore()
 
@@ -43,113 +29,17 @@ let msgIdCounter = 0
 let activeSessionIdRef = getChatState().activeSessionId
 let initialized = false
 let unsubscribeGateway: (() => void) | null = null
-let unsubscribeChatCache: (() => void) | null = null
 let hydratePromise: Promise<void> | null = null
 let connectionGeneration = 0
 let reconnectTimer: number | null = null
-let probeTimer: number | null = null
 let reconnectAttempts = 0
 let shouldMaintainConnection = false
-let lastPongAt = 0
-let cacheTimer: number | null = null
-let cacheSessionIdRef = activeSessionIdRef
-let cachedMessagesRef: ChatMessage[] = []
-let hiddenCachedMessagesRef: ChatMessage[] = []
-let olderCursorRef: number | null = null
-
-function clearCacheTimer() {
-  if (cacheTimer !== null) {
-    window.clearTimeout(cacheTimer)
-    cacheTimer = null
-  }
-}
-
-function persistCurrentSession() {
-  clearCacheTimer()
-  const state = getChatState()
-  if (state.activeSessionId !== cacheSessionIdRef) return
-  cachedMessagesRef = mergeCachedMessages(cachedMessagesRef, state.messages)
-  void saveCachedSession({
-    id: state.activeSessionId,
-    messages: cachedMessagesRef,
-    hasMore: state.hasOlderMessages,
-    nextBefore: olderCursorRef,
-    updatedAt: Date.now(),
-  })
-}
-
-function scheduleSessionCache() {
-  clearCacheTimer()
-  cacheTimer = window.setTimeout(persistCurrentSession, 250)
-}
-
-function resetCacheContext(sessionId: string) {
-  clearCacheTimer()
-  cacheSessionIdRef = sessionId
-  cachedMessagesRef = []
-  hiddenCachedMessagesRef = []
-  olderCursorRef = null
-}
 
 function clearReconnectTimer() {
   if (reconnectTimer !== null) {
     window.clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
-}
-
-function clearProbeTimer() {
-  if (probeTimer !== null) {
-    window.clearTimeout(probeTimer)
-    probeTimer = null
-  }
-}
-
-function reconnectStaleSocket() {
-  if (
-    !shouldMaintainConnection ||
-    store.get(gatewayAtom).status !== "running"
-  ) {
-    return
-  }
-  connectionGeneration += 1
-  clearReconnectTimer()
-  clearProbeTimer()
-  const socket = wsRef
-  wsRef = null
-  isConnecting = false
-  invalidateSocket(socket)
-  updateChatStore({ connectionState: "connecting" })
-  void connectChat()
-}
-
-function probeActiveConnection() {
-  if (document.visibilityState === "hidden") return
-  const socket = wsRef
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
-    reconnectStaleSocket()
-    return
-  }
-
-  const startedAt = Date.now()
-  try {
-    socket.send(
-      JSON.stringify({ type: "ping", session_id: activeSessionIdRef }),
-    )
-  } catch {
-    reconnectStaleSocket()
-    return
-  }
-
-  clearProbeTimer()
-  probeTimer = window.setTimeout(() => {
-    probeTimer = null
-    if (lastPongAt < startedAt) reconnectStaleSocket()
-  }, 4_000)
-}
-
-function handlePageResume() {
-  if (document.visibilityState === "visible") probeActiveConnection()
 }
 
 function shouldReconnectFor(generation: number, sessionId: string): boolean {
@@ -177,49 +67,19 @@ function scheduleReconnect(generation: number, sessionId: string) {
   }, delay)
 }
 
-async function reconcileSessionAfterConnect({
-  socket,
-  generation,
-  sessionId,
-}: {
-  socket: WebSocket
-  generation: number
-  sessionId: string
-}) {
-  try {
-    const historyPage = await loadSessionMessages(sessionId)
-    if (
-      !isCurrentSocket({
-        socket,
-        currentSocket: wsRef,
-        generation,
-        currentGeneration: connectionGeneration,
-        sessionId,
-        currentSessionId: activeSessionIdRef,
-      })
-    ) {
-      return
-    }
+function needsActiveSessionHydration(): boolean {
+  const state = getChatState()
+  const storedSessionId = readStoredSessionId()
 
-    updateChatStore((prev) => ({
-      messages: mergeHistoryMessages(historyPage.messages, prev.messages),
-      hasOlderMessages:
-        hiddenCachedMessagesRef.length > 0 || historyPage.hasMore,
-      isTyping: false,
-    }))
-    if (olderCursorRef === null) {
-      olderCursorRef = historyPage.nextBefore
-    }
-  } catch (error) {
-    // Reconciliation is best-effort. Keep the live socket usable even when the
-    // history endpoint is temporarily unavailable.
-    console.warn("Failed to reconcile session history after reconnect:", error)
-  }
+  return Boolean(
+    storedSessionId &&
+    storedSessionId === state.activeSessionId &&
+    !state.hasHydratedActiveSession,
+  )
 }
 
 function setActiveSessionId(sessionId: string) {
   activeSessionIdRef = sessionId
-  writeStoredSessionId(sessionId)
   updateChatStore({ activeSessionId: sessionId })
 }
 
@@ -230,7 +90,6 @@ function disconnectChatInternal({
 }) {
   connectionGeneration += 1
   clearReconnectTimer()
-  clearProbeTimer()
 
   if (clearDesiredConnection) {
     shouldMaintainConnection = false
@@ -249,7 +108,10 @@ function disconnectChatInternal({
 }
 
 export async function connectChat() {
-  if (store.get(gatewayAtom).status !== "running") {
+  if (
+    store.get(gatewayAtom).status !== "running" ||
+    needsActiveSessionHydration()
+  ) {
     return
   }
 
@@ -303,8 +165,6 @@ export async function connectChat() {
       updateChatStore({ connectionState: "connected" })
       isConnecting = false
       reconnectAttempts = 0
-      lastPongAt = Date.now()
-      void reconcileSessionAfterConnect({ socket, generation, sessionId })
     }
 
     socket.onmessage = (event) => {
@@ -323,11 +183,7 @@ export async function connectChat() {
 
       try {
         const message = JSON.parse(event.data) as PicoMessage
-        if (message.type === "pong") {
-          lastPongAt = Date.now()
-          clearProbeTimer()
-        }
-        queuePicoMessage(message, sessionId)
+        handlePicoMessage(message, sessionId)
       } catch {
         console.warn("Non-JSON message from pico:", event.data)
       }
@@ -348,11 +204,10 @@ export async function connectChat() {
       }
       wsRef = null
       isConnecting = false
-      updateChatStore(
-        document.visibilityState === "hidden"
-          ? { isTyping: false }
-          : { connectionState: "connecting", isTyping: false },
-      )
+      updateChatStore({
+        connectionState: "disconnected",
+        isTyping: false,
+      })
       scheduleReconnect(generation, sessionId)
     }
 
@@ -370,7 +225,7 @@ export async function connectChat() {
         return
       }
       isConnecting = false
-      updateChatStore({ connectionState: "connecting" })
+      updateChatStore({ connectionState: "error" })
       scheduleReconnect(generation, sessionId)
     }
 
@@ -410,53 +265,31 @@ export async function hydrateActiveSession() {
     return
   }
 
-  hydratePromise = (async () => {
-    resetCacheContext(storedSessionId)
-    const cached = await loadCachedSession(storedSessionId)
-
-    if (cached && getChatState().activeSessionId === storedSessionId) {
-      cachedMessagesRef = cached.messages
-      hiddenCachedMessagesRef = cached.messages.slice(
-        0,
-        -CHAT_HISTORY_PAGE_SIZE,
-      )
-      olderCursorRef = cached.nextBefore
-      const recentCachedMessages = cached.messages.slice(
-        -CHAT_HISTORY_PAGE_SIZE,
-      )
-      updateChatStore((prev) => ({
-        messages: mergeHistoryMessages(recentCachedMessages, prev.messages),
-        hasOlderMessages: hiddenCachedMessagesRef.length > 0 || cached.hasMore,
-        isTyping: false,
-        hasHydratedActiveSession: true,
-      }))
-    }
-
-    try {
-      const historyPage = await loadSessionMessages(storedSessionId)
+  hydratePromise = loadSessionMessages(storedSessionId)
+    .then((historyMessages) => {
       const currentState = getChatState()
       if (currentState.activeSessionId !== storedSessionId) {
         return
       }
 
-      cachedMessagesRef = mergeCachedMessages(
-        cachedMessagesRef,
-        historyPage.messages,
-      )
-      if (olderCursorRef === null) {
-        olderCursorRef = historyPage.nextBefore
+      if (currentState.messages.length > 0) {
+        updateChatStore({
+          messages: mergeHistoryMessages(
+            historyMessages,
+            currentState.messages,
+          ),
+          hasHydratedActiveSession: true,
+        })
+        return
       }
+
       updateChatStore({
-        messages: mergeHistoryMessages(
-          historyPage.messages,
-          currentState.messages,
-        ),
-        hasOlderMessages:
-          hiddenCachedMessagesRef.length > 0 || historyPage.hasMore,
+        messages: historyMessages,
         isTyping: false,
         hasHydratedActiveSession: true,
       })
-    } catch (error) {
+    })
+    .catch((error) => {
       console.error("Failed to restore last session history:", error)
 
       const currentState = getChatState()
@@ -464,109 +297,28 @@ export async function hydrateActiveSession() {
         return
       }
 
-      // Older releases could erase the last-session pointer after one failed
-      // history request and replace it with a fresh empty ID. Recover from that
-      // state by selecting the newest durable Pico session once; the chosen ID
-      // is then persisted normally for all later reconnects.
-      if (!cached && currentState.messages.length === 0) {
-        try {
-          const [latestSession] = await getSessions(0, 1, "pico")
-          if (latestSession && latestSession.id !== storedSessionId) {
-            const latestPage = await loadSessionMessages(latestSession.id)
-            disconnectChatInternal({ clearDesiredConnection: false })
-            setActiveSessionId(latestSession.id)
-            resetCacheContext(latestSession.id)
-            cachedMessagesRef = latestPage.messages
-            olderCursorRef = latestPage.nextBefore
-            updateChatStore({
-              messages: latestPage.messages,
-              hasOlderMessages: latestPage.hasMore,
-              isLoadingOlderMessages: false,
-              isTyping: false,
-              hasHydratedActiveSession: true,
-            })
-            if (store.get(gatewayAtom).status === "running") {
-              shouldMaintainConnection = true
-              await connectChat()
-            }
-            return
-          }
-        } catch (latestError) {
-          console.warn("Failed to discover latest chat session:", latestError)
-        }
+      if (currentState.messages.length > 0) {
+        updateChatStore({ hasHydratedActiveSession: true })
+        return
       }
 
+      clearStoredSessionId()
       updateChatStore({
+        messages: [],
         isTyping: false,
         hasHydratedActiveSession: true,
       })
-    }
-  })().finally(() => {
-    hydratePromise = null
-  })
+    })
+    .finally(() => {
+      hydratePromise = null
+    })
 
   return hydratePromise
-}
-
-export async function loadOlderChatMessages(): Promise<boolean> {
-  const state = getChatState()
-  if (state.isLoadingOlderMessages || !state.hasOlderMessages) return false
-
-  const sessionId = state.activeSessionId
-  updateChatStore({ isLoadingOlderMessages: true })
-  try {
-    if (hiddenCachedMessagesRef.length > 0) {
-      const start = Math.max(
-        0,
-        hiddenCachedMessagesRef.length - CHAT_HISTORY_PAGE_SIZE,
-      )
-      const page = hiddenCachedMessagesRef.slice(start)
-      hiddenCachedMessagesRef = hiddenCachedMessagesRef.slice(0, start)
-      if (getChatState().activeSessionId !== sessionId) return false
-      updateChatStore((prev) => ({
-        messages: mergeHistoryMessages(page, prev.messages),
-        hasOlderMessages:
-          hiddenCachedMessagesRef.length > 0 || olderCursorRef !== null,
-        isLoadingOlderMessages: false,
-      }))
-      return true
-    }
-
-    if (olderCursorRef === null) {
-      updateChatStore({
-        hasOlderMessages: false,
-        isLoadingOlderMessages: false,
-      })
-      return false
-    }
-
-    const historyPage = await loadSessionMessages(sessionId, olderCursorRef)
-    if (getChatState().activeSessionId !== sessionId) return false
-    olderCursorRef = historyPage.nextBefore
-    cachedMessagesRef = mergeCachedMessages(
-      cachedMessagesRef,
-      historyPage.messages,
-    )
-    updateChatStore((prev) => ({
-      messages: mergeHistoryMessages(historyPage.messages, prev.messages),
-      hasOlderMessages: historyPage.hasMore,
-      isLoadingOlderMessages: false,
-    }))
-    persistCurrentSession()
-    return historyPage.messages.length > 0
-  } catch (error) {
-    console.warn("Failed to load older chat messages:", error)
-    if (getChatState().activeSessionId === sessionId) {
-      updateChatStore({ isLoadingOlderMessages: false })
-    }
-    return false
-  }
 }
 
 interface SendChatMessageInput {
   content: string
   attachments?: ChatAttachment[]
-  messageId?: string
 }
 
 let sendInProgress = false
@@ -580,12 +332,18 @@ async function uploadChatImage(
   const form = new FormData()
   form.append("session_id", sessionId)
   form.append("message_id", messageId)
-  form.append("file", attachment.file, attachment.filename || "image.png")
+  form.append(
+    "file",
+    attachment.file,
+    attachment.filename || attachment.file.name,
+  )
   const response = await launcherFetch("/pico/upload", {
     method: "POST",
     body: form,
   })
-  if (!response.ok) throw new Error(`图片上传失败 (${response.status})`)
+  if (!response.ok) {
+    throw new Error(`图片上传失败 (${response.status})`)
+  }
   const result: unknown = await response.json()
   if (
     !result ||
@@ -602,7 +360,6 @@ async function uploadChatImage(
 export async function sendChatMessage({
   content,
   attachments = [],
-  messageId,
 }: SendChatMessageInput): Promise<boolean> {
   if (sendInProgress || !wsRef || wsRef.readyState !== WebSocket.OPEN) {
     console.warn("WebSocket not connected")
@@ -611,22 +368,22 @@ export async function sendChatMessage({
 
   const normalizedContent = content.trim()
   const normalizedAttachments = attachments.filter(
-    (attachment) => attachment.url || attachment.mediaRef,
+    (attachment) => attachment.type === "image" && attachment.file,
   )
-  if (!normalizedContent && normalizedAttachments.length === 0) return false
+
+  if (!normalizedContent && normalizedAttachments.length === 0) {
+    return false
+  }
 
   sendInProgress = true
   const socket = wsRef
   const sessionId = activeSessionIdRef
-  const id = messageId || `msg-${++msgIdCounter}-${Date.now()}`
+  const id = `msg-${++msgIdCounter}-${Date.now()}`
+
   try {
     const mediaRefs: string[] = []
     for (const attachment of normalizedAttachments) {
-      if (attachment.mediaRef) {
-        mediaRefs.push(attachment.mediaRef)
-      } else if (attachment.type === "image") {
-        mediaRefs.push(await uploadChatImage(attachment, sessionId, id))
-      }
+      mediaRefs.push(await uploadChatImage(attachment, sessionId, id))
     }
     if (
       socket !== wsRef ||
@@ -635,24 +392,38 @@ export async function sendChatMessage({
     ) {
       throw new Error("连接已改变，请重新发送")
     }
-    socket.send(JSON.stringify({
-      type: "message.send",
-      id,
-      payload: { content: normalizedContent, media_refs: mediaRefs },
-    }))
+    const payload: Record<string, unknown> = {
+      content: normalizedContent,
+      media_refs: mediaRefs,
+    }
+
     const visibleAttachments = normalizedAttachments.map(
-      ({ type, url, mediaRef, filename, contentType }) => ({
-        type, url, mediaRef, filename, contentType,
+      ({ type, url, filename, contentType }) => ({
+        type,
+        url,
+        filename,
+        contentType,
+      }),
+    )
+    socket.send(
+      JSON.stringify({
+        type: "message.send",
+        id,
+        payload,
       }),
     )
     updateChatStore((prev) => ({
-      messages: [...prev.messages, {
-        id,
-        role: "user",
-        content: normalizedContent,
-        attachments: visibleAttachments.length > 0 ? visibleAttachments : undefined,
-        timestamp: Date.now(),
-      }],
+      messages: [
+        ...prev.messages,
+        {
+          id,
+          role: "user",
+          content: normalizedContent,
+          attachments:
+            visibleAttachments.length > 0 ? visibleAttachments : undefined,
+          timestamp: Date.now(),
+        },
+      ],
       isTyping: true,
     }))
     return true
@@ -671,48 +442,14 @@ export async function switchChatSession(sessionId: string) {
   }
 
   try {
-    persistCurrentSession()
-    const cached = await loadCachedSession(sessionId)
-    let historyPage: Awaited<ReturnType<typeof loadSessionMessages>> | null =
-      null
-    try {
-      historyPage = await loadSessionMessages(sessionId)
-    } catch (error) {
-      if (!cached) throw error
-      console.warn("Using cached session while history is unavailable:", error)
-    }
+    const historyMessages = await loadSessionMessages(sessionId)
 
     disconnectChatInternal({ clearDesiredConnection: false })
     setActiveSessionId(sessionId)
-    resetCacheContext(sessionId)
-    if (cached) {
-      cachedMessagesRef = cached.messages
-      hiddenCachedMessagesRef = cached.messages.slice(
-        0,
-        -CHAT_HISTORY_PAGE_SIZE,
-      )
-      olderCursorRef = cached.nextBefore
-    }
-    if (historyPage) {
-      cachedMessagesRef = mergeCachedMessages(
-        cachedMessagesRef,
-        historyPage.messages,
-      )
-      if (olderCursorRef === null) olderCursorRef = historyPage.nextBefore
-    }
-    const recentCachedMessages =
-      cached?.messages.slice(-CHAT_HISTORY_PAGE_SIZE) ?? []
     updateChatStore({
-      messages: historyPage
-        ? mergeHistoryMessages(historyPage.messages, recentCachedMessages)
-        : recentCachedMessages,
+      messages: historyMessages,
       isTyping: false,
       hasHydratedActiveSession: true,
-      hasOlderMessages:
-        hiddenCachedMessagesRef.length > 0 ||
-        historyPage?.hasMore === true ||
-        cached?.hasMore === true,
-      isLoadingOlderMessages: false,
       contextUsage: undefined,
     })
 
@@ -731,17 +468,12 @@ export async function newChatSession() {
     return
   }
 
-  persistCurrentSession()
   disconnectChatInternal({ clearDesiredConnection: false })
-  const sessionId = generateSessionId()
-  setActiveSessionId(sessionId)
-  resetCacheContext(sessionId)
+  setActiveSessionId(generateSessionId())
   updateChatStore({
     messages: [],
     isTyping: false,
     hasHydratedActiveSession: true,
-    hasOlderMessages: false,
-    isLoadingOlderMessages: false,
     contextUsage: undefined,
   })
 
@@ -769,6 +501,9 @@ export function initializeChatStore() {
 
     if (gatewayStatus === "running") {
       shouldMaintainConnection = true
+      if (needsActiveSessionHydration()) {
+        return
+      }
       void connectChat()
       return
     }
@@ -779,19 +514,6 @@ export function initializeChatStore() {
   }
 
   unsubscribeGateway = store.sub(gatewayAtom, syncConnectionWithGateway)
-  unsubscribeChatCache = store.sub(chatAtom, scheduleSessionCache)
-  document.addEventListener("visibilitychange", handlePageResume)
-  window.addEventListener("pageshow", handlePageResume)
-  window.addEventListener("online", handlePageResume)
-
-  // Start the status request and history hydration together. The active
-  // session ID is known before either request begins, and hydrateActiveSession
-  // merges any messages that arrive over the live socket in the meantime.
-  void refreshGatewayState({ force: true }).then(() => {
-    if (initialized) {
-      syncConnectionWithGateway(true)
-    }
-  })
 
   if (!readStoredSessionId()) {
     updateChatStore({ hasHydratedActiveSession: true })
@@ -799,20 +521,17 @@ export function initializeChatStore() {
     return
   }
 
-  void hydrateActiveSession()
+  void hydrateActiveSession().finally(() => {
+    if (!initialized) {
+      return
+    }
+    syncConnectionWithGateway(true)
+  })
 }
 
 export function teardownChatStore() {
-  persistCurrentSession()
   unsubscribeGateway?.()
   unsubscribeGateway = null
-  unsubscribeChatCache?.()
-  unsubscribeChatCache = null
-  clearCacheTimer()
-  document.removeEventListener("visibilitychange", handlePageResume)
-  window.removeEventListener("pageshow", handlePageResume)
-  window.removeEventListener("online", handlePageResume)
   initialized = false
-  cancelQueuedPicoMessages()
   disconnectChat()
 }

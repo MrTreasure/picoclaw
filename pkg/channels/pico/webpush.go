@@ -283,10 +283,10 @@ func (c *PicoChannel) handlePushSubscriptions(w http.ResponseWriter, r *http.Req
 
 func pushPayload(chatID, body string) picoPushPayload {
 	sessionID := strings.TrimPrefix(chatID, "pico:")
-	body = strings.TrimSpace(body)
+	body = strings.Join(strings.Fields(body), " ")
 	runes := []rune(body)
-	if len(runes) > 220 {
-		body = string(runes[:220]) + "…"
+	if len(runes) > 120 {
+		body = string(runes[:120]) + "…"
 	}
 	if body == "" {
 		body = "收到一个新附件"

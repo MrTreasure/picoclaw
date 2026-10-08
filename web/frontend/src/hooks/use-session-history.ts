@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { toast } from "sonner"
 
 import { type SessionSummary, deleteSession, getSessions } from "@/api/sessions"
 
@@ -100,36 +99,11 @@ export function useSessionHistory({
         if (id === activeSessionId) {
           onDeletedActiveSession()
         }
-        toast.success(t("chat.sessionDeleted"))
       } catch (err) {
         console.error("Failed to delete session:", err)
-        toast.error(t("chat.sessionDeleteFailed"))
       }
     },
-    [activeSessionId, onDeletedActiveSession, sessions, t],
-  )
-
-  const handleDeleteSessions = useCallback(
-    async (ids: string[]) => {
-      if (ids.length === 0) return false
-      try {
-        await Promise.all(ids.map((id) => deleteSession(id)))
-        const deletedIds = new Set(ids)
-        setSessions((previous) =>
-          previous.filter((session) => !deletedIds.has(session.id)),
-        )
-        setOffset((previous) => Math.max(previous - ids.length, 0))
-        if (deletedIds.has(activeSessionId)) onDeletedActiveSession()
-        toast.success(`已删除 ${ids.length} 段会话`)
-        return true
-      } catch (err) {
-        console.error("Failed to delete sessions:", err)
-        toast.error(t("chat.sessionDeleteFailed"))
-        void loadSessions(true)
-        return false
-      }
-    },
-    [activeSessionId, loadSessions, onDeletedActiveSession, t],
+    [activeSessionId, onDeletedActiveSession, sessions],
   )
 
   return {
@@ -140,6 +114,5 @@ export function useSessionHistory({
     observerRef,
     loadSessions,
     handleDeleteSession,
-    handleDeleteSessions,
   }
 }

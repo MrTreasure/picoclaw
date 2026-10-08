@@ -1,28 +1,32 @@
-import { IconArrowDown } from "@tabler/icons-react"
-import { useVirtualizer } from "@tanstack/react-virtual"
+import { IconPlus } from "@tabler/icons-react"
 import { useAtom } from "jotai"
 import {
   type ChangeEvent,
   type ClipboardEvent,
   type DragEvent,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react"
 import { useTranslation } from "react-i18next"
-
 import { AssistantMessage } from "@/components/chat/assistant-message"
 import {
   ChatComposer,
   type ChatInputDisabledReason,
 } from "@/components/chat/chat-composer"
-import { ChatControls } from "@/components/chat/chat-controls"
 import { ChatEmptyState } from "@/components/chat/chat-empty-state"
+import { SessionHistoryMenu } from "@/components/chat/session-history-menu"
 import { TypingIndicator } from "@/components/chat/typing-indicator"
 import { UserMessage } from "@/components/chat/user-message"
+import { PageHeader } from "@/components/page-header"
 import { Button } from "@/components/ui/button"
-import { CHAT_FILE_ACCEPT, uploadChatFiles } from "@/features/chat/file-upload"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   CHAT_IMAGE_ACCEPT,
   buildChatImageAttachments,
@@ -32,6 +36,8 @@ import {
 import { useChatModels } from "@/hooks/use-chat-models"
 import { useGateway } from "@/hooks/use-gateway"
 import { usePicoChat } from "@/hooks/use-pico-chat"
+import { useSessionHistory } from "@/hooks/use-session-history"
+import type { AssistantDetailVisibility } from "@/store/chat"
 import type { ConnectionState } from "@/store/chat"
 import type { ChatAttachment } from "@/store/chat"
 import {
@@ -77,10 +83,6 @@ function resolveChatInputDisabledReason({
     return "websocketConnecting"
   }
 
-  if (connectionState === "idle") {
-    return "websocketConnecting"
-  }
-
   if (connectionState === "error") {
     return "websocketError"
   }
@@ -99,14 +101,10 @@ function resolveChatInputDisabledReason({
 export function ChatPage() {
   const { t } = useTranslation()
   const scrollRef = useRef<HTMLDivElement>(null)
-  const galleryInputRef = useRef<HTMLInputElement>(null)
-  const cameraInputRef = useRef<HTMLInputElement>(null)
-  const documentInputRef = useRef<HTMLInputElement>(null)
-  const draftMessageIdRef = useRef(`msg-${crypto.randomUUID()}`)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const dragDepthRef = useRef(0)
-  const loadingOlderRef = useRef(false)
-  const didInitialScrollRef = useRef(false)
   const [isAtBottom, setIsAtBottom] = useState(true)
+  const [hasScrolled, setHasScrolled] = useState(false)
   const [input, setInput] = useState("")
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [isSending, setIsSending] = useState(false)
@@ -115,16 +113,28 @@ export function ChatPage() {
     assistantDetailVisibilityAtom,
   )
 
+  const assistantDetailVisibilityOptions: Array<{
+    value: AssistantDetailVisibility
+    label: string
+  }> = [
+    { value: "none", label: t("chat.assistantDetailVisibility.none") },
+    { value: "thought", label: t("chat.assistantDetailVisibility.thought") },
+    {
+      value: "tool_calls",
+      label: t("chat.assistantDetailVisibility.toolCalls"),
+    },
+    { value: "all", label: t("chat.assistantDetailVisibility.all") },
+  ]
+
   const {
     messages,
-    activeSessionId,
     connectionState,
     isTyping,
+    activeSessionId,
     contextUsage,
-    hasOlderMessages,
-    isLoadingOlderMessages,
-    loadOlderMessages,
     sendMessage,
+    switchSession,
+    newChat,
   } = usePicoChat()
 
   const { state: gwState } = useGateway()
@@ -133,12 +143,6 @@ export function ChatPage() {
   const {
     defaultModelName,
     hasAvailableModels,
-    chatModels,
-    thinkingLevel,
-    settingDefault,
-    settingThinkingLevel,
-    handleSetDefault,
-    handleSetThinkingLevel,
   } = useChatModels({ isConnected: isGatewayRunning })
   const hasDefaultModel = Boolean(defaultModelName)
   const inputDisabledReason = resolveChatInputDisabledReason({
@@ -147,140 +151,73 @@ export function ChatPage() {
     gatewayState: gwState,
   })
   const canInput = inputDisabledReason === null
-  const canCompose = true
 
-  const visibleMessages = useMemo(
-    () =>
-      messages.filter((message) =>
-        shouldShowAssistantMessage(assistantDetailVisibility, message.kind),
-      ),
-    [assistantDetailVisibility, messages],
-  )
-  // Variable-height chat bubbles require the virtualizer's imperative
-  // measurements; this hook intentionally opts out of React Compiler memoizing.
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const virtualizer = useVirtualizer({
-    count: visibleMessages.length + (isTyping ? 1 : 0),
-    getScrollElement: () => scrollRef.current,
-    estimateSize: (index) =>
-      index >= visibleMessages.length
-        ? 64
-        : visibleMessages[index]?.role === "assistant"
-          ? 180
-          : 92,
-    getItemKey: (index) =>
-      index >= visibleMessages.length
-        ? "typing-indicator"
-        : (visibleMessages[index]?.id ?? index),
-    overscan: 6,
+  const {
+    sessions,
+    hasMore,
+    loadError,
+    loadErrorMessage,
+    observerRef,
+    loadSessions,
+    handleDeleteSession,
+  } = useSessionHistory({
+    activeSessionId,
+    onDeletedActiveSession: newChat,
   })
-
-  useEffect(() => {
-    didInitialScrollRef.current = false
-    loadingOlderRef.current = false
-    setIsAtBottom(true)
-  }, [activeSessionId])
 
   const syncScrollState = (element: HTMLDivElement) => {
     const { clientHeight, scrollHeight, scrollTop } = element
+    setHasScrolled(scrollTop > 0)
     setIsAtBottom(scrollHeight - scrollTop <= clientHeight + 10)
   }
 
-  const handleScroll = async (e: React.UIEvent<HTMLDivElement>) => {
-    const element = e.currentTarget
-    syncScrollState(element)
-    if (
-      !didInitialScrollRef.current ||
-      element.scrollTop > 160 ||
-      !hasOlderMessages ||
-      isLoadingOlderMessages ||
-      loadingOlderRef.current
-    ) {
-      return
-    }
-
-    loadingOlderRef.current = true
-    const previousHeight = element.scrollHeight
-    const previousTop = element.scrollTop
-    const loaded = await loadOlderMessages()
-    requestAnimationFrame(() => {
-      const current = scrollRef.current
-      if (loaded && current) {
-        current.scrollTop = current.scrollHeight - previousHeight + previousTop
-      }
-      loadingOlderRef.current = false
-    })
-  }
-
-  const scrollToBottom = () => {
-    const element = scrollRef.current
-    if (!element) return
-    const reduceMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches
-    element.scrollTo({
-      top: element.scrollHeight,
-      behavior: reduceMotion ? "auto" : "smooth",
-    })
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    syncScrollState(e.currentTarget)
   }
 
   useEffect(() => {
     if (scrollRef.current) {
       if (isAtBottom) {
-        requestAnimationFrame(() => {
-          const element = scrollRef.current
-          if (!element) return
-          element.scrollTop = element.scrollHeight
-          didInitialScrollRef.current = true
-          syncScrollState(element)
-        })
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight
       }
+      syncScrollState(scrollRef.current)
     }
-  }, [messages, isTyping, isAtBottom, virtualizer])
+  }, [messages, isTyping, isAtBottom])
 
   const handleSend = async () => {
-    if (isSending || (!input.trim() && attachments.length === 0) || !canInput) return
+    if (isSending || (!input.trim() && attachments.length === 0) || !canInput)
+      return
     const sentContent = input
     const sentAttachments = attachments
     setIsSending(true)
     try {
-      if (await sendMessage({
-        content: sentContent,
-        attachments: sentAttachments,
-        messageId: draftMessageIdRef.current,
-      })) {
-        setInput((current) => current === sentContent ? "" : current)
+      if (
+        await sendMessage({
+          content: sentContent,
+          attachments: sentAttachments,
+        })
+      ) {
+        setInput((current) => (current === sentContent ? "" : current))
         setAttachments((current) =>
           current.filter((attachment) => !sentAttachments.includes(attachment)),
         )
-        draftMessageIdRef.current = `msg-${crypto.randomUUID()}`
       }
     } finally {
       setIsSending(false)
     }
   }
 
-  const handleOpenGallery = () => {
-    if (!canCompose) return
-    galleryInputRef.current?.click()
-  }
-
-  const handleOpenCamera = () => {
-    if (!canCompose) return
-    cameraInputRef.current?.click()
-  }
-
-  const handleOpenFiles = () => {
-    if (!canCompose) return
-    documentInputRef.current?.click()
+  const handleAddImages = () => {
+    if (!canInput) return
+    fileInputRef.current?.click()
   }
 
   const handleRemoveAttachment = (index: number) => {
     setAttachments((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
   }
 
-  const appendImageFiles = async (files: readonly File[]) => {
-    if (!canCompose || files.length === 0) {
+  const appendFiles = async (files: readonly File[]) => {
+    if (!canInput || files.length === 0) {
       return
     }
 
@@ -300,24 +237,7 @@ export function ChatPage() {
       return
     }
 
-    await appendImageFiles(files)
-  }
-
-  const handleDocumentSelection = async (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    const files = Array.from(event.target.files ?? [])
-    event.target.value = ""
-    if (files.length === 0) return
-
-    const uploaded = await uploadChatFiles(
-      files,
-      activeSessionId,
-      draftMessageIdRef.current,
-    )
-    if (uploaded.length > 0) {
-      setAttachments((previous) => [...previous, ...uploaded])
-    }
+    await appendFiles(files)
   }
 
   const resetDragState = () => {
@@ -333,7 +253,7 @@ export function ChatPage() {
       return
     }
 
-    await appendImageFiles(files)
+    await appendFiles(files)
   }
 
   const handleComposerDragEnter = (event: DragEvent<HTMLDivElement>) => {
@@ -342,7 +262,7 @@ export function ChatPage() {
     }
 
     event.preventDefault()
-    if (!canCompose) {
+    if (!canInput) {
       return
     }
     dragDepthRef.current += 1
@@ -355,7 +275,7 @@ export function ChatPage() {
     }
 
     event.preventDefault()
-    if (!canCompose) {
+    if (!canInput) {
       resetDragState()
       return
     }
@@ -371,7 +291,7 @@ export function ChatPage() {
     }
 
     event.preventDefault()
-    event.dataTransfer.dropEffect = canCompose ? "copy" : "none"
+    event.dataTransfer.dropEffect = canInput ? "copy" : "none"
   }
 
   const handleComposerDrop = async (event: DragEvent<HTMLDivElement>) => {
@@ -383,155 +303,139 @@ export function ChatPage() {
     const files = getTransferredFiles(event.dataTransfer)
     resetDragState()
 
-    if (!canCompose || files.length === 0) {
+    if (!canInput || files.length === 0) {
       return
     }
 
-    await appendImageFiles(files)
+    await appendFiles(files)
   }
 
   const canSubmit =
     canInput && !isSending && (Boolean(input.trim()) || attachments.length > 0)
+
   return (
-    <div className="bg-background/95 relative flex h-full min-h-0 flex-col overflow-hidden">
-      <ChatControls
-        defaultModelName={defaultModelName}
-        connectionState={connectionState}
-        models={chatModels}
-        thinkingLevel={thinkingLevel}
-        detailVisibility={assistantDetailVisibility}
-        disabled={settingDefault || settingThinkingLevel}
-        onModelChange={(modelName) => void handleSetDefault(modelName)}
-        onThinkingLevelChange={(level) => void handleSetThinkingLevel(level)}
-        onDetailVisibilityChange={setAssistantDetailVisibility}
-      />
-
-      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-        <div
-          ref={scrollRef}
-          onScroll={handleScroll}
-          className="h-full [scrollbar-gutter:stable] overflow-y-auto px-3 pt-[calc(4.75rem+env(safe-area-inset-top))] pb-3 md:px-8 lg:px-24 xl:px-48"
-        >
-          <div className="mx-auto w-full max-w-225 pb-5">
-            {messages.length === 0 && !isTyping && (
-              <ChatEmptyState
-                hasAvailableModels={hasAvailableModels}
-                defaultModelName={defaultModelName}
-                isConnected={gwState !== "stopped" && gwState !== "error"}
-                isInitializing={
-                  gwState === "unknown" ||
-                  gwState === "starting" ||
-                  gwState === "restarting"
-                }
-              />
-            )}
-
-            <div
-              className="relative w-full"
-              style={{ height: `${virtualizer.getTotalSize()}px` }}
+    <div className="bg-background/95 flex h-full flex-col">
+      <PageHeader
+        title={t("navigation.chat")}
+        className={`px-3 transition-shadow sm:px-6 ${
+          hasScrolled ? "shadow-xs" : "shadow-none"
+        }`}
+      >
+        <div className="border-border/60 hidden items-center gap-2 rounded-lg border px-3 py-1.5 sm:flex">
+          <span className="text-muted-foreground text-sm">
+            {t("chat.showAssistantDetails")}
+          </span>
+          <Select
+            value={assistantDetailVisibility}
+            onValueChange={(value) =>
+              setAssistantDetailVisibility(value as AssistantDetailVisibility)
+            }
+          >
+            <SelectTrigger
+              size="sm"
+              aria-label={t("chat.showAssistantDetails")}
+              className="text-muted-foreground hover:text-foreground focus-visible:border-input h-8 min-w-[104px] bg-transparent shadow-none focus-visible:ring-0"
             >
-              {virtualizer.getVirtualItems().map((virtualItem) => {
-                const msg = visibleMessages[virtualItem.index]
-                return (
-                  <div
-                    key={virtualItem.key}
-                    ref={virtualizer.measureElement}
-                    data-index={virtualItem.index}
-                    className="absolute top-0 left-0 w-full pb-3 md:pb-4"
-                    style={{
-                      transform: `translateY(${virtualItem.start}px)`,
-                    }}
-                  >
-                    {msg ? (
-                      <div className="flex w-full">
-                        {msg.role === "assistant" ? (
-                          <AssistantMessage
-                            content={msg.content}
-                            attachments={msg.attachments}
-                            kind={msg.kind}
-                            modelName={msg.modelName}
-                            toolCalls={msg.toolCalls}
-                            isStreaming={msg.streaming}
-                            timestamp={msg.timestamp}
-                          />
-                        ) : (
-                          <UserMessage
-                            content={msg.content}
-                            attachments={msg.attachments}
-                            timestamp={msg.timestamp}
-                          />
-                        )}
-                      </div>
-                    ) : (
-                      <TypingIndicator />
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="end">
+              {assistantDetailVisibilityOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
-        {isLoadingOlderMessages && (
-          <div className="bg-background/80 text-muted-foreground pointer-events-none absolute top-[calc(5rem+env(safe-area-inset-top))] left-1/2 z-30 -translate-x-1/2 rounded-full border px-3 py-1 text-xs shadow-sm backdrop-blur-xl">
-            {t("common.loading")}
-          </div>
-        )}
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={newChat}
+          className="h-9 gap-2"
+        >
+          <IconPlus className="size-4" />
+          <span className="hidden sm:inline">{t("chat.newChat")}</span>
+        </Button>
 
-        {!isAtBottom && messages.length > 0 && (
-          <Button
-            type="button"
-            variant="secondary"
-            size="icon"
-            className="absolute right-3 bottom-3 z-30 size-11 rounded-full border shadow-lg backdrop-blur-xl md:right-5 md:bottom-4"
-            onClick={scrollToBottom}
-            aria-label={t("chat.scrollToBottom")}
-            title={t("chat.scrollToBottom")}
-          >
-            <IconArrowDown className="size-5" aria-hidden="true" />
-          </Button>
-        )}
+        <SessionHistoryMenu
+          sessions={sessions}
+          activeSessionId={activeSessionId}
+          hasMore={hasMore}
+          loadError={loadError}
+          loadErrorMessage={loadErrorMessage}
+          observerRef={observerRef}
+          onOpenChange={(open) => {
+            if (open) {
+              void loadSessions(true)
+            }
+          }}
+          onSwitchSession={switchSession}
+          onDeleteSession={handleDeleteSession}
+        />
+      </PageHeader>
+
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="min-h-0 flex-1 [scrollbar-gutter:stable] overflow-y-auto px-4 py-6 md:px-8 lg:px-24 xl:px-48"
+      >
+        <div className="mx-auto flex w-full max-w-250 flex-col gap-8 pb-8">
+          {messages.length === 0 && !isTyping && (
+            <ChatEmptyState
+              hasAvailableModels={hasAvailableModels}
+              defaultModelName={defaultModelName}
+              isConnected={isGatewayRunning}
+            />
+          )}
+
+          {messages.map((msg) => {
+            if (
+              !shouldShowAssistantMessage(assistantDetailVisibility, msg.kind)
+            ) {
+              return null
+            }
+
+            return (
+              <div key={msg.id} className="flex w-full">
+                {msg.role === "assistant" ? (
+                  <AssistantMessage
+                    content={msg.content}
+                    attachments={msg.attachments}
+                    kind={msg.kind}
+                    modelName={msg.modelName}
+                    toolCalls={msg.toolCalls}
+                    timestamp={msg.timestamp}
+                  />
+                ) : (
+                  <UserMessage
+                    content={msg.content}
+                    attachments={msg.attachments}
+                    timestamp={msg.timestamp}
+                  />
+                )}
+              </div>
+            )
+          })}
+
+          {isTyping && <TypingIndicator />}
+        </div>
       </div>
 
       <input
-        ref={galleryInputRef}
+        ref={fileInputRef}
         type="file"
         accept={CHAT_IMAGE_ACCEPT}
         multiple
         className="hidden"
         onChange={handleImageSelection}
       />
-      <input
-        ref={cameraInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="hidden"
-        onChange={handleImageSelection}
-      />
-      <input
-        ref={documentInputRef}
-        type="file"
-        accept={CHAT_FILE_ACCEPT}
-        multiple
-        className="hidden"
-        onChange={handleDocumentSelection}
-      />
 
       <ChatComposer
         input={input}
         attachments={attachments}
         onInputChange={setInput}
-        onOpenGallery={handleOpenGallery}
-        onOpenCamera={handleOpenCamera}
-        onOpenFiles={handleOpenFiles}
-        onCompactContext={() => {
-          sendMessage({ content: "/compact", attachments: [] })
-        }}
-        onClearContext={() => {
-          sendMessage({ content: "/clear", attachments: [] })
-        }}
-        onSelectSkill={(name) => setInput(`/use ${name} `)}
+        onAddImages={handleAddImages}
         onPaste={handleComposerPaste}
         onDragEnter={handleComposerDragEnter}
         onDragLeave={handleComposerDragLeave}
@@ -539,16 +443,16 @@ export function ChatPage() {
         onDrop={handleComposerDrop}
         onRemoveAttachment={handleRemoveAttachment}
         onSend={handleSend}
-        onStop={() => {
-          sendMessage({ content: "/stop", attachments: [] })
-        }}
         onContextDetail={() => {
-          void sendMessage({ content: "/context", attachments: [] }).then((sent) => {
-            if (sent) setInput("")
-          })
+          void sendMessage({ content: "/context", attachments: [] }).then(
+            (sent) => {
+              if (sent) setInput("")
+            },
+          )
         }}
-        inputDisabledReason={null}
+        inputDisabledReason={inputDisabledReason}
         canSend={canSubmit}
+        isSending={isSending}
         isDragActive={isDragActive}
         contextUsage={contextUsage}
       />

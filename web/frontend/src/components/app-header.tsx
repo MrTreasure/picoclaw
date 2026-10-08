@@ -98,22 +98,14 @@ export function AppHeader() {
   }
 
   return (
-    <header className="bg-card/92 border-border/70 sticky top-0 z-50 flex h-16 shrink-0 items-center justify-between border-b px-4 backdrop-blur-xl">
+    <header className="bg-background/95 supports-backdrop-filter:bg-background/60 border-b-border/50 sticky top-0 z-50 flex h-14 shrink-0 items-center justify-between border-b px-4 backdrop-blur">
       <div className="flex items-center gap-2">
         <SidebarTrigger className="text-muted-foreground hover:bg-accent hover:text-foreground flex h-9 w-9 items-center justify-center rounded-lg sm:hidden [&>svg]:size-5">
           <IconMenu2 />
         </SidebarTrigger>
-        <div className="hidden shrink-0 items-center sm:flex">
-          <Link
-            className="text-foreground flex items-center gap-2.5 font-semibold tracking-[-0.02em]"
-            to="/"
-          >
-            <img
-              className="ring-border size-9 rounded-xl ring-1"
-              src="/web-app-manifest-192x192.png"
-              alt=""
-            />
-            <span>MuseC137</span>
+        <div className="hidden w-36 shrink-0 items-center sm:flex">
+          <Link to="/">
+            <img className="w-full" src="/logo_with_text.png" alt="Logo" />
           </Link>
         </div>
       </div>

@@ -4,7 +4,6 @@ import {
   parseAssistantMessageCreateState,
   parseAssistantMessageUpdateState,
 } from "@/features/chat/assistant-message-state"
-import { removeMatchingHistoryCopies } from "@/features/chat/history"
 import { normalizeUnixTimestamp } from "@/features/chat/state"
 import {
   type ChatAttachment,
@@ -18,55 +17,6 @@ export interface PicoMessage {
   session_id?: string
   timestamp?: number | string
   payload?: Record<string, unknown>
-}
-
-const pendingMessageUpdates = new Map<
-  string,
-  { message: PicoMessage; expectedSessionId: string }
->()
-let pendingMessageUpdateFrame: number | null = null
-
-function flushPendingMessageUpdates() {
-  pendingMessageUpdateFrame = null
-  const updates = [...pendingMessageUpdates.values()]
-  pendingMessageUpdates.clear()
-  for (const { message, expectedSessionId } of updates) {
-    handlePicoMessage(message, expectedSessionId)
-  }
-}
-
-export function queuePicoMessage(
-  message: PicoMessage,
-  expectedSessionId: string,
-) {
-  if (message.type !== "message.update") {
-    handlePicoMessage(message, expectedSessionId)
-    return
-  }
-
-  const messageId = message.payload?.message_id
-  if (typeof messageId !== "string" || !messageId) {
-    handlePicoMessage(message, expectedSessionId)
-    return
-  }
-
-  pendingMessageUpdates.set(`${expectedSessionId}\u0000${messageId}`, {
-    message,
-    expectedSessionId,
-  })
-  if (pendingMessageUpdateFrame === null) {
-    pendingMessageUpdateFrame = window.requestAnimationFrame(
-      flushPendingMessageUpdates,
-    )
-  }
-}
-
-export function cancelQueuedPicoMessages() {
-  if (pendingMessageUpdateFrame !== null) {
-    window.cancelAnimationFrame(pendingMessageUpdateFrame)
-    pendingMessageUpdateFrame = null
-  }
-  pendingMessageUpdates.clear()
 }
 
 function parseAttachments(
@@ -166,7 +116,6 @@ export function handlePicoMessage(
       const attachments = parseAttachments(payload)
       const contextUsage = parseContextUsage(payload)
       const isPlaceholder = payload.placeholder === true
-      const isStreaming = payload.final === false
       const modelName = parseModelName(payload)
       const timestamp =
         message.timestamp !== undefined &&
@@ -174,27 +123,20 @@ export function handlePicoMessage(
           ? normalizeUnixTimestamp(Number(message.timestamp))
           : Date.now()
 
-      const nextMessage = {
-        id: messageId,
-        role: "assistant" as const,
-        content,
-        kind,
-        ...(modelName ? { modelName } : {}),
-        ...(toolCalls ? { toolCalls } : {}),
-        attachments,
-        streaming: isStreaming,
-        timestamp,
-      }
-
       updateChatStore((prev) => ({
-        messages: removeMatchingHistoryCopies(
-          prev.messages.some((item) => item.id === messageId)
-            ? prev.messages.map((item) =>
-                item.id === messageId ? { ...item, ...nextMessage } : item,
-              )
-            : [...prev.messages, nextMessage],
-          nextMessage,
-        ),
+        messages: [
+          ...prev.messages,
+          {
+            id: messageId,
+            role: "assistant",
+            content,
+            kind,
+            ...(modelName ? { modelName } : {}),
+            ...(toolCalls ? { toolCalls } : {}),
+            attachments,
+            timestamp,
+          },
+        ],
         isTyping:
           !isPlaceholder &&
           (kind === "normal" || message.type === "media.create")
@@ -222,15 +164,14 @@ export function handlePicoMessage(
       updateChatStore((prev) => ({
         messages: (() => {
           let found = false
-          let liveMessage: (typeof prev.messages)[number] | undefined
-          let messages = prev.messages.map((msg) => {
+          const messages = prev.messages.map((msg) => {
             if (msg.id !== messageId) {
               return msg
             }
             found = true
             const { content, kind, toolCalls } =
               parseAssistantMessageUpdateState(payload, msg)
-            liveMessage = {
+            return {
               ...msg,
               id: messageId,
               content,
@@ -238,35 +179,28 @@ export function handlePicoMessage(
               toolCalls,
               ...(modelName ? { modelName } : {}),
               ...(attachments ? { attachments } : {}),
-              streaming:
-                typeof payload.final === "boolean"
-                  ? payload.final === false
-                  : msg.streaming,
             }
-            return liveMessage
           })
           if (found) {
-            return liveMessage
-              ? removeMatchingHistoryCopies(messages, liveMessage)
-              : messages
+            return messages
           }
 
           const { content, kind, toolCalls } =
             parseAssistantMessageUpdateState(payload)
 
-          liveMessage = {
-            id: messageId,
-            role: "assistant" as const,
-            content,
-            kind,
-            toolCalls,
-            ...(modelName ? { modelName } : {}),
-            ...(attachments ? { attachments } : {}),
-            streaming: payload.final === false,
-            timestamp,
-          }
-          messages = [...messages, liveMessage]
-          return removeMatchingHistoryCopies(messages, liveMessage)
+          return [
+            ...messages,
+            {
+              id: messageId,
+              role: "assistant" as const,
+              content,
+              kind,
+              toolCalls,
+              ...(modelName ? { modelName } : {}),
+              ...(attachments ? { attachments } : {}),
+              timestamp,
+            },
+          ]
         })(),
         ...(contextUsage ? { contextUsage } : {}),
       }))
@@ -290,32 +224,7 @@ export function handlePicoMessage(
       break
 
     case "typing.stop":
-      updateChatStore((prev) => {
-        let lastUserIndex = -1
-        for (let index = prev.messages.length - 1; index >= 0; index -= 1) {
-          if (prev.messages[index]?.role === "user") {
-            lastUserIndex = index
-            break
-          }
-        }
-        const hasAssistantReply = prev.messages
-          .slice(lastUserIndex + 1)
-          .some(
-            (chatMessage) =>
-              chatMessage.role === "assistant" &&
-              (chatMessage.kind ?? "normal") === "normal" &&
-              (chatMessage.content.trim().length > 0 ||
-                Boolean(chatMessage.attachments?.length)),
-          )
-
-        return {
-          // The server can stop its typing event shortly before the first
-          // response chunk reaches the browser. Keep feedback visible until
-          // real assistant content arrives so the conversation never appears
-          // to stall between the indicator and the reply.
-          isTyping: lastUserIndex >= 0 && !hasAssistantReply,
-        }
-      })
+      updateChatStore({ isTyping: false })
       break
 
     case "error": {

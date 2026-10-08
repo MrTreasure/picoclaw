@@ -16,10 +16,9 @@ import {
 export interface ChatAttachment {
   type: "image" | "audio" | "video" | "file"
   url: string
-  mediaRef?: string
-  file?: File
   filename?: string
   contentType?: string
+  file?: File
 }
 
 export interface ChatToolCallFunction {
@@ -38,11 +37,7 @@ export interface ChatToolCall {
   extraContent?: ChatToolCallExtraContent
 }
 
-export type AssistantMessageKind =
-  | "normal"
-  | "thought"
-  | "tool_calls"
-  | "tool_feedback"
+export type AssistantMessageKind = "normal" | "thought" | "tool_calls"
 
 export interface ChatMessage {
   id: string
@@ -53,7 +48,6 @@ export interface ChatMessage {
   modelName?: string
   attachments?: ChatAttachment[]
   toolCalls?: ChatToolCall[]
-  streaming?: boolean
 }
 
 export interface ContextUsage {
@@ -66,7 +60,6 @@ export interface ContextUsage {
 }
 
 export type ConnectionState =
-  | "idle"
   | "disconnected"
   | "connecting"
   | "connected"
@@ -78,8 +71,6 @@ export interface ChatStoreState {
   isTyping: boolean
   activeSessionId: string
   hasHydratedActiveSession: boolean
-  hasOlderMessages: boolean
-  isLoadingOlderMessages: boolean
   contextUsage?: ContextUsage
 }
 
@@ -87,12 +78,10 @@ type ChatStorePatch = Partial<ChatStoreState>
 
 const DEFAULT_CHAT_STATE: ChatStoreState = {
   messages: [],
-  connectionState: "idle",
+  connectionState: "disconnected",
   isTyping: false,
   activeSessionId: getInitialActiveSessionId(),
   hasHydratedActiveSession: false,
-  hasOlderMessages: false,
-  isLoadingOlderMessages: false,
 }
 
 export const chatAtom = atom<ChatStoreState>(DEFAULT_CHAT_STATE)
