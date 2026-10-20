@@ -74,3 +74,18 @@ docker/data
 
 .omc/
 .worktrees/
+.local-muse/
+
+# Private credentials and runtime databases
+.env*
+!.env.example
+.security.*
+*.pem
+*.p12
+*.pfx
+*.key
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal

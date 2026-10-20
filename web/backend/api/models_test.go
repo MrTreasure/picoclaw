@@ -3738,8 +3738,8 @@ func TestMaskAPIKey(t *testing.T) {
 		},
 		{
 			name: "typical api key",
-			key:  "sk-1234567890abcd",
-			want: "sk-****abcd",
+			key:  "demo-only-key-0000",
+			want: "dem****0000",
 		},
 	}
 
