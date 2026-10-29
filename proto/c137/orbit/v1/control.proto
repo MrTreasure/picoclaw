@@ -1,0 +1,93 @@
+syntax = "proto3";
+package c137.orbit.v1;
+option go_package = "github.com/sipeed/picoclaw/pkg/rpc/orbitv1;orbitv1";
+import "google/protobuf/struct.proto";
+// Orbit control plane: native operations, no HTTP URLs/headers/opaque JSON bodies.
+// Reads <=25s, mutations <=30s, identity uses its separate canonical 3s contract.
+message Empty {}
+message Result { google.protobuf.Struct value = 1; }
+message TaskUpdate {
+ string key = 1;
+ optional bool enabled = 2;
+ optional string cron_expression = 3;
+ optional string timezone = 4;
+ optional int64 every_ms = 5;
+ string idempotency_key = 6;
+}
+message TaskReport { string key = 1; string status = 2; string event_id = 3; }
+service HostTaskRegistry {
+ rpc ListTasks(Empty) returns (Result);
+ rpc UpdateTask(TaskUpdate) returns (Result);
+ rpc ReportTask(TaskReport) returns (Empty);
+}
+message BanQuery { string status = 1; string service = 2; string search = 3; int32 page = 4; int32 page_size = 5; }
+message IPQuery { string ip = 1; }
+message BanMutation { string ip = 1; string actor_id = 2; string idempotency_key = 3; }
+service NetworkBanService {
+ rpc ListRecords(BanQuery) returns (Result);
+ rpc CheckAddress(IPQuery) returns (Result);
+ rpc BanThirtyYears(BanMutation) returns (Result);
+ rpc Unban(BanMutation) returns (Result);
+}
+message NasSubscription { int32 history_limit = 1; }
+message NasEvent { string kind = 1; google.protobuf.Struct snapshot = 2; repeated google.protobuf.Struct history = 3; }
+// Subscribe lifetime <=5min; reconnect with a fresh deadline, bounded backpressure.
+service NasMonitorService { rpc Subscribe(NasSubscription) returns (stream NasEvent); }
+message ConversionRequest { string source_id = 1; string source_sha256 = 2; }
+message FileChunk { bytes data = 1; optional string sha256 = 2; optional int64 size = 3; }
+message ArticleStageRequest { string article_id = 1; string job_id = 2; string stage = 3; optional string error = 4; string idempotency_key = 5; }
+message TaskMessage { string role = 1; string content = 2; }
+message TaskSelection { string provider = 1; string model = 2; }
+message AiTaskRequest {
+ string route = 1; repeated TaskMessage messages = 2; int32 max_tokens = 3;
+ bool require_json = 4; optional string agent_id = 5;
+ google.protobuf.Struct agent = 6; TaskSelection selection = 7;
+ google.protobuf.Struct checkpoint = 8; string idempotency_key = 9;
+}
+message TaskProgress { google.protobuf.Struct progress = 1; google.protobuf.Struct result = 2; google.protobuf.Struct failure = 3; }
+// Conversion <=150s, article stage <=20min, AI task <=1h, cancellation propagated.
+service ContentExecutionService {
+ rpc ConvertBook(ConversionRequest) returns (stream FileChunk);
+ rpc RunArticleStage(ArticleStageRequest) returns (Result);
+ rpc RunAiTask(AiTaskRequest) returns (stream TaskProgress);
+}
+message ObserverEvent { google.protobuf.Struct event = 1; }
+service ObserverIngestion { rpc Ingest(ObserverEvent) returns (Empty); rpc IngestTyped(TelemetryEvent) returns (Empty); }
+message OcrRequest { string pdf = 1; string audit = 2; int32 page = 3; }
+// One model operation at a time; existing 10min page budget and 32MiB result cap.
+service OcrService { rpc ReadPage(OcrRequest) returns (Result); rpc ReadPageTyped(OcrRequest) returns (OcrPage); }
+message CronPatch { string job_id = 1; optional bool enabled = 2; optional string cron_expression = 3; optional string timezone = 4; optional int64 every_ms = 5; string idempotency_key = 6; }
+message CronCreate { string name = 1; string message = 2; string expression = 3; string timezone = 4; int64 every_ms = 5; string channel = 6; string recipient = 7; bool deliver = 8; string idempotency_key = 9; }
+message CronDelete { string job_id = 1; string idempotency_key = 2; }
+service MuseCronService {
+ rpc UpdateJob(CronPatch) returns (Empty);
+ rpc CreateJob(CronCreate) returns (Result);
+ rpc DeleteJob(CronDelete) returns (Empty);
+}
+
+message Rectangle { repeated double coordinates = 1; }
+message OcrWord { string text = 1; repeated double bbox = 2; optional double confidence = 3; optional int32 start = 4; optional int32 end = 5; }
+message OcrLine { string text = 1; repeated OcrWord words = 2; repeated double bbox = 3; optional double confidence = 4; string origin = 5; string paragraph = 6; }
+message OcrRegion { repeated double bbox = 1; string reason = 2; }
+message OcrProblem { int32 region = 1; string reason = 2; optional string text = 3; repeated double bbox = 4; optional string error = 5; }
+message OcrTimings { double render_ms = 1; double recognition_ms = 2; double dedup_ms = 3; double ordering_ms = 4; }
+message OcrPage {
+ int32 page = 1; double width = 2; double height = 3; string status = 4;
+ int32 native_characters = 5; bool bad_native = 6; repeated Rectangle regions = 7;
+ repeated OcrRegion ignored_regions = 8; string cache_key = 9; repeated OcrLine lines = 10;
+ repeated OcrLine raw_ocr = 11; string text = 12; repeated OcrProblem problems = 13;
+ double elapsed_ms = 14; OcrTimings timings = 15; int64 peak_memory_ki_b = 16; bool cache_hit = 17;
+}
+
+message TelemetryEvent {
+ string schema_version = 1; string id = 2; string observed_at = 3; string kind = 4;
+ optional string session_key = 5; optional string turn_id = 6; optional string parent_turn_id = 7;
+ optional string agent_id = 8; optional string source = 9; optional string provider = 10;
+ optional string model = 11; optional string channel = 12; optional string cron_job_id = 13;
+ optional int32 turn_number = 14; optional int64 input_tokens = 15; optional int64 output_tokens = 16;
+ optional int64 cached_tokens = 17; optional int64 context_tokens = 18; optional int64 context_limit = 19;
+ optional int32 message_count = 20; optional int32 dropped_messages = 21; optional int32 remaining_messages = 22;
+ optional int32 summarized_messages = 23; optional int32 kept_messages = 24; optional int32 summary_count = 25;
+ // Third-party/provider telemetry extensions vary by event kind.
+ google.protobuf.Struct payload = 26;
+}

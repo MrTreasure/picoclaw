@@ -22,7 +22,10 @@ type Server struct {
 	reloadFunc     func() error
 	notifyFunc     func(context.Context, string, string, string) error
 	cronDeleteFunc func(string) error
+	cronUpdateFunc func(string, CronPatch) error
+	cronCreateFunc func(CronCreate) (any, error)
 	authToken      string // optional bearer token for protected endpoints
+	cronRPCStop    func()
 }
 
 type Check struct {
@@ -53,6 +56,7 @@ func NewServer(host string, port int, token string) *Server {
 	mux.HandleFunc("/reload", s.reloadHandler)
 	mux.HandleFunc("/internal/notify", s.notifyHandler)
 	mux.HandleFunc("/internal/cron/jobs/", s.cronJobHandler)
+	mux.HandleFunc("/internal/cron/jobs", s.cronJobHandler)
 
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	s.server = &http.Server{
@@ -254,6 +258,7 @@ func (s *Server) RegisterOnMux(mux HandlerMux) {
 	mux.HandleFunc("/reload", s.reloadHandler)
 	mux.HandleFunc("/internal/notify", s.notifyHandler)
 	mux.HandleFunc("/internal/cron/jobs/", s.cronJobHandler)
+	mux.HandleFunc("/internal/cron/jobs", s.cronJobHandler)
 }
 
 func statusString(ok bool) string {

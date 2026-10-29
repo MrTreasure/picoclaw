@@ -478,11 +478,23 @@ func (cs *CronService) UpdateJob(job *CronJob) error {
 			} else {
 				updated.State.NextRunAtMS = nil
 			}
+			if updated.Schedule.Kind == "cron" {
+				if !cs.gronx.IsValid(updated.Schedule.Expr) {
+					return fmt.Errorf("invalid cron expression")
+				}
+				if updated.Schedule.TZ != "" {
+					if _, err := time.LoadLocation(updated.Schedule.TZ); err != nil {
+						return err
+					}
+				}
+			}
 			cs.store.Jobs[i] = updated
-
+			if err := cs.saveStoreUnsafe(); err != nil {
+				cs.store.Jobs[i] = previous
+				return err
+			}
 			cs.notify()
-
-			return cs.saveStoreUnsafe()
+			return nil
 		}
 	}
 	return fmt.Errorf("job not found")
@@ -645,4 +657,26 @@ func generateID() string {
 		return fmt.Sprintf("%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b)
+}
+
+// ValidateSchedule is shared by live management and the CLI creation endpoint.
+func (cs *CronService) ValidateSchedule(schedule CronSchedule) error {
+	switch schedule.Kind {
+	case "cron":
+		if !cs.gronx.IsValid(schedule.Expr) {
+			return fmt.Errorf("invalid cron expression")
+		}
+		if schedule.TZ != "" {
+			if _, err := time.LoadLocation(schedule.TZ); err != nil {
+				return err
+			}
+		}
+	case "every":
+		if schedule.EveryMS == nil || *schedule.EveryMS < 1000 || *schedule.EveryMS > 31536000000 {
+			return fmt.Errorf("invalid interval")
+		}
+	default:
+		return fmt.Errorf("unsupported schedule kind")
+	}
+	return nil
 }

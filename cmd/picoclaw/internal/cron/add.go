@@ -35,6 +35,14 @@ func newAddCommand(storePath func() string) *cobra.Command {
 				schedule = cron.CronSchedule{Kind: "cron", Expr: cronExp}
 			}
 
+			var liveJob cron.CronJob
+			if live, err := liveCronRequest(storePath(), "POST", "/internal/cron/jobs", map[string]any{"name": name, "message": message, "channel": channel, "to": to, "schedule": schedule}, &liveJob); live {
+				if err != nil {
+					return err
+				}
+				fmt.Printf("✓ Added job '%s' (%s) to running scheduler\n", liveJob.Name, liveJob.ID)
+				return nil
+			}
 			cs := cron.NewCronService(storePath(), nil)
 			job, err := cs.AddJob(name, schedule, message, channel, to)
 			if err != nil {

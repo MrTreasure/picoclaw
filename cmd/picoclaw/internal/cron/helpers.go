@@ -46,16 +46,33 @@ func cronListCmd(storePath string) {
 	}
 }
 
-func cronRemoveCmd(storePath, jobID string) {
+func cronRemoveCmd(storePath, jobID string) error {
+	if live, err := liveCronRequest(storePath, "DELETE", "/internal/cron/jobs/"+jobID, nil, nil); live {
+		if err != nil {
+			return err
+		}
+		fmt.Printf("✓ Removed job %s from running scheduler\n", jobID)
+		return nil
+	}
+
 	cs := cron.NewCronService(storePath, nil)
 	if cs.RemoveJob(jobID) {
 		fmt.Printf("✓ Removed job %s\n", jobID)
 	} else {
 		fmt.Printf("✗ Job %s not found\n", jobID)
 	}
+	return nil
 }
 
-func cronSetJobEnabled(storePath, jobID string, enabled bool) {
+func cronSetJobEnabled(storePath, jobID string, enabled bool) error {
+	if live, err := liveCronRequest(storePath, "PATCH", "/internal/cron/jobs/"+jobID, map[string]bool{"enabled": enabled}, nil); live {
+		if err != nil {
+			return err
+		}
+		fmt.Printf("✓ Job %s enabled=%t in running scheduler\n", jobID, enabled)
+		return nil
+	}
+
 	cs := cron.NewCronService(storePath, nil)
 	job := cs.EnableJob(jobID, enabled)
 	if job != nil {
@@ -63,4 +80,5 @@ func cronSetJobEnabled(storePath, jobID string, enabled bool) {
 	} else {
 		fmt.Printf("✗ Job %s not found\n", jobID)
 	}
+	return nil
 }

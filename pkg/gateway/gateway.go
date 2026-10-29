@@ -457,7 +457,11 @@ func setupAndStartServices(
 		return nil, fmt.Errorf("public image storage requires media cleanup with a positive retention period and interval")
 	}
 	if fms, ok := runningServices.MediaStore.(*media.FileMediaStore); ok {
-		fms.SetImagePublisher(imagePublisher)
+		if imagePublisher != nil {
+			fms.SetImagePublisher(imagePublisher)
+		} else {
+			fms.SetImagePublisher(nil)
+		}
 		fms.Start()
 	}
 
@@ -499,6 +503,50 @@ func setupAndStartServices(
 			return runningServices.ChannelManager.SendToChannelSync(ctx, channel, to, content)
 		},
 	)
+	runningServices.HealthServer.SetCronCreateFunc(func(input health.CronCreate) (any, error) {
+		if len(input.Name) == 0 || len(input.Name) > 200 || len(input.Message) == 0 || len(input.Message) > 60000 || len(input.Channel) > 100 || len(input.To) > 200 {
+			return nil, fmt.Errorf("invalid task metadata")
+		}
+		schedule := cron.CronSchedule{Kind: input.Schedule.Kind, Expr: input.Schedule.Expr, EveryMS: input.Schedule.EveryMS, TZ: input.Schedule.TZ}
+		if err := runningServices.CronService.ValidateSchedule(schedule); err != nil {
+			return nil, err
+		}
+		return runningServices.CronService.AddJob(input.Name, schedule, input.Message, input.Channel, input.To)
+	})
+	runningServices.HealthServer.SetCronUpdateFunc(func(jobID string, patch health.CronPatch) error {
+		job, ok := runningServices.CronService.GetJob(jobID)
+		if !ok {
+			return health.ErrCronJobNotFound
+		}
+		if patch.Enabled == nil && patch.CronExpression == nil && patch.EveryMS == nil && patch.Timezone == nil {
+			return fmt.Errorf("empty patch")
+		}
+		if patch.Enabled != nil {
+			job.Enabled = *patch.Enabled
+		}
+		if patch.CronExpression != nil {
+			if job.Schedule.Kind != "cron" {
+				return fmt.Errorf("not a cron schedule")
+			}
+			job.Schedule.Expr = *patch.CronExpression
+		}
+		if patch.EveryMS != nil {
+			if job.Schedule.Kind != "every" || *patch.EveryMS < 60000 || *patch.EveryMS > 31536000000 {
+				return fmt.Errorf("invalid interval")
+			}
+			job.Schedule.EveryMS = patch.EveryMS
+		}
+		if patch.Timezone != nil {
+			if job.Schedule.Kind != "cron" {
+				return fmt.Errorf("not a cron schedule")
+			}
+			if _, err := time.LoadLocation(*patch.Timezone); err != nil {
+				return err
+			}
+			job.Schedule.TZ = *patch.Timezone
+		}
+		return runningServices.CronService.UpdateJob(job)
+	})
 	runningServices.HealthServer.SetCronDeleteFunc(func(jobID string) error {
 		err := runningServices.CronService.DeleteJob(jobID)
 		if errors.Is(err, cron.ErrJobNotFound) {
@@ -507,6 +555,9 @@ func setupAndStartServices(
 		return err
 	})
 
+	if err = runningServices.HealthServer.StartCronRPC(); err != nil {
+		return nil, fmt.Errorf("cron native RPC: %w", err)
+	}
 	var listenAddr string
 	if len(listenResult.Listeners) > 0 {
 		listenAddr = listenResult.Listeners[0].Addr().String()
@@ -555,6 +606,9 @@ func setupAndStartServices(
 }
 
 func stopAndCleanupServices(runningServices *services, shutdownTimeout time.Duration, isReload bool) {
+	if runningServices.HealthServer != nil {
+		runningServices.HealthServer.StopCronRPC()
+	}
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer shutdownCancel()
 
@@ -725,7 +779,11 @@ func restartServices(
 		return fmt.Errorf("public image storage requires media cleanup with a positive retention period and interval")
 	}
 	if fms, ok := runningServices.MediaStore.(*media.FileMediaStore); ok {
-		fms.SetImagePublisher(imagePublisher)
+		if imagePublisher != nil {
+			fms.SetImagePublisher(imagePublisher)
+		} else {
+			fms.SetImagePublisher(nil)
+		}
 		fms.Start()
 	}
 	if runningServices.ChannelManager != nil {
