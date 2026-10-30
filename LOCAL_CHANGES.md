@@ -19,6 +19,20 @@ The comparison baseline currently used by this repository is
 
 ## Active local features
 
+### Cloudflare frontend hosting (2026-10-30)
+
+- **Behavior/configuration:** `pico.mrtreasure.cc` uses `c137-pico-static` for
+  built frontend files. The NAS launcher still validates sessions and handles
+  API/media/streaming/WebSockets. Public static/login permissions and the old
+  service-worker retirement response are preserved. Hosting configuration was
+  sufficient; no launcher code or restart was needed.
+- **Publication:** explicit allowlisted publisher and rollback instructions in
+  `deploy/cloudflare-frontend.md`. No extra scheduled job or embedded secret.
+- **Commit/deployment/upstream:** uncommitted local deployment documentation;
+  published to Cloudflare 2026-10-30, manual user acceptance pending, not upstream.
+- **Rollback:** restore a reviewed frontend build and republish the same Worker;
+  no backend/session migration or shared Nginx restart.
+
 ### Canonical source and reproducible deployment
 
 - **Behavior:** The complete Go gateway, Launcher backend, WebUI/PWA frontend,

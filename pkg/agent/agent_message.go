@@ -10,6 +10,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/constants"
+	"github.com/sipeed/picoclaw/pkg/inbox"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/routing"
 	"github.com/sipeed/picoclaw/pkg/session"
@@ -122,6 +123,14 @@ func (al *AgentLoop) prepareInboundMessageForAgent(
 }
 
 func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage) (string, error) {
+	if msg.Channel == "pico" && msg.MessageID != "" {
+		defer func() {
+			if err := inbox.Default().Finish(strings.TrimPrefix(msg.ChatID, "pico:"), msg.MessageID); err != nil {
+				logger.WarnCF("agent", "Receipt completion persistence failed", map[string]any{"error": err.Error()})
+			}
+		}()
+	}
+
 	msg = al.prepareInboundMessageForAgent(ctx, msg)
 
 	// Add message preview to log (show full content for error messages)

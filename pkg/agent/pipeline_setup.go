@@ -118,7 +118,8 @@ func (p *Pipeline) SetupTurn(ctx context.Context, ts *turnState) (*turnExecution
 
 	if !ts.opts.NoHistory && (strings.TrimSpace(ts.userMessage) != "" || len(ts.media) > 0) {
 		rootMsg := userPromptMessage(ts.userMessage, ts.media)
-		if len(rootMsg.Media) > 0 {
+		rootMsg.ClientMessageID = ts.opts.Dispatch.MessageID()
+		if len(rootMsg.Media) > 0 || rootMsg.ClientMessageID != "" {
 			ts.agent.Sessions.AddFullMessage(ts.sessionKey, rootMsg)
 		} else {
 			ts.agent.Sessions.AddMessage(ts.sessionKey, rootMsg.Role, rootMsg.Content)

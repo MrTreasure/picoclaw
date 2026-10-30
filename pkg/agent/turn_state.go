@@ -12,6 +12,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/bus"
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/inbox"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/providers"
 	"github.com/sipeed/picoclaw/pkg/session"
@@ -659,6 +660,12 @@ func (ts *turnState) captureRestorePoint(history []providers.Message, summary st
 }
 
 func (ts *turnState) recordPersistedMessage(msg providers.Message) {
+	if ts.channel == "pico" && msg.Role == "user" && msg.ClientMessageID != "" && msg.ClientMessageID != ts.opts.Dispatch.MessageID() {
+		if err := inbox.Default().Finish(strings.TrimPrefix(ts.chatID, "pico:"), msg.ClientMessageID); err != nil {
+			logger.WarnCF("agent", "Steering receipt persistence failed", map[string]any{"error": err.Error()})
+		}
+	}
+
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	ts.persistedMessages = append(ts.persistedMessages, msg)

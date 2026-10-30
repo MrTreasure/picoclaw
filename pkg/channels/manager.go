@@ -339,7 +339,7 @@ func (m *Manager) RecordTypingStop(channel, chatID string, stop func()) {
 	key := channel + ":" + chatID
 	entry := typingEntry{stop: stop, createdAt: time.Now()}
 	if previous, loaded := m.typingStops.Swap(key, entry); loaded {
-		if oldEntry, ok := previous.(typingEntry); ok && oldEntry.stop != nil {
+		if oldEntry, ok := previous.(typingEntry); ok && oldEntry.stop != nil && channel != "pico" {
 			oldEntry.stop()
 		}
 	}
@@ -372,10 +372,12 @@ func (m *Manager) preSend(ctx context.Context, name string, msg bus.OutboundMess
 	key := name + ":" + chatID
 	streamKey := streamSuppressionKey(name, chatID, msg.SessionKey)
 
-	// 1. Stop typing
-	if v, loaded := m.typingStops.LoadAndDelete(key); loaded {
-		if entry, ok := v.(typingEntry); ok {
-			entry.stop() // idempotent, safe
+	// Pico typing.stop denotes turn completion, not delivery of a tool/progress item.
+	if name != "pico" {
+		if v, loaded := m.typingStops.LoadAndDelete(key); loaded {
+			if entry, ok := v.(typingEntry); ok {
+				entry.stop()
+			}
 		}
 	}
 
@@ -516,10 +518,12 @@ func (m *Manager) preSendMedia(ctx context.Context, name string, msg bus.Outboun
 	key := name + ":" + chatID
 	streamKey := streamSuppressionKey(name, chatID, msg.SessionKey)
 
-	// 1. Stop typing
-	if v, loaded := m.typingStops.LoadAndDelete(key); loaded {
-		if entry, ok := v.(typingEntry); ok {
-			entry.stop() // idempotent, safe
+	// Pico typing.stop denotes turn completion, not delivery of a tool/progress item.
+	if name != "pico" {
+		if v, loaded := m.typingStops.LoadAndDelete(key); loaded {
+			if entry, ok := v.(typingEntry); ok {
+				entry.stop()
+			}
 		}
 	}
 
@@ -1888,6 +1892,9 @@ func (m *Manager) runTTLJanitor(ctx context.Context) {
 			return
 		case now := <-ticker.C:
 			m.typingStops.Range(func(key, value any) bool {
+				if name, ok := key.(string); ok && strings.HasPrefix(name, "pico:") {
+					return true
+				}
 				if entry, ok := value.(typingEntry); ok {
 					if now.Sub(entry.createdAt) > typingStopTTL {
 						if _, loaded := m.typingStops.LoadAndDelete(key); loaded {

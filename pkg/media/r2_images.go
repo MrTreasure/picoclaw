@@ -86,6 +86,9 @@ func (p *R2ImagePublisher) URL(key string) string {
 // Sweep removes images left behind by a process exit before local TTL cleanup.
 // It only touches the dedicated Muse image prefix.
 func (p *R2ImagePublisher) Sweep(ctx context.Context, olderThan time.Time) error {
+	if p == nil {
+		return nil
+	}
 	paginator := s3.NewListObjectsV2Paginator(p.client, &s3.ListObjectsV2Input{
 		Bucket: aws.String(p.bucket), Prefix: aws.String("muse-chat/"),
 	})

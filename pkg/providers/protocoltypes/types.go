@@ -110,6 +110,7 @@ type Attachment struct {
 }
 
 type Message struct {
+	ClientMessageID  string         `json:"client_message_id,omitempty"`
 	Role             string         `json:"role"`
 	Content          string         `json:"content"`
 	ModelName        string         `json:"model_name,omitempty"`

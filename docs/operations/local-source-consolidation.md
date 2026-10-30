@@ -2,7 +2,7 @@
 
 Date: 2026-09-21
 
-Canonical repository: `/vol1/1000/deploy/data/MrTreasure/picoclaw`
+Canonical repository: `/vol1/1000/workspace/picoclaw`
 
 Runtime artifacts:
 

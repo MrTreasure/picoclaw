@@ -22,6 +22,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/constants"
 	runtimeevents "github.com/sipeed/picoclaw/pkg/events"
+	"github.com/sipeed/picoclaw/pkg/inbox"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/media"
 	"github.com/sipeed/picoclaw/pkg/providers"
@@ -168,6 +169,17 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				return nil
 			}
 
+			if msg.Channel == "pico" && msg.MessageID != "" {
+				claimed, err := inbox.Default().Claim(strings.TrimPrefix(msg.ChatID, "pico:"), msg.MessageID)
+				if err != nil {
+					logger.ErrorCF("agent", "Cannot claim durable message", map[string]any{"error": err.Error()})
+					continue
+				}
+				if !claimed {
+					continue
+				}
+			}
+
 			// Resolve the session key for this message
 			sessionKey, agentID, ok := al.resolveSteeringTarget(msg)
 			if !ok {
@@ -190,6 +202,9 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 			}
 			if _, loaded := al.activeTurnStates.LoadOrStore(sessionKey, placeholder); loaded {
 				if al.tryHandleStopCommand(ctx, msg, sessionKey) {
+					if msg.Channel == "pico" {
+						_ = inbox.Default().Finish(strings.TrimPrefix(msg.ChatID, "pico:"), msg.MessageID)
+					}
 					continue
 				}
 
@@ -197,9 +212,10 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 
 				// Another turn is already active (or reserved) for this session — enqueue
 				if err := al.enqueueSteeringMessage(sessionKey, agentID, providers.Message{
-					Role:    "user",
-					Content: msg.Content,
-					Media:   append([]string(nil), msg.Media...),
+					Role:            "user",
+					ClientMessageID: msg.MessageID,
+					Content:         msg.Content,
+					Media:           append([]string(nil), msg.Media...),
 				}); err != nil {
 					logger.WarnCF("agent", "Failed to enqueue steering message",
 						map[string]any{

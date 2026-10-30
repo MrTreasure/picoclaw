@@ -24,6 +24,7 @@ import (
 	"github.com/sipeed/picoclaw/pkg/channels"
 	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/identity"
+	"github.com/sipeed/picoclaw/pkg/inbox"
 	"github.com/sipeed/picoclaw/pkg/logger"
 	"github.com/sipeed/picoclaw/pkg/media"
 	"github.com/sipeed/picoclaw/pkg/utils"
@@ -76,7 +77,7 @@ func outboundMessageFinalizesTrackedToolFeedback(msg bus.OutboundMessage) bool {
 
 // writeJSON sends a JSON message to the connection with write locking.
 func (pc *picoConn) writeJSON(v any) error {
-	if pc.closed.Load() {
+	if pc.closed.Load() || pc.conn == nil {
 		return fmt.Errorf("connection closed")
 	}
 	pc.writeMu.Lock()
@@ -109,8 +110,10 @@ type PicoChannel struct {
 	progress           *channels.ToolFeedbackAnimator
 	deleteMessageFn    func(context.Context, string, string) error
 	// broadcastFn lets tests intercept outbound broadcasts. nil → broadcastToSession.
-	broadcastFn func(chatID string, msg PicoMessage) error
-	webPush     *picoPushService
+	broadcastFn  func(chatID string, msg PicoMessage) error
+	webPush      *picoPushService
+	receipts     *inbox.Store
+	typingActive sync.Map
 }
 
 // NewPicoChannel creates a new Pico Protocol channel.
@@ -141,6 +144,7 @@ func NewPicoChannel(
 
 	ch := &PicoChannel{
 		BaseChannel: base,
+		receipts:    inbox.New(""),
 		bc:          bc,
 		config:      cfg,
 		upgrader: websocket.Upgrader{
@@ -254,7 +258,17 @@ func (c *PicoChannel) currentConnCount() int {
 func (c *PicoChannel) Start(ctx context.Context) error {
 	logger.InfoC("pico", "Starting Pico Protocol channel")
 	c.ctx, c.cancel = context.WithCancel(ctx)
+	c.receipts = inbox.Default()
+	pending, err := c.receipts.Recover()
+	if err != nil {
+		return fmt.Errorf("recover durable inbox: %w", err)
+	}
 	c.SetRunning(true)
+	go func() {
+		for _, record := range pending {
+			c.dispatchReceipt(record)
+		}
+	}()
 	logger.InfoC("pico", "Pico Protocol channel started")
 	return nil
 }
@@ -491,13 +505,14 @@ func (c *PicoChannel) FinalizeToolFeedbackMessage(ctx context.Context, msg bus.O
 
 // StartTyping implements channels.TypingCapable.
 func (c *PicoChannel) StartTyping(ctx context.Context, chatID string) (func(), error) {
-	startMsg := newMessage(TypeTypingStart, nil)
-	if err := c.broadcastToSession(chatID, startMsg); err != nil {
-		return func() {}, err
-	}
+	c.typingActive.Store(chatID, true)
+	_ = c.broadcastToSession(chatID, newMessage(TypeTypingStart, nil))
+	var once sync.Once
 	return func() {
-		stopMsg := newMessage(TypeTypingStop, nil)
-		c.broadcastToSession(chatID, stopMsg)
+		once.Do(func() {
+			c.typingActive.Delete(chatID)
+			_ = c.broadcastToSession(chatID, newMessage(TypeTypingStop, nil))
+		})
 	}, nil
 }
 
@@ -1236,6 +1251,20 @@ func (c *PicoChannel) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		"session_id": sessionID,
 	})
 
+	active, interrupted, snapshotErr := c.receipts.SessionState(sessionID)
+	if _, typing := c.typingActive.Load("pico:" + sessionID); typing {
+		active = true
+	}
+	if snapshotErr == nil {
+		pc.writeJSON(newMessage("delivery.ready", map[string]any{"version": 1, "running": active}))
+		for _, record := range interrupted {
+			notice := newMessage(TypeMessageCreate, map[string]any{"content": "消息已收到，但回复因服务重启而中断。", "kind": "delivery_notice", "final": true, "message_id": "interrupted:" + record.ID})
+			notice.SessionID = sessionID
+			pc.writeJSON(notice)
+		}
+	} else {
+		pc.writeJSON(newMessage("delivery.ready", map[string]any{"version": 1}))
+	}
 	go c.readLoop(pc)
 }
 
@@ -1376,6 +1405,13 @@ func (c *PicoChannel) handleMessage(pc *picoConn, msg PicoMessage) {
 		pong.ID = msg.ID
 		pc.writeJSON(pong)
 
+	case "message.receipt":
+		record, err := c.receipts.Get(pc.sessionID, msg.ID)
+		if err == nil {
+			c.writeReceipt(pc, record)
+		} else if os.IsNotExist(err) {
+			pc.writeJSON(newMessage("message.receipt", map[string]any{"request_id": msg.ID, "status": "unknown"}))
+		}
 	case TypeMessageSend:
 		c.handleMessageSend(pc, msg)
 
@@ -1414,46 +1450,25 @@ func (c *PicoChannel) handleMessageSend(pc *picoConn, msg PicoMessage) {
 		content += strings.Join(annotations, "\n")
 	}
 
-	sessionID := msg.SessionID
-	if sessionID == "" {
-		sessionID = pc.sessionID
+	sessionID := pc.sessionID // Authenticated connection owns receipt identity.
+
+	if msg.ID == "" {
+		msg.ID = uuid.New().String()
 	}
-
-	chatID := "pico:" + sessionID
-	senderID := "pico-user"
-
-	metadata := map[string]string{
-		"platform":   "pico",
-		"session_id": sessionID,
-		"conn_id":    pc.id,
-	}
-
-	logger.DebugCF("pico", "Received message", map[string]any{
-		"session_id": sessionID,
-		"preview":    truncate(content, 50),
-		"media":      len(mediaRefs),
-	})
-
-	sender := bus.SenderInfo{
-		Platform:    "pico",
-		PlatformID:  senderID,
-		CanonicalID: identity.BuildCanonicalID("pico", senderID),
-	}
-
+	sender := bus.SenderInfo{Platform: "pico", PlatformID: "pico-user", CanonicalID: identity.BuildCanonicalID("pico", "pico-user")}
 	if !c.IsAllowedSender(sender) {
+		pc.writeJSON(newErrorWithPayload("forbidden", "sender not allowed", map[string]any{"request_id": msg.ID}))
 		return
 	}
-
-	inboundCtx := bus.InboundContext{
-		Channel:   "pico",
-		ChatID:    chatID,
-		ChatType:  "direct",
-		SenderID:  senderID,
-		MessageID: msg.ID,
-		Raw:       metadata,
+	record, err := c.receipts.Accept(sessionID, msg.ID, content, mediaRefs)
+	if err != nil {
+		pc.writeJSON(newErrorWithPayload("receipt_failed", err.Error(), map[string]any{"request_id": msg.ID}))
+		return
 	}
+	// Acknowledge only after atomic write + fsync. Execution is a separate state.
+	c.writeReceipt(pc, record)
+	c.dispatchReceipt(record)
 
-	c.HandleInboundContext(c.ctx, chatID, content, mediaRefs, inboundCtx, sender)
 }
 
 func (c *PicoChannel) parseInboundMedia(payload map[string]any) ([]string, []string, error) {
@@ -1738,4 +1753,20 @@ func (c *PicoChannel) editMessagePayload(
 	setContextUsagePayload(normalized, contextUsage)
 	outMsg := newMessage(TypeMessageUpdate, normalized)
 	return c.broadcastToSession(chatID, outMsg)
+}
+
+func (c *PicoChannel) writeReceipt(pc *picoConn, r inbox.Record) {
+	pc.writeJSON(newMessage("message.receipt", map[string]any{"request_id": r.ID, "status": r.State}))
+}
+func (c *PicoChannel) dispatchReceipt(r inbox.Record) {
+	if !c.receipts.Take(r.Session, r.ID) {
+		return
+	}
+	sender := bus.SenderInfo{Platform: "pico", PlatformID: "pico-user", CanonicalID: identity.BuildCanonicalID("pico", "pico-user")}
+	chatID := "pico:" + r.Session
+	inbound := bus.InboundContext{Channel: "pico", ChatID: chatID, ChatType: "direct", SenderID: "pico-user", MessageID: r.ID, Raw: map[string]string{"platform": "pico", "session_id": r.Session}}
+	if err := c.HandleInboundContext(c.ctx, chatID, r.Content, r.Media, inbound, sender); err != nil {
+		c.receipts.Release(r.Session, r.ID)
+		logger.ErrorCF("pico", "Durable message dispatch deferred", map[string]any{"request_id": r.ID, "error": err.Error()})
+	}
 }
