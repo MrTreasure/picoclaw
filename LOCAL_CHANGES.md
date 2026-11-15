@@ -1,5 +1,12 @@
 # Local Changes
 
+> Deployment status (2026-11-15): the Muse gateway, both standalone PWA
+> launchers, and the old dedicated Codex service are stopped and disabled.
+> All Muse scheduled jobs are disabled. This repository retains the customized
+> PicoClaw source; historical deployment descriptions below are not statements
+> that these services are still running. See
+> [retirement and source retention](docs/operations/muse-retirement.md).
+
 This file is the required inventory for behavior that exists in the local
 MuseC137 build but has not been merged into `sipeed/picoclaw` upstream.
 
